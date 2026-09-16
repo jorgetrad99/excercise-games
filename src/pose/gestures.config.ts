@@ -4,8 +4,13 @@
 export type LaneMode = 'lean' | 'zones';
 
 export const gestureConfig = {
-  /** One Euro filter, applied in PIXEL space (its reference constants were tuned for pixels). Hz / unitless / Hz. */
-  filter: { minCutoff: 1.0, beta: 0.007, dCutoff: 1.0 },
+  /**
+   * One Euro filter on landmarks in normalized image-height units (Hz / s per unit / Hz).
+   * Tuned with `pnpm latency:gestures GRID=1` on Jorge's recorded still-standing noise: its jitter is
+   * mostly slow sway no cutoff removes, so a high beta cuts filter lag (≈40 → ≈12 ms) at no cost in
+   * false events (0 at 1×/2×/4× that noise over 60 s). Pixel-space beta 0.007 ≈ 5 here.
+   */
+  filter: { minCutoff: 1.0, beta: 30, dCutoff: 1.0 },
   /** Landmarks below this MediaPipe visibility are ignored. */
   visibilityMin: 0.5,
   /** An ignored landmark keeps its last value this long (ms), then counts as lost. */

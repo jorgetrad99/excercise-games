@@ -13,6 +13,21 @@ export interface Landmark {
 export interface PoseFrame {
   t: number;
   poses: Landmark[][];
+  /** Live pipeline timestamps (performance.now ms) for latency measurement; absent in fixtures. */
+  timing?: FrameTiming;
+}
+
+export interface FrameTiming {
+  /** Driver capture time from requestVideoFrameCallback metadata, when the browser provides it. */
+  captureT?: number | undefined;
+  /** requestVideoFrameCallback fired on the main thread (= PoseFrame.t). */
+  callbackT: number;
+  /** Downscaled ImageBitmap ready, just before transfer to the worker. */
+  bitmapT: number;
+  /** Landmarks back on the main thread. */
+  resultT: number;
+  /** detectForVideo time inside the worker. */
+  inferMs: number;
 }
 
 export type ModelVariant = 'lite' | 'full' | 'heavy';

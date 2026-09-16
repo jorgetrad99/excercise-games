@@ -18,5 +18,7 @@ interface Window {
     advance(seconds: number): number;
     /** Renderer counters from the last frame; null until the models loaded. */
     getRenderStats(): import('./render/view').RenderStats | null;
+    /** Per-stage input-to-screen latency, frame pacing and judder (see platform/latency.ts). */
+    getLatency(): import('./platform/latency').LatencySummary;
   };
 }

@@ -27,5 +27,11 @@ export default defineConfig({
       // channel 'chromium' = new headless: uses the real GPU (headless-shell falls back to SwiftShader).
       use: { ...devices['Desktop Chrome'], channel: 'chromium', launchOptions: { args: fakeCamera } },
     },
+    {
+      // On-demand measurement tools (pnpm latency:pipeline); not part of verify.
+      name: 'tools',
+      testMatch: /.*\.tool\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], channel: 'chromium', launchOptions: { args: fakeCamera } },
+    },
   ],
 });

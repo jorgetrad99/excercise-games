@@ -400,3 +400,90 @@ Both M4 DoD tests pass: screenshot baselines at seed 42 t = 0/10/30 s (plus a 60
 ### Next step
 
 M5 (progression & persistence) when you give the go-ahead. Per your instructions I stopped at M4.
+
+---
+
+## 2026-09-16 — Input-to-screen latency: measured, filter retuned, render judder fixed
+
+**Result:** a pose gesture now reaches the screen about 25–30 ms sooner (jump ≈ 221 → 191 ms, lean ≈ 257 → 225 ms, crouch ≈ 372 → 348 ms, measured from movement start to the next frame after the reaction is drawn). Steady-state lane-change judder is gone (60 Hz: 48 → 0.6 mm per frame). Most of what's left is gesture *design*: thresholds, the velocity window and the slide hold. Those are feel decisions for real per-gesture recordings.
+
+### How it was measured
+
+- **Live stages** (`pnpm latency:pipeline LABEL=…`, `tests/e2e/pipeline-latency.tool.spec.ts`): fake camera → worker → gesture engine on this laptop (RTX 4060, 1080p, 60 Hz). The bot keeps the run alive, and ArrowUp presses time the event → sim → render path.
+  - The same numbers are live in the game at `?latency=1` and via `window.__game.getLatency()`.
+  - New `PoseFrame.timing`: requestVideoFrameCallback `captureTime`, callback, bitmap ready, result back, infer ms.
+- **Algorithmic detection delay** (`pnpm latency:gestures`, `tests/tools/gesture-latency.tool.ts`):
+  - Inputs: human-like jump/lean/crouch motion profiles on top of the body proportions and real still-standing noise from your recording (read-only from Downloads).
+  - At 30 pose-fps, averaged over 7 sampling phases.
+  - Split into *geometry* (thresholds, no filter) and *filter* lag; false events over 60 s idle at 1×/2×/4× noise.
+  - `GRID=1` sweeps the One Euro parameters.
+- **Render judder** (`pnpm latency:judder`, `tests/tools/frame-judder.tool.ts`): the real sim + bot for 120 s, frames at 60/120/144/165/240 Hz with ±0.3 ms rAF jitter. Each frame's drawn position is compared with the continuous position at that instant.
+- **Not visible to software:** sensor exposure + USB + driver time before `captureTime`, and panel scan-out after the frame is composited. For true motion-to-photon, film yourself and the screen at 240 fps with `?latency=1`. The white square flashes on the frame an event is drawn; count frames from movement start.
+
+### Before → after (p50, ms)
+
+| Stage | Before | After |
+| --- | --- | --- |
+| camera capture → video frame callback | 9.4 | 9.5 |
+| downscale to 640 px | 0.8 | 0.8 |
+| worker round trip (infer 11.2) | 11.6 | 11.5 |
+| gesture engine | 0.0 | 0.0 |
+| **detection: jump** (geometry + filter) | 129 + 43 | 129 + 14 |
+| **detection: lean** | 167 + 38 | 167 + 10 |
+| **detection: crouch** (incl. 100 ms hold) | 291 + 33 | 291 + 10 |
+| event → next rAF (waits for the frame) | 9.1 | 9.5 |
+| sim step + render | 1.4 | 1.3 |
+| render → next frame (≈ on screen) | 15.3 | 15.1 |
+| render lag from 120 Hz stepping (lateral / vertical) | ≈ 3.8 / 1.3 | ≈ 0 |
+| **end-to-end jump / lean / crouch** | **221 / 257 / 372** | **191 / 225 / 348** |
+
+- **Keyboard for comparison:** key press → next frame 26 ms p50 / 33 ms p95, unchanged.
+- **Detection delays on your real recording:** the same 9 events fire, 5 of them 40–120 ms earlier. Lane changes: 7.32 → 7.18 s, 8.48 → 8.43 s, 16.75 → 16.68 s, 25.27 → 25.15 s. Slide: 25.00 → 24.92 s.
+- **Idle robustness is unchanged:** 0 false events at 1×/2×/4× your noise; leanX sd 0.052 → 0.050.
+
+**Judder, SD of drawn − ideal position (mm):**
+
+| Refresh | Lateral before → after | Vertical before → after | Constant lag, lateral |
+| --- | --- | --- | --- |
+| 60 Hz | 48 → 0.6 | 20 → 1.0 | 45 mm (≈ 4 ms) → 0 |
+| 144 Hz | 31 → 18* | 15 → 4.5 | 48 → 2 mm |
+| 165 Hz | 30 → 17* | 15 → 4.3 | 49 → 3 mm |
+
+\* What remains above 60 Hz is the first tick of a lane change: nothing can be drawn before the input exists. p95 is 1–34 mm. Forward motion was already extrapolated and stays at ~0.
+
+### What changed
+
+- **One Euro filter in normalized image-height units** (`body.ts`: x × aspect, y). The params went from `{1.0, 0.007 px}` to `{minCutoff 1.0, beta 30, dCutoff 1.0}`.
+  - Pixel beta 0.007 ≈ 5 in these units.
+  - The sweep showed your still-standing noise is mostly slow sway no cutoff removes: idle jitter is flat across all params. So a high beta costs nothing and cuts filter lag 3–4×.
+- **Calibration averages over the hold window** (`calibration.ts`): stillness is measured against the window's mean, not its first frame. The calibration values are that mean.
+  - Without this, the lower-lag filter made calibration on your recording never complete, because single-frame sway reset the hold.
+  - New `calibration.spec.ts` fails on the old algorithm.
+- **Render extrapolation** (`render/interp.ts`, `GameSim.previous()`): draw position = last tick + last tick's velocity × alpha.
+  - Clamped at the target lane and at the ground so stops never overshoot.
+  - Animation time uses the same alpha. Screenshot tests (manual clock, alpha 0) are unchanged.
+- **Latency instrumentation:**
+  - `platform/latency.ts` (stages, refresh rate, forward/lateral judder) and `platform/latency-overlay.ts` (`?latency=1` table + flash square)
+  - `?autoplay=1` (bot drives while the camera input is live)
+  - keyboard events now carry the OS `KeyboardEvent.timeStamp`
+- **Tools, run on demand and not in verify:** `pnpm latency:gestures | latency:judder | latency:pipeline`, `vitest.tools.config.ts`, and the Playwright `tools` project. Results go to `tmp/latency/*.json`.
+
+### Verified
+
+- **`pnpm verify` → exit 0:** vitest 268 passed + 1 skipped (14 files); playwright smoke 9/9. The screenshot baselines didn't change.
+- **Before/after reports:** `tmp/latency/{gestures,pipeline,judder}-{before,after}.json`. "Before" = this commit's code with `body.ts`, `gestures.config.ts` and `calibration.ts` reverted.
+
+### Remaining levers (not changed; they're feel decisions)
+
+1. **Crouch holdMs 100 + enter 0.25 torso** is the biggest delay (291 ms geometry). Holding 50 ms or entering at 0.2 would save ~60–80 ms, with some false-slide risk while running in place.
+2. **Jump:** rise 0.15 torso + velocity over a 100 ms window. A 66 ms window saves ~20 ms.
+3. **Lean enter 0.35 shoulder widths:** try 0.3 in zones mode.
+4. **Low-latency canvas** (`desynchronized: true`) could save a compositor frame (~16 ms) on Chrome/Windows. It needs testing for tearing.
+5. **30 pose-fps sampling** costs up to 33 ms of quantization. The camera is capped at 30 fps; a 60 fps camera would halve it.
+
+Tune 1–3 against real per-gesture recordings, not synthetic motion.
+
+### Playtest note for Jorge
+
+- `http://localhost:5173/?seed=42&latency=1` shows the live table (pipeline, pose/keyboard events, your display's refresh rate, judder).
+- For true motion-to-photon, film yourself and the screen at 240 fps. Jump, then count frames from your hips starting to rise to the white square.

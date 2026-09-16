@@ -15,7 +15,8 @@ const KEYDOWN: Record<string, InputEventType> = {
 
 export function createKeyboardSource(
   target: EventTarget = window,
-  now: () => number = () => performance.now(),
+  /** Event time; defaults to the OS input timestamp so latency can be measured from the key press. */
+  now: (e: Event) => number = (e) => e.timeStamp || performance.now(),
 ): InputSource {
   const listeners = createListeners<InputEvent>();
   let sliding = false;
@@ -26,12 +27,12 @@ export function createKeyboardSource(
     key.preventDefault(); // arrows/space would scroll the page
     if (key.repeat) return;
     if (type === 'SLIDE_START') sliding = true;
-    listeners.emit({ t: now(), type });
+    listeners.emit({ t: now(key), type });
   };
   const onUp = (e: Event): void => {
     if ((e as KeyboardEvent).key !== 'ArrowDown') return;
     sliding = false;
-    listeners.emit({ t: now(), type: 'SLIDE_END' });
+    listeners.emit({ t: now(e), type: 'SLIDE_END' });
   };
   let running = false;
   return {

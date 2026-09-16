@@ -11,6 +11,7 @@ import {
   type BufferGeometry,
 } from 'three';
 import type { SimState } from '../core/types';
+import type { RenderPose } from './interp';
 
 const mat = (color: string) => new MeshStandardMaterial({ color, roughness: 0.7 });
 const SKIN = mat('#f1c27d');
@@ -42,7 +43,7 @@ function limb(length: number, radius: number, material: MeshStandardMaterial, do
 
 export interface SkaterView {
   readonly object: Group;
-  update(s: Readonly<SimState>, x: number): void;
+  update(s: Readonly<SimState>, pose: RenderPose): void;
 }
 
 interface Rig {
@@ -133,10 +134,10 @@ export function createSkater(): SkaterView {
   const rig = buildRig();
   return {
     object: rig.object,
-    update(s, x) {
-      rig.object.position.set(x, s.y, 0);
+    update(s, { x, y, t }) {
+      rig.object.position.set(x, y, 0);
       rig.object.rotation.set(0, 0, -(x - s.targetLane * 2) * 0.12); // lean into lane changes
-      ride(rig, s.t);
+      ride(rig, t);
       if (s.sliding) slide(rig);
       else if (s.airborne) air(rig, s);
       if (!s.alive) {
@@ -144,7 +145,7 @@ export function createSkater(): SkaterView {
         rig.object.position.y = 0.2;
       }
       const hover = s.powerups.hoverboard > 0 || s.grace > 0;
-      rig.board.position.y = hover ? 0.25 + Math.sin(s.t * 8) * 0.05 : 0;
+      rig.board.position.y = hover ? 0.25 + Math.sin(t * 8) * 0.05 : 0;
     },
   };
 }

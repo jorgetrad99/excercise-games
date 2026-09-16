@@ -37,6 +37,13 @@ export interface SimContext {
   fixedSpeed: number | undefined;
 }
 
+export interface TickPose {
+  t: number;
+  distance: number;
+  x: number;
+  y: number;
+}
+
 export interface GameSim {
   readonly seed: number;
   /** Advance by `dt` seconds using fixed ticks; `events` apply at the next tick. */
@@ -46,6 +53,8 @@ export interface GameSim {
   drainEvents(): SimState['events'];
   /** Fraction of a tick left in the accumulator, for render interpolation. */
   alpha(): number;
+  /** Position/time before the most recent tick (render interpolation between it and getState()). */
+  previous(): Readonly<TickPose>;
   /** Step context, for planners that clone the state (bot autoplay). */
   readonly context: SimContext;
   /** Per-tick event source (bot autoplay); its events are appended after queued input. */
@@ -360,6 +369,7 @@ export function createGameSim(opts: SimOptions): GameSim {
   let pending: InputEvent[] = [];
   let outbox: SimState['events'] = [];
   let controller: ((s: Readonly<SimState>) => readonly InputEventType[]) | null = null;
+  const prev: TickPose = { t: state.t, distance: state.distance, x: state.x, y: state.y };
   return {
     seed: opts.seed,
     context: ctx,
@@ -371,6 +381,7 @@ export function createGameSim(opts: SimOptions): GameSim {
       acc = Math.min(acc + dt, 0.25); // don't spiral after a long stall (tab in background)
       while (acc >= C.fixedDt - 1e-9) {
         acc -= C.fixedDt;
+        Object.assign(prev, { t: state.t, distance: state.distance, x: state.x, y: state.y });
         const auto = controller ? controller(state).map((type) => ({ type })) : [];
         tick(state, ctx, auto.length > 0 ? [...pending, ...auto] : pending);
         pending = [];
@@ -384,5 +395,6 @@ export function createGameSim(opts: SimOptions): GameSim {
       return out;
     },
     alpha: () => Math.max(0, acc / C.fixedDt),
+    previous: () => prev,
   };
 }

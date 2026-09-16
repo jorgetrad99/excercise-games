@@ -28,7 +28,9 @@ export interface VideoSize {
 }
 
 /**
- * Smooths each landmark with a One Euro filter in pixel space and applies the visibility rule:
+ * Smooths each landmark with a One Euro filter in normalized image units (x scaled by the aspect
+ * ratio so both axes are image heights: the same beta means the same speed sensitivity on x and y)
+ * and applies the visibility rule:
  * visibility < visibilityMin is ignored, the last value is held ≤ holdLandmarkMs, then the point is lost (null).
  */
 export function createBodyTracker(cfg: GestureConfig, video: () => VideoSize) {
@@ -47,6 +49,7 @@ export function createBodyTracker(cfg: GestureConfig, video: () => VideoSize) {
     // ponytail: first pose only; M6 assigns players by screen zone
     const pose = frame.poses[0];
     const { width, height } = video();
+    const aspect = width / height;
     const body = {} as Body;
     for (const part of PART_NAMES) {
       const tr = tracks.get(part)!;
@@ -57,10 +60,7 @@ export function createBodyTracker(cfg: GestureConfig, video: () => VideoSize) {
           tr.fx = createOneEuro(cfg.filter);
           tr.fy = createOneEuro(cfg.filter);
         }
-        tr.value = {
-          x: tr.fx(lm.x * width, frame.t) / width,
-          y: tr.fy(lm.y * height, frame.t) / height,
-        };
+        tr.value = { x: tr.fx(lm.x * aspect, frame.t) / aspect, y: tr.fy(lm.y, frame.t) };
         tr.seenT = frame.t;
       } else if (frame.t - tr.seenT > cfg.holdLandmarkMs) {
         tr.value = null;

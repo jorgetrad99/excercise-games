@@ -6,6 +6,8 @@ import { simConfig } from './core/sim.config';
 import { createKeyboardSource } from './input/keyboard';
 import { createPoseSource, type PoseSource } from './input/pose-source';
 import { createReplaySource } from './input/replay';
+import { createLatencyTracker } from './platform/latency';
+import { mountLatencyOverlay } from './platform/latency-overlay';
 import { createRate } from './platform/rate';
 import type { SignalFrame } from './pose/gestures';
 import { gestureConfig } from './pose/gestures.config';
@@ -15,7 +17,9 @@ import { mountSignalHud } from './pose/signal-hud';
 import type { ModelVariant } from './pose/types';
 import { mountHud } from './render/hud';
 import { loadModels } from './render/models';
+import { renderPose } from './render/interp';
 import { createGameView, type GameView } from './render/view';
+import type { FrameTiming } from './pose/types';
 
 const params = new URLSearchParams(location.search);
 const input = params.get('input') ?? 'pose';
@@ -40,7 +44,8 @@ const RESULTS_MIN_MS = 1000;
 
 function newRun(seed: number): GameSim {
   const next = createGameSim({ seed, reviveTokens: tokens });
-  if (input === 'bot') next.setController(createBot(next.context).act);
+  // ?autoplay=1 lets the bot drive while another input (e.g. the camera) is live: latency tooling.
+  if (input === 'bot' || params.has('autoplay')) next.setController(createBot(next.context).act);
   return next;
 }
 
@@ -49,7 +54,14 @@ const queue: InputEvent[] = [];
 const events: InputEvent[] = [];
 const signalHud = debug ? mountSignalHud(document.body, gestureConfig) : null;
 let signals: SignalFrame | null = null;
+const latency = createLatencyTracker();
+const latencyOverlay = params.has('latency')
+  ? mountLatencyOverlay(document.body, latency.summary)
+  : null;
+/** Set while a pose frame is inside the gesture engine, so its events inherit the frame's timing. */
+let pushing: FrameTiming | null = null;
 function record(e: InputEvent): void {
+  latency.event(e, pushing, performance.now());
   queue.push(e);
   events.push(e);
   if (events.length > 200) events.shift();
@@ -84,7 +96,13 @@ if (input === 'pose') {
     numPoses: params.get('players') === '2' ? 2 : 1,
     cameraId: params.get('camera') ?? undefined,
     renderFps: () => renderRate.value(),
-    onFrame: (f) => source.push(f),
+    onFrame: (f) => {
+      pushing = f.timing ?? null;
+      const t0 = performance.now();
+      source.push(f);
+      latency.poseFrame(f.timing, performance.now() - t0);
+      pushing = null;
+    },
   });
   attach(source);
   // Outside debug the camera preview is a small corner thumbnail over the game.
@@ -143,10 +161,28 @@ function frame(now: number): void {
   last = now;
   playAgain(now);
   const waiting = waitingForCalibration();
+  const applied = waiting || manualClock ? [] : queue.splice(0);
   if (waiting) queue.length = 0;
-  else if (!manualClock) sim.step(dt, queue.splice(0));
+  latency.frameStart(now, performance.now(), applied);
+  if (!waiting && !manualClock) sim.step(dt, applied);
   sim.drainEvents(); // ponytail: nothing consumes sim events yet (sound/juice come later)
-  view?.render(sim.getState(), manualClock ? 0 : sim.alpha());
+  const state = sim.getState();
+  const drawn = renderPose(state, sim.previous(), manualClock ? 0 : sim.alpha());
+  view?.render(state, drawn);
+  const running = view !== null && state.phase === 'running';
+  const changingLane = Math.abs(state.targetLane * simConfig.world.laneWidth - drawn.x) > 0.3;
+  latency.rendered(
+    performance.now(),
+    running
+      ? {
+          ...drawn,
+          speed: state.speed,
+          lateralSpeed: changingLane ? simConfig.player.laneSpeed : 0,
+        }
+      : null,
+  );
+  if (applied.length > 0) latencyOverlay?.onEventRendered(now);
+  latencyOverlay?.frame(now);
   hud.update(sim.getState(), { ...trackingLabel(), best, waiting });
   requestAnimationFrame(frame);
 }
@@ -175,4 +211,5 @@ window.__game = {
     return sim.getState().t;
   },
   getRenderStats: () => view?.stats() ?? null,
+  getLatency: () => latency.summary(),
 };

@@ -1,7 +1,7 @@
 // Camera frames → downscaled ImageBitmap → worker → PoseFrame, with fps counters.
 import { createRate } from '../platform/rate';
 import { createPoseBridge, type PoseBridge } from './bridge';
-import type { ModelVariant, PoseFrame } from './types';
+import type { FrameTiming, ModelVariant, PoseFrame } from './types';
 
 /** Inference width in px. The model crops to 256² internally; 720p input only costs copy time (PLAN §1.1). */
 const INFER_WIDTH = 640;
@@ -31,10 +31,11 @@ function startCapture(
   video: HTMLVideoElement,
   bridge: PoseBridge,
   cameraRate: ReturnType<typeof createRate>,
+  pending: Map<number, Omit<FrameTiming, 'resultT' | 'inferMs'>>,
 ): () => void {
   let capturing = false; // createImageBitmap is async; don't start a second one meanwhile
   let stopped = false;
-  const onVideoFrame = (): void => {
+  const onVideoFrame: VideoFrameRequestCallback = (_now, meta): void => {
     if (stopped) return;
     video.requestVideoFrameCallback(onVideoFrame);
     cameraRate.tick();
@@ -47,7 +48,12 @@ function startCapture(
       resizeHeight: height,
       resizeQuality: 'low',
     })
-      .then((bitmap) => (bridge.canSubmit() ? bridge.submit(bitmap, t) : bitmap.close()))
+      .then((bitmap) => {
+        if (!bridge.canSubmit()) return bitmap.close();
+        pending.clear(); // one frame in flight: anything older was dropped by a worker restart
+        pending.set(t, { captureT: meta.captureTime, callbackT: t, bitmapT: performance.now() });
+        bridge.submit(bitmap, t);
+      })
       .catch((err: unknown) => console.warn('frame capture failed', err))
       .finally(() => (capturing = false));
   };
@@ -60,6 +66,7 @@ function startCapture(
 export function startPosePipeline({ video, model, numPoses, onFrame }: PipelineOptions) {
   const cameraRate = createRate();
   const poseRate = createRate();
+  const pending = new Map<number, Omit<FrameTiming, 'resultT' | 'inferMs'>>();
   const s: Omit<PoseStats, 'cameraFps' | 'poseFps' | 'restarts' | 'video'> = {
     state: 'loading',
     delegate: null,
@@ -81,7 +88,11 @@ export function startPosePipeline({ video, model, numPoses, onFrame }: PipelineO
       s.lastPoseCount = frame.poses.length;
       if (frame.poses.length > 0) s.framesWithPose++;
       s.inferMs = inferMs;
-      onFrame(frame);
+      const timing = pending.get(frame.t);
+      pending.delete(frame.t);
+      onFrame(
+        timing ? { ...frame, timing: { ...timing, resultT: performance.now(), inferMs } } : frame,
+      );
     },
     onStatus(status) {
       s.state = status.state;
@@ -89,7 +100,7 @@ export function startPosePipeline({ video, model, numPoses, onFrame }: PipelineO
     },
   });
 
-  const stopCapture = startCapture(video, bridge, cameraRate);
+  const stopCapture = startCapture(video, bridge, cameraRate, pending);
 
   return {
     stats: (): PoseStats => ({

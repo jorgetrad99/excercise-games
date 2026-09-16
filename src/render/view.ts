@@ -10,10 +10,10 @@ import {
   type Object3D,
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { simConfig } from '../core/sim.config';
 import type { SimState } from '../core/types';
 import { biomeAt } from '../core/worldgen';
 import { BIOME_LOOKS } from './biomes';
+import type { RenderPose } from './interp';
 import type { ModelId } from './models';
 import { createRenderer, fitToCanvas } from './renderer';
 import { createSkater } from './skater';
@@ -26,8 +26,7 @@ export interface RenderStats {
 }
 
 export interface GameView {
-  /** `alpha` = fraction of a sim tick since the state, for smooth motion at any refresh rate. */
-  render(s: Readonly<SimState>, alpha: number): void;
+  render(s: Readonly<SimState>, pose: RenderPose): void;
   stats(): RenderStats;
 }
 
@@ -76,14 +75,13 @@ export function createGameView(
   let frames = 0;
 
   return {
-    render(s, alpha) {
+    render(s, pose) {
       frames++;
       if (fitToCanvas(renderer, canvas)) {
         camera.aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
         camera.updateProjectionMatrix();
       }
-      const moving = s.phase === 'running';
-      const distance = s.distance + (moving ? s.speed * alpha * simConfig.fixedDt : 0);
+      const { distance, x, y } = pose;
       const look = BIOME_LOOKS[biomeAt(distance)];
       sky.set(look.sky);
       fog.color.set(look.sky);
@@ -92,12 +90,12 @@ export function createGameView(
       hemi.groundColor.set(look.hemiGround);
 
       world.update(s, distance);
-      skater.update(s, s.x);
+      skater.update(s, pose);
       // Camera is a pure function of state (no smoothing memory) so screenshots are reproducible.
-      camera.position.set(s.x * 0.65, 3.6 + s.y * 0.35, 6.4);
-      camera.lookAt(s.x * 0.8, 1.3 + s.y * 0.25, -9);
-      sun.position.set(s.x - 6, 14, 6);
-      sun.target.position.set(s.x, 0, -4);
+      camera.position.set(x * 0.65, 3.6 + y * 0.35, 6.4);
+      camera.lookAt(x * 0.8, 1.3 + y * 0.25, -9);
+      sun.position.set(x - 6, 14, 6);
+      sun.target.position.set(x, 0, -4);
       renderer.render(scene, camera);
     },
     stats: () => ({

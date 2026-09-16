@@ -103,6 +103,14 @@ render/hud.ts:       DOM overlay; writes only changed HTML
 - **Assets:** `public/assets/kenney/**`, all CC0 and listed in `CREDITS.md` (checked by a test). ADR-004 covers them.
 - **Debug bridge additions:** `setSeed`, `advance(seconds)` (manual clock), `getRenderStats()`.
 
+## Latency & frame pacing
+
+- **Timestamps:** `PoseFrame.timing` (capture / callback / bitmap / result / infer) flows into `platform/latency.ts`, together with event-emitted, sim-applied, rendered and next-frame times. Read it at `?latency=1` or `__game.getLatency()`.
+- **Filter:** One Euro runs on landmarks in normalized image-height units (x × aspect), tuned by `pnpm latency:gestures GRID=1`.
+- **Calibration:** stillness is judged against the mean over the hold window.
+- **Render:** `render/interp.ts` extrapolates the last tick's velocity by `alpha`, clamped at the target lane and the ground. `GameSim.previous()` is the pre-tick pose. This removes 120 Hz stepping judder without adding a tick of delay.
+- **Tools** (on demand, not in verify): `pnpm latency:gestures | latency:judder | latency:pipeline` write `tmp/latency/*.json`.
+
 ## Frame pipeline (target, PLAN §3)
 
 ```
