@@ -304,3 +304,99 @@ M3 (core sim) can start without fixtures. When recordings land, rewire the TEMPO
 ### Next step
 
 M4 renderer (starting now, per your instructions).
+
+---
+
+## 2026-09-16 — M4 Renderer & world view (DoD green; perf gate partly human)
+
+**Result:** the game is playable and visible:
+- three.js (r186, pinned) street biome and park biome with Kenney CC0 models
+- procedural skater, instanced coins and power-ups
+- DOM HUD with countdown, revive prompt and results card
+- restart on jump
+
+Both M4 DoD tests pass: screenshot baselines at seed 42 t = 0/10/30 s (plus a 60 s park frame), and ≥ 55 fps over 20 s at 1080p. All 9 e2e and 266 unit tests pass.
+
+### What changed
+
+- **Dependencies:** `three@0.186.0` + `@types/three@0.186.0`, exact pins. **ADR-004** covers three and the Kenney assets.
+- **Assets:** `public/assets/kenney/{city,car,nature}/`, 10 CC0 GLBs plus kit licenses and colormaps (≈ 375 KB, committed). Every file is listed in `CREDITS.md`, enforced by `tests/unit/credits.spec.ts`.
+- `src/render/renderer.ts`: `createRenderer` (WebGLRenderer, ACES, sRGB, PCF shadows), per ADR-001.
+- `src/render/models.ts`: GLTF load with a box fallback; `fitParts` fits a model into the sim's collision box; `instanced()` pools.
+- `src/render/biomes.ts`: street and park looks (sky/fog, road/ground colours, obstacle and prop models, backdrop blocks).
+- `src/render/world-view.ts`: everything in the live chunks is redrawn into instanced pools each frame — road/ground tiles, lane dashes, props, blocks, obstacles, coins spinning by sim time, pickups.
+- `src/render/skater.ts`: procedural rider and board; ride / slide / air / grab / crashed / hover poses from state.
+- `src/render/view.ts`: scene, hemisphere light + sun with shadow, RoomEnvironment PMREM, biome fog; follow camera computed purely from state.
+- `src/render/hud.ts`: score, coins, multiplier, distance, power-up timers and revive tokens, tracking pill; centre card for get-ready / countdown / paused / revive (with timer bar) / results (with best).
+- **`src/main.ts`:** game loop.
+  - Params: `?input=pose|keyboard|bot|replay:<f>`, `?seed`, `?tokens` (revive tokens until M5), `?clock=manual`.
+  - Pose/replay runs wait for calibration; any key starts them anyway (keyboard fallback).
+  - Jump restarts after game over, but only once the results card has been up for 1 s.
+- **Debug bridge:** `getState()` now returns the full SimState. New: `setSeed`, `advance(seconds)`, `getRenderStats()`.
+- **Core:** `GameSim.context` + `setController()` for bot autoplay. **Keyboard:** Enter = REVIVE.
+- **Pose panel:** a compact corner thumbnail outside `?debug=1`.
+
+### Decisions / assumptions (override any)
+
+1. **Art direction = Kenney flat** (PLAN §8 Q4, as you instructed).
+   - Street: jersey barrier = hurdle, highway gantry = slide bar, delivery trucks = walls, lamps and cones, coloured building blocks.
+   - Park: log = hurdle, gantry = bar, cliff blocks = walls, trees and rocks, hedges.
+2. **RoomEnvironment instead of a Poly Haven HDRI**, so no binary until the look is locked.
+3. **Screenshot and perf tests use `?input=bot`,** the in-browser planner from M3, with the keyboard source still live.
+   - With keyboard only and no key presses, the run crashes at about 7 s, so t = 10/30 would just show the results card.
+   - Screenshots use `?clock=manual` (`advance()`) for exact sim times.
+4. **Revive tokens default to 1 per run (`?tokens=`)** until M5's profile store.
+5. **Hoverboard/grace shows as a floating board.** There's no magnet pull animation yet: coins just disappear.
+
+### Verified, and how
+
+- **`pnpm verify` → exit 0:** tsc and eslint clean; vitest **266 passed + 1 skipped** (13 files); playwright smoke **9/9**.
+- **M4.D1** (`tests/e2e/render.smoke.spec.ts`): seed 42, bot, manual clock, 1280×720.
+  - `toHaveScreenshot` at t = 0/10/30/60 with `maxDiffPixelRatio: 0.01`. Baselines are in `tests/e2e/render.smoke.spec.ts-snapshots/*-win32.png`.
+  - Re-running with `--repeat-each 2` matched every time.
+  - At t = 60: distance > 1000 m (park), 0 crashes, draw calls 51–53 (< 150), no console errors or warnings.
+- **M4.D2 perf** at 1920×1080, bot + keyboard: `getFps()` sampled 20× over 20 s → min 59, mostly 60; 51 draw calls.
+- **Perf with pose running** (fake camera, 1920×1080): render 60 fps and pose 28–31 fps on the same GPU (RTX 4060 Laptop per `nvidia-smi`).
+  - The run holds at "Get ready" until calibration, and a key press starts it.
+- **HUD flow e2e (keyboard):**
+  - crash → "Revive?" → Enter revives → crash again → results card
+  - Space within 1 s is ignored; Space after 1 s starts a new countdown at t = 0
+  - screenshot `tmp/e2e/results-card.png`
+- **Unit:** `GameSim.setController(bot.act)` hashes identically to the headless `botRun` over 20 s. Credits test. Keyboard Enter test.
+- **Visual check** of baselines t10 (street), t60 (park), and the results card: models oriented and scaled sensibly, HUD readable.
+- **Reviewer subagent:** boundaries ✅, pins ✅, sizes ✅. It found 3 bugs, all fixed:
+  - pose/replay mode blocked the keyboard fallback until calibration
+  - a late jump right after the crash skipped the results card
+  - a restart in the same frame skipped the calibration gate
+
+  Minor items fixed: PMREM/RoomEnvironment not disposed, NaN `?tokens`, a frozen "3" shown while calibrating (now "Get ready"), a stale doc string. The e2e console allowlist covers only ANGLE X4122 shader-precision warnings and MediaPipe's own glog lines.
+
+### Known gaps
+
+- **M4.6 perf gate (in_progress):**
+  - "GPU frame < 8 ms" isn't measured; it needs `EXT_disjoint_timer_query`.
+  - "60 fps on the external 1080p60 display with you playing" is your playtest.
+  - The automated fps numbers come from a 60 Hz rAF in headless Chromium.
+- **Rendering is only interpolated for distance.** Lane changes and jump height step at 120 Hz; smooth them if they judder on high-refresh displays.
+- **Replay:** gestures in the 3 s countdown right after calibration are ignored by the sim. They still show in `getEvents()`.
+- **Screenshot baselines are Windows-only** (`-win32`). CI on Linux would need its own baselines.
+- **Bot mode never restarts after game over** (it isn't an attract loop).
+- **Not built yet:** audio, magnet pull, near-miss/grab effects.
+
+### Open questions for Jorge (defaults picked so nothing is blocked)
+
+1. **Art family:** keep Kenney flat (current), or switch to KayKit/Quaternius? ADR-004 lists what a switch touches.
+2. **Lane mode default:** lean (current) vs zones (PLAN §8 Q1, still open from M2).
+3. **Hoverboard:** 10 s invulnerability (PLAN §1.5, current), or Subway Surfers' "absorbs one crash"?
+4. **Feel constants** in `src/core/sim.config.ts`: jump 1.4 m / 0.75 s, slide tap 0.6 s, speed 12 → 26 m/s. Tune after your first body playtest.
+
+### Playtest note for Jorge
+
+1. `pnpm dev`, then `http://localhost:5173/?input=keyboard&seed=42`. ←/→ lanes, Space jump, ↓ slide, ↑ grab (in the air), Enter revive, Space to play again.
+2. Watch the bot: `http://localhost:5173/?input=bot&seed=42` (street, park after about 45 s).
+3. **Body:** `http://localhost:5173/?seed=42` (pose is the default). Stand at play distance until "Get ready" disappears (calibrated), then play. Add `&debug=1` for the big camera panel and signal HUD.
+4. **Perf check on the external display:** `http://localhost:5173/?seed=42&debug=1`, then `window.__game.getFps()` and `window.__game.getRenderStats()` in DevTools.
+
+### Next step
+
+M5 (progression & persistence) when you give the go-ahead. Per your instructions I stopped at M4.

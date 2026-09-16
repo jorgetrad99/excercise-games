@@ -69,16 +69,16 @@
       "id": "M4",
       "title": "Renderer & world view",
       "tasks": [
-        { "id": "M4.1", "text": "three.js scene: renderer factory, follow camera, lighting (directional + hemisphere + HDRI), biome fog", "status": "todo" },
-        { "id": "M4.2", "text": "Chunk views bound to sim chunks, pools, InstancedMesh coins with spin", "status": "todo" },
-        { "id": "M4.3", "text": "Procedural skater + board (run/jump/slide/grab)", "status": "todo" },
-        { "id": "M4.4", "text": "Obstacles from Kenney kits; biome 1 & 2", "status": "todo" },
-        { "id": "M4.5", "text": "HUD overlay (DOM): score, coins, multiplier, distance, power-up timers, tracking indicator, revive prompt, results card", "status": "todo" },
-        { "id": "M4.6", "text": "Perf gate: 60 fps at 1080p with pose running; draw calls < 150; GPU frame < 8 ms", "status": "todo" }
+        { "id": "M4.1", "text": "three.js scene: renderer factory, follow camera, lighting (directional + hemisphere + HDRI), biome fog", "status": "done", "note": "HDRI env replaced by RoomEnvironment+PMREM until art is locked (ADR-004)." },
+        { "id": "M4.2", "text": "Chunk views bound to sim chunks, pools, InstancedMesh coins with spin", "status": "done" },
+        { "id": "M4.3", "text": "Procedural skater + board (run/jump/slide/grab)", "status": "done" },
+        { "id": "M4.4", "text": "Obstacles from Kenney kits; biome 1 & 2", "status": "done", "note": "Kenney City Kit (Roads), Car Kit, Nature Kit; street + park biomes." },
+        { "id": "M4.5", "text": "HUD overlay (DOM): score, coins, multiplier, distance, power-up timers, tracking indicator, revive prompt, results card", "status": "done" },
+        { "id": "M4.6", "text": "Perf gate: 60 fps at 1080p with pose running; draw calls < 150; GPU frame < 8 ms", "status": "in_progress", "note": "Automated on this machine (RTX 4060 Laptop GPU per nvidia-smi, new-headless Chromium): 60 fps at 1920x1080 with and without the pose worker, 51-53 draw calls. GPU frame < 8 ms not measured (needs a timer query) and not yet checked on the external 1080p60 display by Jorge." }
       ],
       "dod": [
-        { "id": "M4.D1", "text": "Playwright screenshot tests on seed 42 at t=0/10/30 s (pixel diff tolerance)", "status": "todo" },
-        { "id": "M4.D2", "text": "Perf test reads getFps() >= 55 over 20 s with keyboard input", "status": "todo" }
+        { "id": "M4.D1", "text": "Playwright screenshot tests on seed 42 at t=0/10/30 s (pixel diff tolerance)", "status": "done", "note": "tests/e2e/render.smoke.spec.ts: seed 42 bot autoplay with ?clock=manual at t=0/10/30 (+60 park), maxDiffPixelRatio 0.01." },
+        { "id": "M4.D2", "text": "Perf test reads getFps() >= 55 over 20 s with keyboard input", "status": "done", "note": "Perf test uses ?input=bot (the keyboard source is live too) so the run lasts 20 s; pure keyboard with no presses would crash at ~7 s." }
       ]
     },
     {

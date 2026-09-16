@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { hashJson } from '../../../src/core/hash';
 import type { InputEventType } from '../../../src/core/input';
+import { createBot } from '../../../src/core/bot';
 import { mulberry32 } from '../../../src/core/prng';
 import { createGameSim } from '../../../src/core/sim';
 import { simConfig as C } from '../../../src/core/sim.config';
@@ -60,6 +61,16 @@ describe('determinism', () => {
       log.push({ tick, type: types[Math.floor(rng() * types.length)]! });
     }
     expect(replay(7, log)).toBe(replay(7, log));
+  });
+
+  it('bot autoplay through GameSim.setController matches the headless botRun tick for tick', () => {
+    const sim = createGameSim({ seed: 42 });
+    sim.setController(createBot(sim.context).act);
+    const ticks = Math.round(20 / C.fixedDt);
+    for (let i = 0; i < ticks; i++) sim.step(C.fixedDt, []);
+    const headless = botRun({ seed: 42 }, (s) => s.tick >= ticks);
+    expect(sim.getState().distance).toBeGreaterThan(100);
+    expect(hashJson(sim.getState())).toBe(hashJson(headless));
   });
 
   it('frame pacing does not matter: 1/60 s frames give the same state as 1/120 s ticks', () => {

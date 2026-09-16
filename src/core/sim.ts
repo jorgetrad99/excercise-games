@@ -46,6 +46,10 @@ export interface GameSim {
   drainEvents(): SimState['events'];
   /** Fraction of a tick left in the accumulator, for render interpolation. */
   alpha(): number;
+  /** Step context, for planners that clone the state (bot autoplay). */
+  readonly context: SimContext;
+  /** Per-tick event source (bot autoplay); its events are appended after queued input. */
+  setController(fn: ((s: Readonly<SimState>) => readonly InputEventType[]) | null): void;
 }
 
 const G = (8 * C.jump.height) / C.jump.airtimeS ** 2;
@@ -355,14 +359,20 @@ export function createGameSim(opts: SimOptions): GameSim {
   let acc = 0;
   let pending: InputEvent[] = [];
   let outbox: SimState['events'] = [];
+  let controller: ((s: Readonly<SimState>) => readonly InputEventType[]) | null = null;
   return {
     seed: opts.seed,
+    context: ctx,
+    setController(fn) {
+      controller = fn;
+    },
     step(dt, events) {
       pending.push(...events);
       acc = Math.min(acc + dt, 0.25); // don't spiral after a long stall (tab in background)
       while (acc >= C.fixedDt - 1e-9) {
         acc -= C.fixedDt;
-        tick(state, ctx, pending);
+        const auto = controller ? controller(state).map((type) => ({ type })) : [];
+        tick(state, ctx, auto.length > 0 ? [...pending, ...auto] : pending);
         pending = [];
         if (state.events.length > 0) outbox.push(...state.events);
       }

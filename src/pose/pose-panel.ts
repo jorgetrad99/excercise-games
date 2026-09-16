@@ -19,6 +19,7 @@ export interface PosePanelOptions {
 
 const CSS = `
 .pose-panel { position: fixed; top: 12px; left: 12px; width: min(960px, calc(100vw - 560px), calc(100vw - 24px)); font: 13px/1.4 system-ui; color: #eee; }
+.pose-panel.compact { width: min(320px, 30vw); opacity: 0.9; }
 .pose-panel .stage { position: relative; background: #000; aspect-ratio: 16 / 9; }
 .pose-panel video, .pose-panel .overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
 .pose-panel .heatmap:not([hidden]) { display: block; margin-top: 6px; }

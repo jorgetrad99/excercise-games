@@ -10,6 +10,7 @@ const KEYDOWN: Record<string, InputEventType> = {
   ArrowUp: 'GRAB',
   c: 'RECALIBRATE',
   C: 'RECALIBRATE',
+  Enter: 'REVIVE',
 };
 
 export function createKeyboardSource(

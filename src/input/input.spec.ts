@@ -35,6 +35,7 @@ describe('keyboard source', () => {
       ['keyup', 'ArrowDown'],
       ['keydown', 'ArrowUp'],
       ['keydown', 'c'],
+      ['keydown', 'Enter'],
       ['keydown', 'x'],
     ] as const) {
       target.dispatchEvent(key(type, k, rep === true));
@@ -49,6 +50,7 @@ describe('keyboard source', () => {
       { t: 5, type: 'SLIDE_END' },
       { t: 6, type: 'GRAB' },
       { t: 7, type: 'RECALIBRATE' },
+      { t: 8, type: 'REVIVE' },
     ]);
   });
 });

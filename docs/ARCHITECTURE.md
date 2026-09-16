@@ -9,11 +9,11 @@ Agent-maintained module map. The spec lives in `docs/PLAN.md` §3; this file rec
 | `src/core/`            | M3 sim: `sim`, `worldgen`, `patterns`, `collision`, `bot`, `hash`, `prng`, `input` | Pure, deterministic TS: sim, worldgen, scoring, progression. ADR-002.                   |
 | `src/input/`           | keyboard, pose, replay | `InputSource` impls: pose, keyboard, replay, network. The only layer that sees both pose and core events. |
 | `src/pose/`            | M1 pipeline, M2 gestures | Camera manager, worker bridge, One Euro filter, signals, gesture engine, debug HUD. See "Pose pipeline (M1)" and "Gestures (M2)" below. |
-| `src/render/`          | —                      | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD.       |
+| `src/render/`          | M4 view + HUD          | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD.       |
 | `src/net/`             | —                      | Colyseus client + room protocol (M6).                                                   |
 | `src/platform/`        | `rate.ts` (fps meter)  | Profile store, settings, debug bridge (`window.__game`).                                |
 | `src/games/<id>/`      | —                      | One `MiniGame` per folder: sim + view + gesture profile + patterns.                     |
-| `src/main.ts`          | hello-world canvas     | Boot; parses URL params, wires keyboard (always) + pose (`?input=pose`, default) or replay (`?input=replay:<fixture>`) into an event log, mounts the signal HUD with `?debug=1`, exposes `window.__game.getState/getFps/getPoseStats/getSignals/getEvents/inject`. |
+| `src/main.ts`          | game loop              | Boot: URL params → sim (`?seed`, `?tokens`), inputs (`?input=pose|keyboard|bot|replay:<fixture>`, keyboard always on), rAF loop (sim.step → view.render → HUD; `?clock=manual` for screenshots), calibration gate for pose/replay, restart on JUMP after game over, `window.__game`. |
 | `src/debug-bridge.d.ts`| `Window.__game` type   | Debug bridge contract shared by app and Playwright tests.                               |
 | `public/models/`       | vendored, gitignored   | MediaPipe wasm + `pose_landmarker_{lite,full,heavy}.task` (model v1). Regenerate: `pnpm vendor:models`. |
 | `tests/e2e/`           | `boot`, `pose`, `gestures` smoke | Playwright; `smoke` project = `*.smoke.spec.ts`, new-headless Chromium (real GPU) with the fake camera fed by `tests/e2e/assets/placeholder-person.mjpeg` (interim, see CREDITS.md). |
@@ -81,6 +81,27 @@ GameSim.step(dt, events): accumulator (clamped 0.25 s) over tick(); drainEvents(
 - **Determinism contract:** logs are **tick-stamped**. `tick()` is exact. `GameSim.step()` applies live events at the next tick, so wall-clock frame pacing decides where a live event lands. Replays and multiplayer record `(tick, type)`.
 - **Bot (`bot.ts`):** DFS over cloned states, horizon 1.5 s, decisions at 20 Hz. It only survives what the real physics allows, so it doubles as the solvability validator (`patterns.spec.ts`) and the sequence check (`tests/unit/core/bot.spec.ts`).
 - **Tuning:** `sim.config.ts`.
+
+## Renderer (M4)
+
+```
+main.ts rAF: sim.step(dt, queued InputEvents) → view.render(state, alpha) → hud.update(state)
+render/view.ts:      createRenderer (WebGLRenderer, ADR-001) · scene · fog/sky/hemi per biome · sun + 1024² shadow
+                     follow camera = pure function of state (reproducible screenshots)
+render/world-view.ts: per frame, every live chunk → instanced pools (begin/add/end):
+                     road + ground tiles (instance colour per biome), lane dashes, roadside props,
+                     backdrop blocks, obstacles (Kenney models fitted to the sim's collision boxes),
+                     coins (spin by sim t), pickups
+render/models.ts:    GLTFLoader → fitParts (normalise into a box) → instanced() pools; box fallback on load error
+render/skater.ts:    procedural rig; ride / slide / air / grab / crashed poses from state
+render/hud.ts:       DOM overlay; writes only changed HTML
+```
+
+- **Render z:** `-(worldZ - distance)`, so the player stays at the origin.
+- **Draw calls:** one per sub-mesh per model, independent of instance counts (51–53 in play).
+- **Biome looks:** in `render/biomes.ts`. Street = barrier / highway gantry / delivery trucks / lamps / coloured buildings. Park = log / gantry / cliff rocks / trees / hedges.
+- **Assets:** `public/assets/kenney/**`, all CC0 and listed in `CREDITS.md` (checked by a test). ADR-004 covers them.
+- **Debug bridge additions:** `setSeed`, `advance(seconds)` (manual clock), `getRenderStats()`.
 
 ## Frame pipeline (target, PLAN §3)
 
