@@ -1,8 +1,4 @@
 {
-  "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": true,
-    "ponytail@ponytail": true
-  },
   "hooks": {
     "PreToolUse": [
       {
@@ -36,5 +32,10 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": true,
+    "ponytail@ponytail": true,
+    "context7@claude-plugins-official": true
   }
 }

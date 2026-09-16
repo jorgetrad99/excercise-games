@@ -529,3 +529,34 @@ Tune 1–3 against real per-gesture recordings, not synthetic motion.
 - **No Quaternius jump/crouch clips**, so those poses are bone overrides. A skate-specific animation set (e.g. Universal Animation Library retargeted) would read better.
 - **Heavier than Kenney** (up to ~860k triangles). Check on a mid-range laptop; the first levers are fewer backdrop trees or `gltf-transform simplify` on the buildings.
 - **Downtown City MegaKit** (newer, itch.io-only) wasn't used: scripting its download failed twice.
+
+---
+
+## 2026-09-16 — Fix: Stop hook's false "PROGRESS.md not updated" reminder
+
+**Bug:** `.claude/hooks/remind-progress-log.mjs` reminded whenever `git status --porcelain` listed any file but not `docs/PROGRESS.md`.
+
+- Once PROGRESS.md was committed it disappeared from that list.
+- The long-uncommitted `.claude/settings.json` (context7 plugin) kept the list non-empty.
+- So the hook fired on every stop, even though the entries were in history (`git log -- docs/PROGRESS.md`: last entry committed in `8ef2072`).
+
+### What changed
+
+- **Hook:**
+  - ignores `.claude/` and `tmp/`
+  - lists untracked files individually
+  - handles rename/quoted porcelain paths
+  - runs git in `CLAUDE_PROJECT_DIR`
+  - the message names the files that triggered it
+- **`.claude/settings.json` committed:** only `enabledPlugins` changed (adds `context7@claude-plugins-official`, which AGENTS.md §1 requires); hooks are unchanged.
+
+### Verified
+
+Ran the hook in four states:
+
+- only `.claude/` dirty → silent
+- untracked `src/` file → reminder naming it
+- code + PROGRESS.md dirty → silent
+- run from `C:/` with `CLAUDE_PROJECT_DIR` → silent
+
+Then `pnpm verify`.
