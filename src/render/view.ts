@@ -91,8 +91,8 @@ export function createGameView(
       world.update(s, distance);
       skater.update(s, pose);
       // Camera is a pure function of state (no smoothing memory) so screenshots are reproducible.
-      camera.position.set(x * 0.65, 3.6 + y * 0.35, 6.4);
-      camera.lookAt(x * 0.8, 1.3 + y * 0.25, -9);
+      camera.position.set(x * 0.7, 2.8 + y * 0.35, 4.2);
+      camera.lookAt(x * 0.85, 0.8 + y * 0.25, -9);
       sun.position.set(x - 6, 14, 6);
       sun.target.position.set(x, 0, -4);
       renderer.render(scene, camera);

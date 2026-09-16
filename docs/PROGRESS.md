@@ -560,3 +560,27 @@ Ran the hook in four states:
 - run from `C:/` with `CLAUDE_PROJECT_DIR` → silent
 
 Then `pnpm verify`.
+
+---
+
+## 2026-09-16 — Phase 2, Piece 1: closer follow camera
+
+**Result:** the skater is ~1.7× taller on screen (≈ 40% of frame height at 1280×720, was ≈ 25%). FOV stays 60°. The horizon and look-ahead are unchanged, so you see obstacles just as early.
+
+### What changed
+
+- **`render/view.ts`:** camera eye `(x·0.65, 3.6, 6.4)` → `(x·0.7, 2.8, 4.2)`; look target `(x·0.8, 1.3, −9)` → `(x·0.85, 0.8, −9)`.
+  - The lower look target tilts the view down so the board clears the bottom edge.
+  - Lateral follow is a touch stronger, so lane changes keep the skater centred at the closer distance.
+  - I didn't narrow the FOV: that would magnify the road ahead too and crop the side lanes.
+- **Screenshot baselines** at seed 42 t = 0/10/30/60 regenerated on purpose.
+
+### Verified
+
+- **`pnpm verify` → exit 0:** vitest 268 passed + 1 skipped; playwright smoke 9/9. Draw calls are still 59 at t = 60.
+- **Before/after sheet:** `tmp/camera/compare-seed42.png`. Raw frames are in `tmp/camera/{before,after}/`.
+
+### Known gaps
+
+- Coins you've already passed in the side lanes still pass close to the camera in the bottom corners (t = 30). This was already there before and is less visible now.
+- **Playtest note:** `http://localhost:5173/?seed=42`. Check that jumps over the tall bars and lane changes at the edges don't feel cramped.
