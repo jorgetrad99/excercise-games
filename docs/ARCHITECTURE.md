@@ -90,7 +90,7 @@ render/view.ts:      createRenderer (WebGLRenderer, ADR-001) · scene · fog/sky
                      follow camera = pure function of state (reproducible screenshots)
 render/world-view.ts: per frame, every live chunk → instanced pools (begin/add/end):
                      road + ground tiles (instance colour per biome), lane dashes, roadside props,
-                     backdrop blocks, obstacles (Kenney models fitted to the sim's collision boxes),
+                     backdrop blocks, obstacles (Quaternius models + procedural pieces fitted to the sim's collision boxes; flat parts merged per model, render/merge.ts),
                      coins (spin by sim t), pickups
 render/models.ts:    GLTFLoader → fitParts (normalise into a box) → instanced() pools; box fallback on load error
 render/skater.ts:    procedural rig; ride / slide / air / grab / crashed poses from state
@@ -99,8 +99,9 @@ render/hud.ts:       DOM overlay; writes only changed HTML
 
 - **Render z:** `-(worldZ - distance)`, so the player stays at the origin.
 - **Draw calls:** one per sub-mesh per model, independent of instance counts (51–53 in play).
-- **Biome looks:** in `render/biomes.ts`. Street = barrier / highway gantry / delivery trucks / lamps / coloured buildings. Park = log / gantry / cliff rocks / trees / hedges.
-- **Assets:** `public/assets/kenney/**`, all CC0 and listed in `CREDITS.md` (checked by a test). ADR-004 covers them.
+- **Biome looks:** in `render/biomes.ts`. Street = procedural barrier / height bar, buses and a construction box as walls, streetlights, traffic lights, signs, parked cars, Quaternius buildings. Park = procedural log / beam, hedge walls, maple and birch trees, flowers.
+- **Assets:** `public/assets/quaternius/**`, all CC0, fetched and converted by `scripts/vendor-quaternius.mjs` and listed in `CREDITS.md` (checked by a test). ADR-005 covers them.
+- **Skater:** `render/skater.ts` puts the rigged Quaternius Casual_Hoodie on a procedural board. The clip and its time are chosen from sim state, plus crouch/tuck bone rotations; the mixer only writes changed values, so bent bones are restored each frame.
 - **Debug bridge additions:** `setSeed`, `advance(seconds)` (manual clock), `getRenderStats()`.
 
 ## Latency & frame pacing

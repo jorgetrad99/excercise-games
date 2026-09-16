@@ -1,5 +1,5 @@
-// Biome look (PLAN §2.3): palette, fog and which Kenney models dress the track. Flat Kenney style
-// (PLAN §8 Q4 default; Jorge can override). Colours are sRGB hex.
+// Biome look (PLAN §2.3): palette, fog and which models dress the track. Quaternius stylized low-poly
+// (PLAN §8 Q4: Jorge asked for Quaternius/KayKit over Kenney flat). Colours are sRGB hex.
 import type { BiomeId } from '../core/types';
 import type { ModelId } from './models';
 
@@ -12,49 +12,60 @@ export interface BiomeLook {
   ground: string;
   hemiSky: string;
   hemiGround: string;
-  /** Obstacle models per sim class. `wall` is repeated along the wall's length. */
+  /** Obstacle models per sim class. */
   jump: ModelId;
   slide: ModelId;
-  wall: { model: ModelId; segment: number };
+  /** Walls ≥ 5 m: `long` models repeated every ~segment m; shorter walls: `short`. */
+  wall: { long: readonly ModelId[]; segment: number; short: ModelId };
   /** Roadside props, picked per slot by a hash of (chunk, slot). */
   props: readonly ModelId[];
-  /** Big backdrop blocks either side (buildings / hedges), one colour picked per block. */
-  blocks: readonly string[];
-  blockHeight: [number, number];
+  /** Backdrop beyond the sidewalk (buildings / trees), scaled to backdropHeight. */
+  backdrop: readonly ModelId[];
+  backdropHeight: [number, number];
 }
 
 export const BIOME_LOOKS: Record<BiomeId, BiomeLook> = {
   street: {
-    sky: '#9fd3f2',
-    fogNear: 40,
+    sky: '#a8d8f0',
+    fogNear: 45,
     fogFar: 190,
-    road: '#4a4f5c',
+    road: '#3d4451',
     roadLine: '#f4f1e8',
-    ground: '#b9b4a8',
-    hemiSky: '#dff1ff',
+    ground: '#c9c2b4',
+    hemiSky: '#e6f4ff',
     hemiGround: '#8a7f6f',
     jump: 'barrier',
-    slide: 'gantry',
-    wall: { model: 'delivery', segment: 5.5 },
-    props: ['lamp', 'lamp', 'beacon'],
-    blocks: ['#e07a5f', '#f2cc8f', '#81b29a', '#3d405b', '#f4f1de', '#98c1d9'],
-    blockHeight: [6, 22],
+    slide: 'heightBar',
+    wall: { long: ['bus', 'schoolBus'], segment: 9, short: 'container' },
+    props: [
+      'streetlight',
+      'streetlight',
+      'trafficLight',
+      'signStop',
+      'signNoParking',
+      'car1',
+      'taxi',
+      'suv',
+      'car2',
+    ],
+    backdrop: ['building2', 'building3', 'building4', 'house2'],
+    backdropHeight: [9, 20],
   },
   park: {
-    sky: '#bfe6c8',
+    sky: '#c4ead0',
     fogNear: 35,
     fogFar: 170,
-    road: '#8d6e53',
-    roadLine: '#e9dcc0',
-    ground: '#6fae5b',
+    road: '#9c7a5b',
+    roadLine: '#efe3c8',
+    ground: '#78b35f',
     hemiSky: '#f3ffe8',
     hemiGround: '#4f7d3a',
     jump: 'log',
-    slide: 'gantry',
-    wall: { model: 'cliff', segment: 2 },
-    props: ['tree', 'oak', 'tree', 'rock'],
-    blocks: ['#4e8f3a', '#5fa044', '#3f7a2f'],
-    blockHeight: [2, 5],
+    slide: 'beam',
+    wall: { long: ['bush', 'bushFlowers'], segment: 2.5, short: 'bush' },
+    props: ['maple1', 'birch', 'flowers', 'bushFlowers', 'flowers'],
+    backdrop: ['maple1', 'maple3', 'birch'],
+    backdropHeight: [6, 10],
   },
 };
 

@@ -1,22 +1,33 @@
 # Credits
 
-Every third-party asset shipped or used in tests. CC0 needs no attribution, but every file under `public/assets/` is listed anyway (`tests/unit/credits.spec.ts` checks it).
+Every third-party asset shipped or used in tests. CC0 needs no attribution, but every file under `public/assets/` is listed anyway (`tests/unit/credits.spec.ts` checks it). Quaternius files are fetched and converted by `scripts/vendor-quaternius.mjs`.
 
 | File | Source | License | Notes |
 | --- | --- | --- | --- |
 | `tests/e2e/assets/placeholder-person.mjpeg` | Derived from `male_full_height_hands.jpg`, MediaPipe testdata (`https://storage.googleapis.com/mediapipe-assets/tasks/testdata/vision/male_full_height_hands.jpg`, sha256 `8a7fe5be…87f8`), © The MediaPipe Authors | Apache-2.0 | Test-only placeholder: composited onto a grey canvas and animated by `scripts/make-placeholder-clip.mjs`. Not shipped in the app. |
-| `public/assets/kenney/car/License.txt` | Kenney, Car Kit 3.1 (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/car/Textures/colormap.png` | Kenney, Car Kit 3.1 (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/car/delivery.glb` | Kenney, Car Kit 3.1 (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/city/License.txt` | Kenney, City Kit (Roads) (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/city/Textures/colormap.png` | Kenney, City Kit (Roads) (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/city/construction-barrier.glb` | Kenney, City Kit (Roads) (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/city/construction-light.glb` | Kenney, City Kit (Roads) (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/city/light-square.glb` | Kenney, City Kit (Roads) (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/city/sign-highway.glb` | Kenney, City Kit (Roads) (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/nature/License.txt` | Kenney, Nature Kit (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/nature/cliff_block_rock.glb` | Kenney, Nature Kit (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/nature/log_large.glb` | Kenney, Nature Kit (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/nature/rock_largeA.glb` | Kenney, Nature Kit (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/nature/tree_default.glb` | Kenney, Nature Kit (kenney.nl) | CC0 | Unmodified. |
-| `public/assets/kenney/nature/tree_oak.glb` | Kenney, Nature Kit (kenney.nl) | CC0 | Unmodified. |
+| `public/assets/quaternius/buildings/Building2_Large.glb` | Quaternius, Buildings (https://quaternius.com/packs/buildings.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/buildings/Building3_Big.glb` | Quaternius, Buildings (https://quaternius.com/packs/buildings.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/buildings/Building4.glb` | Quaternius, Buildings (https://quaternius.com/packs/buildings.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/buildings/House2.glb` | Quaternius, Buildings (https://quaternius.com/packs/buildings.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/buildings/License.txt` | Quaternius, Buildings (https://quaternius.com/packs/buildings.html) | CC0 | Pack license, unmodified. |
+| `public/assets/quaternius/cars/License.txt` | Quaternius, Cars (https://quaternius.com/packs/cars.html) | CC0 | Pack license, unmodified. |
+| `public/assets/quaternius/cars/NormalCar1.glb` | Quaternius, Cars (https://quaternius.com/packs/cars.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/cars/NormalCar2.glb` | Quaternius, Cars (https://quaternius.com/packs/cars.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/cars/SUV.glb` | Quaternius, Cars (https://quaternius.com/packs/cars.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/cars/Taxi.glb` | Quaternius, Cars (https://quaternius.com/packs/cars.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/character/Casual_Hoodie.glb` | Quaternius, Ultimate Modular Men (https://quaternius.com/packs/ultimatemodularcharacters.html) | CC0 | Animations trimmed to Idle_Neutral/Run/Roll/Death/Wave; glTF → GLB. |
+| `public/assets/quaternius/character/License.txt` | Quaternius, Ultimate Modular Men (https://quaternius.com/packs/ultimatemodularcharacters.html) | CC0 | Pack license, unmodified. |
+| `public/assets/quaternius/nature/BirchTree_2.glb` | Quaternius, Ultimate Stylized Nature (https://quaternius.com/packs/ultimatestylizednature.html) | CC0 | glTF → GLB, textures resized to 512 px. |
+| `public/assets/quaternius/nature/Bush_Large.glb` | Quaternius, Ultimate Stylized Nature (https://quaternius.com/packs/ultimatestylizednature.html) | CC0 | glTF → GLB, textures resized to 512 px. |
+| `public/assets/quaternius/nature/Bush_Large_Flowers.glb` | Quaternius, Ultimate Stylized Nature (https://quaternius.com/packs/ultimatestylizednature.html) | CC0 | glTF → GLB, textures resized to 512 px. |
+| `public/assets/quaternius/nature/Flower_3_Clump.glb` | Quaternius, Ultimate Stylized Nature (https://quaternius.com/packs/ultimatestylizednature.html) | CC0 | glTF → GLB, textures resized to 512 px. |
+| `public/assets/quaternius/nature/License.txt` | Quaternius, Ultimate Stylized Nature (https://quaternius.com/packs/ultimatestylizednature.html) | CC0 | Pack license, unmodified. |
+| `public/assets/quaternius/nature/MapleTree_1.glb` | Quaternius, Ultimate Stylized Nature (https://quaternius.com/packs/ultimatestylizednature.html) | CC0 | glTF → GLB, textures resized to 512 px. |
+| `public/assets/quaternius/nature/MapleTree_3.glb` | Quaternius, Ultimate Stylized Nature (https://quaternius.com/packs/ultimatestylizednature.html) | CC0 | glTF → GLB, textures resized to 512 px. |
+| `public/assets/quaternius/streets/License.txt` | Quaternius, Modular Streets (https://quaternius.com/packs/modularstreets.html) | CC0 | Pack license, unmodified. |
+| `public/assets/quaternius/streets/Sign_NoParking.glb` | Quaternius, Modular Streets (https://quaternius.com/packs/modularstreets.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/streets/Sign_Stop.glb` | Quaternius, Modular Streets (https://quaternius.com/packs/modularstreets.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/streets/Streetlight_Single.glb` | Quaternius, Modular Streets (https://quaternius.com/packs/modularstreets.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/streets/TrafficLight.glb` | Quaternius, Modular Streets (https://quaternius.com/packs/modularstreets.html) | CC0 | OBJ+MTL → GLB (obj2gltf). |
+| `public/assets/quaternius/transport/Bus.glb` | Quaternius, Public Transport (https://quaternius.com/packs/publictransport.html) | CC0 | OBJ+MTL → GLB (obj2gltf). CC0 per the pack page (no License.txt in the Drive folder). |
+| `public/assets/quaternius/transport/SchoolBus.glb` | Quaternius, Public Transport (https://quaternius.com/packs/publictransport.html) | CC0 | OBJ+MTL → GLB (obj2gltf). CC0 per the pack page (no License.txt in the Drive folder). |

@@ -1,6 +1,6 @@
 # ADR-004: `three` as a runtime dependency; Kenney CC0 models vendored in the repo
 
-- **Status:** Accepted (art direction is an assumption Jorge can override, PLAN §8 Q4)
+- **Status:** Accepted for `three`. The Kenney asset half is superseded by ADR-005 (Quaternius).
 - **Date:** 2026-09-16
 
 ## Context

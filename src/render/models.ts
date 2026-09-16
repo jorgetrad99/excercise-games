@@ -1,9 +1,11 @@
-// Kenney CC0 models (public/assets/kenney, see CREDITS.md) normalised into target boxes and drawn as
-// InstancedMeshes: one draw call per sub-mesh per model, however many copies are on screen.
+// Quaternius CC0 models (public/assets/quaternius, scripts/vendor-quaternius.mjs, CREDITS.md) plus a few
+// procedural pieces in the same flat style, normalised into target boxes and drawn as InstancedMeshes:
+// one draw call per sub-mesh per model, however many copies are on screen.
 import {
   Box3,
   BoxGeometry,
   Color,
+  CylinderGeometry,
   InstancedMesh,
   Matrix4,
   Mesh,
@@ -11,6 +13,7 @@ import {
   Object3D,
   Quaternion,
   Vector3,
+  type AnimationClip,
   type BufferGeometry,
   type Material,
 } from 'three';
@@ -33,51 +36,137 @@ export interface Fit {
 }
 
 export const MODEL_FILES = {
-  barrier: 'city/construction-barrier.glb',
-  gantry: 'city/sign-highway.glb',
-  lamp: 'city/light-square.glb',
-  beacon: 'city/construction-light.glb',
-  delivery: 'car/delivery.glb',
-  log: 'nature/log_large.glb',
-  tree: 'nature/tree_default.glb',
-  oak: 'nature/tree_oak.glb',
-  rock: 'nature/rock_largeA.glb',
-  cliff: 'nature/cliff_block_rock.glb',
+  skater: 'character/Casual_Hoodie.glb',
+  streetlight: 'streets/Streetlight_Single.glb',
+  trafficLight: 'streets/TrafficLight.glb',
+  signStop: 'streets/Sign_Stop.glb',
+  signNoParking: 'streets/Sign_NoParking.glb',
+  bus: 'transport/Bus.glb',
+  schoolBus: 'transport/SchoolBus.glb',
+  car1: 'cars/NormalCar1.glb',
+  car2: 'cars/NormalCar2.glb',
+  suv: 'cars/SUV.glb',
+  taxi: 'cars/Taxi.glb',
+  building2: 'buildings/Building2_Large.glb',
+  building3: 'buildings/Building3_Big.glb',
+  building4: 'buildings/Building4.glb',
+  house2: 'buildings/House2.glb',
+  maple1: 'nature/MapleTree_1.glb',
+  maple3: 'nature/MapleTree_3.glb',
+  birch: 'nature/BirchTree_2.glb',
+  bush: 'nature/Bush_Large.glb',
+  bushFlowers: 'nature/Bush_Large_Flowers.glb',
+  flowers: 'nature/Flower_3_Clump.glb',
 } as const;
-export type ModelId = keyof typeof MODEL_FILES;
 
-/** Flat-coloured box, used when a model fails to load (the game must still be playable). */
-function fallback(): Object3D {
+/** Built in code (no suitable CC0 model in the family): hurdles, bars and the construction box. */
+export const PROCEDURAL = ['barrier', 'heightBar', 'log', 'beam', 'container'] as const;
+
+export type FileModelId = keyof typeof MODEL_FILES;
+export type ModelId = FileModelId | (typeof PROCEDURAL)[number];
+
+export interface LoadedModel {
+  scene: Object3D;
+  animations: AnimationClip[];
+}
+
+const flat = (color: string, roughness = 0.8) => new MeshStandardMaterial({ color, roughness });
+
+function box(
+  o: Object3D,
+  material: Material,
+  w: number,
+  h: number,
+  d: number,
+  x: number,
+  y: number,
+  z = 0,
+): void {
+  const m = new Mesh(new BoxGeometry(w, h, d), material);
+  m.position.set(x, y, z);
+  o.add(m);
+}
+
+/** Alternating stripes along x (hazard boards). Two materials → two draw calls, however long. */
+function stripes(
+  o: Object3D,
+  a: Material,
+  b: Material,
+  w: number,
+  h: number,
+  d: number,
+  y: number,
+  n: number,
+): void {
+  for (let i = 0; i < n; i++) box(o, i % 2 ? b : a, w / n, h, d, -w / 2 + (w / n) * (i + 0.5), y);
+}
+
+function procedural(id: (typeof PROCEDURAL)[number]): Object3D {
   const o = new Object3D();
-  o.add(new Mesh(new BoxGeometry(1, 1, 1), new MeshStandardMaterial({ color: '#c96' })));
+  const red = flat('#e63946');
+  const white = flat('#f1faee');
+  const yellow = flat('#ffb703');
+  const dark = flat('#264653');
+  const wood = flat('#8d5a3b');
+  const woodLight = flat('#c68b59');
+  if (id === 'barrier') {
+    stripes(o, red, white, 1.6, 0.28, 0.08, 0.72, 6);
+    stripes(o, white, red, 1.6, 0.2, 0.08, 0.36, 6);
+    for (const x of [-0.7, 0.7]) box(o, dark, 0.08, 0.9, 0.5, x, 0.45);
+  } else if (id === 'heightBar') {
+    stripes(o, yellow, dark, 2, 0.35, 0.2, 2.3, 8);
+    for (const x of [-0.95, 0.95]) box(o, dark, 0.14, 2.6, 0.14, x, 1.3);
+  } else if (id === 'log') {
+    const log = new Mesh(new CylinderGeometry(0.42, 0.45, 1.8, 12).rotateZ(Math.PI / 2), wood);
+    log.position.y = 0.45;
+    o.add(log);
+    for (const x of [-0.9, 0.9]) box(o, woodLight, 0.02, 0.7, 0.7, x, 0.45);
+  } else if (id === 'beam') {
+    box(o, woodLight, 2, 0.4, 0.4, 0, 2.4);
+    for (const x of [-0.95, 0.95]) box(o, wood, 0.2, 2.6, 0.2, x, 1.3);
+  } else {
+    box(o, flat('#f4a261'), 1, 1, 1, 0, 0.5);
+    for (const y of [0.2, 0.5, 0.8]) box(o, flat('#e76f51'), 1.02, 0.06, 1.02, 0, y);
+  }
   return o;
 }
 
-export async function loadModels(base = '/assets/kenney/'): Promise<Record<ModelId, Object3D>> {
+/** Flat-coloured box, used when a model fails to load (the game must still be playable). */
+function fallback(): LoadedModel {
+  const o = new Object3D();
+  o.add(new Mesh(new BoxGeometry(1, 1, 1), flat('#c96')));
+  return { scene: o, animations: [] };
+}
+
+export async function loadModels(
+  base = '/assets/quaternius/',
+): Promise<Record<ModelId, LoadedModel>> {
   const loader = new GLTFLoader();
-  const entries = await Promise.all(
-    (Object.keys(MODEL_FILES) as ModelId[]).map(async (id) => {
+  const files = await Promise.all(
+    (Object.keys(MODEL_FILES) as FileModelId[]).map(async (id) => {
       try {
-        return [id, (await loader.loadAsync(base + MODEL_FILES[id])).scene] as const;
+        const gltf = await loader.loadAsync(base + MODEL_FILES[id]);
+        return [id, { scene: gltf.scene, animations: gltf.animations }] as const;
       } catch (err) {
         console.warn(`model ${id} failed to load, using a box`, err);
         return [id, fallback()] as const;
       }
     }),
   );
-  return Object.fromEntries(entries) as Record<ModelId, Object3D>;
+  const built = PROCEDURAL.map((id) => [id, { scene: procedural(id), animations: [] }] as const);
+  return Object.fromEntries([...files, ...built]) as Record<ModelId, LoadedModel>;
 }
 
 /** Flatten a model into parts whose `local` matrices fit it into `fit`. */
 export function fitParts(model: Object3D, fit: Fit): Part[] {
   model.updateMatrixWorld(true);
-  const box = new Box3().setFromObject(model);
-  const size = box.getSize(new Vector3());
+  const box3 = new Box3().setFromObject(model);
+  const size = box3.getSize(new Vector3());
   const turn = fit.long !== undefined && (fit.long === 'x') !== size.x >= size.z;
   const [sx, sz] = turn ? [size.z, size.x] : [size.x, size.z];
   const rot = new Matrix4().makeRotationY(turn ? Math.PI / 2 : 0);
-  const centre = box.getCenter(new Vector3());
-  const toOrigin = new Matrix4().makeTranslation(-centre.x, -box.min.y, -centre.z);
+  const centre = box3.getCenter(new Vector3());
+  const toOrigin = new Matrix4().makeTranslation(-centre.x, -box3.min.y, -centre.z);
   const scale = new Matrix4().makeScale(
     fit.w / (sx || 1),
     fit.h / (size.y || 1),
@@ -95,6 +184,13 @@ export function fitParts(model: Object3D, fit: Fit): Part[] {
     }
   });
   return parts;
+}
+
+/** Scale uniformly to height `h`, keeping footprint proportions. */
+export function uniformFit(model: Object3D, h: number): Fit {
+  const size = new Box3().setFromObject(model).getSize(new Vector3());
+  const k = h / (size.y || 1);
+  return { w: size.x * k, h, d: size.z * k };
 }
 
 const tmp = new Matrix4();

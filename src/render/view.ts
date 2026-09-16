@@ -7,14 +7,13 @@ import {
   PerspectiveCamera,
   PMREMGenerator,
   Scene,
-  type Object3D,
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { SimState } from '../core/types';
 import { biomeAt } from '../core/worldgen';
 import { BIOME_LOOKS } from './biomes';
 import type { RenderPose } from './interp';
-import type { ModelId } from './models';
+import type { LoadedModel, ModelId } from './models';
 import { createRenderer, fitToCanvas } from './renderer';
 import { createSkater } from './skater';
 import { createWorldView } from './world-view';
@@ -50,7 +49,7 @@ function addLights(scene: Scene): { hemi: HemisphereLight; sun: DirectionalLight
 
 export function createGameView(
   canvas: HTMLCanvasElement,
-  models: Record<ModelId, Object3D>,
+  models: Record<ModelId, LoadedModel>,
 ): GameView {
   const renderer = createRenderer(canvas);
   const scene = new Scene();
@@ -70,7 +69,7 @@ export function createGameView(
   const { hemi, sun } = addLights(scene);
 
   const world = createWorldView(models);
-  const skater = createSkater();
+  const skater = createSkater(models.skater);
   scene.add(world.object, skater.object);
   let frames = 0;
 

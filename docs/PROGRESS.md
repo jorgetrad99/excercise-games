@@ -487,3 +487,45 @@ Tune 1–3 against real per-gesture recordings, not synthetic motion.
 
 - `http://localhost:5173/?seed=42&latency=1` shows the live table (pipeline, pose/keyboard events, your display's refresh rate, judder).
 - For true motion-to-photon, film yourself and the screen at 240 fps. Jump, then count frames from your hips starting to rise to the white square.
+
+---
+
+## 2026-09-16 — Art: Quaternius replaces Kenney (approved by Jorge from the screenshot comparison)
+
+**Result:** street and park are now dressed with Quaternius CC0 models, with a rigged skater on a procedural board. Draw calls are 57–59 (Kenney was 51–53) and the game holds 60 fps at 1080p on the street, in the park, and with the pose worker running. Decision record: ADR-005.
+
+### What changed
+
+- **`scripts/vendor-quaternius.mjs`:** downloads the chosen files from Quaternius' public Google Drive folders, then converts them.
+  - `npx obj2gltf@3.2.0` for OBJ; `@gltf-transform/cli@4.5.0` to prune and resize textures to 512 px.
+  - Output goes to `public/assets/quaternius/{character,streets,cars,transport,buildings,nature}`, 7.6 MB committed.
+  - Kenney assets removed. `CREDITS.md` lists every file, and the credits test passes.
+- **`render/models.ts`:**
+  - new model list
+  - procedural barrier / height bar / log / beam / construction box
+  - `loadModels` also returns animations
+- **`render/merge.ts`:** merges each model's flat-colour parts into one vertex-coloured mesh. On the street this took draw calls from 241–267 to 57–59.
+- **`render/world-view.ts` + `biomes.ts`:**
+  - Street: buses as long walls, construction box for walls under 5 m, parked cars and street furniture, Quaternius buildings as backdrop.
+  - Park: hedge walls, maple/birch trees, flowers.
+  - Props and backdrop don't cast shadows.
+- **`render/skater.ts`:** Casual_Hoodie (5 of its 24 animation clips kept).
+  - Ride: Idle_Neutral plus a crouch.
+  - Jump: tuck. Grab: Wave arm up. Slide: deep crouch. Crash: end frame of Death.
+  - Bones bend about the character's side axis.
+  - Two bugs fixed along the way: GLTFLoader strips dots from bone names, and the mixer only writes changed values, so bends accumulated until bones were restored each frame.
+
+### Verified
+
+- **`pnpm verify` → exit 0:** vitest 268 passed + 1 skipped; playwright smoke 9/9.
+- **Screenshot baselines** at seed 42 t = 0/10/30/60 were regenerated intentionally for the new art. Jorge reviewed the before/after sheet (`tmp/art/compare-seed42.png`) and the pose sheet (`tmp/art/poses2.png`) before this commit.
+- **Perf at 1920×1080:**
+  - bot run: 60 fps for 20 s
+  - pose worker running: 60 fps, pose 30 fps
+  - park biome at 1450 m: 60 fps, 59 draw calls, 862k triangles
+
+### Known gaps / next
+
+- **No Quaternius jump/crouch clips**, so those poses are bone overrides. A skate-specific animation set (e.g. Universal Animation Library retargeted) would read better.
+- **Heavier than Kenney** (up to ~860k triangles). Check on a mid-range laptop; the first levers are fewer backdrop trees or `gltf-transform simplify` on the buildings.
+- **Downtown City MegaKit** (newer, itch.io-only) wasn't used: scripting its download failed twice.
