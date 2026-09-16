@@ -3,20 +3,22 @@ interface Window {
   __game: {
     /** MiniGame id launched via ?game=<id> or the menu; null while the menu is up. */
     getActiveGame(): string | null;
-    /** Full sim snapshot (live object: copy it if you keep it). */
-    getState(): import('./core/types').SimState;
+    /** Runs in this session: 1, or 2 with ?players=2; 0 while the menu is up. */
+    getPlayerCount(): number;
+    /** Full sim snapshot of player `player` (default 0 = P1; live object: copy it if you keep it). */
+    getState(player?: number): import('./core/types').SimState;
     getFps(): number;
     /** null when not in ?input=pose or before the camera opened. */
     getPoseStats(): import('./pose/pipeline').PoseStats | null;
-    /** Latest gesture signals (pose/replay input), null before the first frame. */
-    getSignals(): import('./pose/gestures').SignalFrame | null;
-    /** Last 200 InputEvents from every source, oldest first. */
+    /** Latest gesture signals of `player` (default P1; pose/replay input), null before the first frame. */
+    getSignals(player?: number): import('./pose/gestures').SignalFrame | null;
+    /** Last 200 InputEvents from every source and player, oldest first (pose events carry `player`). */
     getEvents(): import('./core/input').InputEvent[];
-    /** Fire an event as if an InputSource produced it. */
-    inject(e: { type: import('./core/input').InputEventType; t?: number }): void;
-    /** Restart the run with a new seed. */
+    /** Fire an event as if an InputSource produced it, for `player` (default P1). */
+    inject(e: { type: import('./core/input').InputEventType; t?: number; player?: number }): void;
+    /** Restart every player's run with a new seed. */
     setSeed(seed: number): void;
-    /** Step the sim synchronously by `seconds` (use with ?clock=manual); returns sim time. */
+    /** Step every sim synchronously by `seconds` (use with ?clock=manual); returns P1's sim time. */
     advance(seconds: number): number;
     /** Renderer counters from the last frame; null until the models loaded. */
     getRenderStats(): import('./render/view').RenderStats | null;

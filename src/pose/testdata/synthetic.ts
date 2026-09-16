@@ -152,3 +152,22 @@ export const JUMP: Key[] = [
   { ms: 200, to: { rise: 0 } },
   { ms: 400, to: {} },
 ];
+
+/** TEMPORARY(synthetic-fixtures): two-person frames standing in for two-players.json. screen-left body plays `left`,
+ *  screen-right body plays `right`; both at `scale`, torso centers at screen x 0.27 / 0.73. Pose
+ *  order alternates per frame, because MediaPipe's array order is no identity. */
+export function scriptTwo(
+  left: Key[],
+  right: Key[],
+  opts: { fps?: number; jitter?: number; scale?: number } = {},
+): PoseFrame[] {
+  const scale = opts.scale ?? 0.7;
+  // synthetic walk is scaled along with the body: walk w puts the torso at 0.5 + w * scale
+  const at = (x: number): Stance => ({ walk: (x - 0.5) / scale, scale });
+  const a = script(left, { ...opts, base: at(0.27) });
+  const b = script(right, { ...opts, base: at(0.73) });
+  return Array.from({ length: Math.max(a.length, b.length) }, (_, i) => {
+    const poses = [...(a[i]?.poses ?? []), ...(b[i]?.poses ?? [])];
+    return { t: (a[i] ?? b[i])!.t, poses: i % 2 ? poses.reverse() : poses };
+  });
+}

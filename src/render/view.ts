@@ -7,6 +7,7 @@ import {
   PerspectiveCamera,
   PMREMGenerator,
   Scene,
+  type WebGLRenderer,
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { SimState } from '../core/types';
@@ -24,8 +25,15 @@ export interface RenderStats {
   triangles: number;
 }
 
+/** Which horizontal slice of the canvas to draw into (split screen): slot `index` of `count`. */
+export interface Viewport {
+  index: number;
+  count: number;
+}
+
 export interface GameView {
-  render(s: Readonly<SimState>, pose: RenderPose): void;
+  /** Split screen: call once per player per frame, in index order (stats reset at index 0). */
+  render(s: Readonly<SimState>, pose: RenderPose, viewport?: Viewport): void;
   stats(): RenderStats;
 }
 
@@ -47,11 +55,34 @@ function addLights(scene: Scene): { hemi: HemisphereLight; sun: DirectionalLight
   return { hemi, sun };
 }
 
+/** Point the renderer and camera at a player's vertical slice of the canvas (the whole canvas for 1). */
+function useSlot(
+  renderer: WebGLRenderer,
+  camera: PerspectiveCamera,
+  canvas: HTMLCanvasElement,
+  { index, count }: Viewport,
+): void {
+  fitToCanvas(renderer, canvas);
+  // Whole CSS pixels so halves neither overlap nor leave a seam; the last slot takes the remainder.
+  const slot = Math.floor(canvas.clientWidth / count);
+  const x = index * slot;
+  const w = index === count - 1 ? canvas.clientWidth - x : slot;
+  const h = Math.max(1, canvas.clientHeight);
+  if (camera.aspect !== w / h) {
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  renderer.setViewport(x, 0, w, h);
+  renderer.setScissor(x, 0, w, h);
+  renderer.setScissorTest(count > 1);
+}
+
 export function createGameView(
   canvas: HTMLCanvasElement,
   models: Record<ModelId, LoadedModel>,
 ): GameView {
   const renderer = createRenderer(canvas);
+  renderer.info.autoReset = false; // one frame can be several render() calls (split screen)
   const scene = new Scene();
   const pmrem = new PMREMGenerator(renderer);
   // ponytail: RoomEnvironment instead of a Poly Haven HDRI (PLAN M4 lighting); swap when art is locked.
@@ -74,12 +105,12 @@ export function createGameView(
   let frames = 0;
 
   return {
-    render(s, pose) {
-      frames++;
-      if (fitToCanvas(renderer, canvas)) {
-        camera.aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
-        camera.updateProjectionMatrix();
+    render(s, pose, { index, count } = { index: 0, count: 1 }) {
+      if (index === 0) {
+        frames++;
+        renderer.info.reset();
       }
+      useSlot(renderer, camera, canvas, { index, count });
       const { distance, x, y } = pose;
       const look = BIOME_LOOKS[biomeAt(distance)];
       sky.set(look.sky);

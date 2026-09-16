@@ -7,7 +7,7 @@ Agent-maintained module map. The spec lives in `docs/PLAN.md` §3; this file rec
 | Path                   | Status (M2)            | Role                                                                                    |
 | ---------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
 | `src/core/`            | M3 sim: `sim`, `worldgen`, `patterns`, `collision`, `bot`, `hash`, `prng`, `input` | Pure, deterministic TS: sim, worldgen, scoring, progression. ADR-002.                   |
-| `src/input/`           | keyboard, pose, replay | `InputSource` impls: pose, keyboard, replay, network. The only layer that sees both pose and core events. |
+| `src/input/`           | keyboard, pose, pose-players, replay | `InputSource` impls: pose, keyboard, replay, network. The only layer that sees both pose and core events. |
 | `src/pose/`            | M1 pipeline, M2 gestures | Camera manager, worker bridge, One Euro filter, signals, gesture engine, debug HUD. See "Pose pipeline (M1)" and "Gestures (M2)" below. |
 | `src/render/`          | M4 view + HUD          | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD.       |
 | `src/net/`             | —                      | Colyseus client + room protocol (M6).                                                   |
@@ -57,7 +57,7 @@ PoseFrame ─ body.ts: 7 landmarks, visibility ≥ 0.5 (hold ≤ 300 ms), One Eu
           ─ gestures.ts: SignalFrame {leanX, hipRise, hipRiseVel, headDrop, armsUp, tPose, zone, tracking, calibration}
                          + GestureEvents (lanes, jump/grab, slide, revive hold, T-pose recalibrate, tracking lost/restored)
 input/pose-source.ts: GestureEvent → core InputEvent via the game's `gestureProfile.toInput` (Skate Run: REVIVE_ACCEPT→REVIVE, TRACKING_LOST→PAUSE, TRACKING_RESTORED→RESUME)
-input/replay.ts: PoseFixture → pose-source (instant: fixture time; realtime: rebased onto performance.now)
+input/replay.ts: PoseFixture → pose-players (instant: fixture time; realtime: rebased onto performance.now)
 input/keyboard.ts: ←/→ lanes, Space jump, ↓ slide (down/up), ↑ grab, C recalibrate
 ```
 
@@ -65,6 +65,27 @@ input/keyboard.ts: ←/→ lanes, Space jump, ↓ slide (down/up), ↑ grab, C r
 - **Denominators are calibrated values, not live ones.** leanX uses the calibrated shoulder width; hipRise/headDrop use the calibrated torso. Live shoulder width collapses when the player turns (0.03 in the real recording), which would fire false lane changes. Calibrate at the play position (T-pose 1 s or `C`).
 - **The engine is context-free.** It doesn't know whether a run is active, so REVIVE and GRAB relevance is the sim's call (M3).
 - **Tests:** `src/pose/testdata/synthetic.ts` builds keyframed synthetic poses. Every test using it is marked `TEMPORARY(synthetic-fixtures)` until per-gesture recordings exist.
+
+## Local 2-player (Phase 2 Piece 3, PLAN §2.5 / M6a)
+
+```
+?players=2 → pose worker numPoses 2
+PoseFrame ─ pose/players.ts splitter: torso-center screen x (all 4 torso landmarks visible = a body)
+            2 bodies → sorted, screen-left = P1; 1 body → the player it was nearest (last 700 ms),
+            switches only past the center ± 0.06; a body that crosses over is forgotten at its old slot
+          → [P1 frame, P2 frame] → one pose-source (gesture engine + calibration) per player
+input/pose-players.ts: + pause-both: < 2 bodies for > 2 s → PAUSE both; both back → RESUME both
+                         (a player's own RESUME is held back while both are paused)
+main.ts: Player[] {sim (same seed), queue, signals, hud, overSince, best}; keyboard → P1 only
+         fresh run waits until all players calibrated (per run); play-again per player
+render: ONE renderer + ONE scene; per player: world + skater updated from that sim, then drawn into
+        its scissored half (view.ts useSlot). HUD per half (.player-hud boxes).
+```
+
+- **Pauses:** each player's own tracking-loss pause (700 ms) still applies to their run alone.
+- **Lane mode:** zones are thirds of the whole frame, so 2P forces `lean` (warns).
+- **Latency/judder instrumentation** tracks P1 only in 2P.
+- **Tests:** `src/pose/players.spec.ts`, `src/input/pose-players.spec.ts`, `tests/e2e/two-players.smoke.spec.ts`. They use synthetic two-person frames (`scriptTwo`) and `tests/e2e/assets/placeholder-two-people.mjpeg`, all marked `TEMPORARY(synthetic-fixtures)` until `two-players.json` exists.
 
 ## Core sim (M3)
 

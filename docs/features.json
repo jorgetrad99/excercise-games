@@ -98,12 +98,12 @@
       "id": "M6",
       "title": "Multiplayer",
       "tasks": [
-        { "id": "M6.1", "text": "6a Local split-screen (numPoses: 2, zone assignment, two sims, one seed)", "status": "todo" },
+        { "id": "M6.1", "text": "6a Local split-screen (numPoses: 2, zone assignment, two sims, one seed)", "status": "done", "note": "Phase 2 Piece 3. Zone split with hysteresis (pose/players.ts), pause both after > 2 s with one body, split screen via one renderer/scene + scissor. 2P perf at 1080p: 110-114 draw calls, 59-60 fps, pose 25-30 fps with 2 bodies (placeholder clip)." },
         { "id": "M6.2", "text": "6b Colyseus server, room protocol, ghost rendering, join-by-code, synced start, leaderboard", "status": "todo" },
         { "id": "M6.3", "text": "Dockerfile + Coolify-ready compose", "status": "todo" }
       ],
       "dod": [
-        { "id": "M6.D1", "text": "6a e2e with two-players.json replay produces two independent runs", "status": "todo" },
+        { "id": "M6.D1", "text": "6a e2e with two-players.json replay produces two independent runs", "status": "in_progress", "note": "Passing on TEMPORARY synthetic two-person frames (scriptTwo) + a manual-clock independence test. Done when rewired to Jorge's two-players.json." },
         { "id": "M6.D2", "text": "6b integration test: in-process server + two headless clients complete a synced race", "status": "todo" }
       ]
     },

@@ -27,10 +27,16 @@ export const skateRun: MiniGame<GameSim> = {
   async createView(canvas) {
     const view = createGameView(canvas, await loadModels());
     return {
-      render(sim, interpolate) {
-        const state = sim.getState();
-        const drawn = renderPose(state, sim.previous(), interpolate ? sim.alpha() : 0);
-        view.render(state, drawn);
+      render(sims, interpolate) {
+        // One scene for everyone: world and skater are rebuilt from each player's state before their slot.
+        const poses = sims.map((sim, index) => {
+          const state = sim.getState();
+          const pose = renderPose(state, sim.previous(), interpolate ? sim.alpha() : 0);
+          view.render(state, pose, { index, count: sims.length });
+          return pose;
+        });
+        const state = sims[0]!.getState();
+        const drawn = poses[0]!;
         if (state.phase !== 'running') return null;
         const changingLane = Math.abs(state.targetLane * simConfig.world.laneWidth - drawn.x) > 0.3;
         return {

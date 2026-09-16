@@ -13,7 +13,7 @@ export interface HudExtras {
 }
 
 const CSS = `
-.hud { position: fixed; inset: 0; pointer-events: none; font: 600 18px/1.3 system-ui, sans-serif;
+.hud { position: absolute; inset: 0; pointer-events: none; font: 600 18px/1.3 system-ui, sans-serif;
   color: #fff; text-shadow: 0 2px 4px #0008; }
 .hud .stats { position: absolute; top: 16px; right: 20px; text-align: right; }
 .hud .stats b { font-size: 34px; display: block; }

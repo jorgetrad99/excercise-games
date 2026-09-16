@@ -1,31 +1,41 @@
-// Replay InputSource (?input=replay:<fixture>): a recorded PoseFixture through the same pose path.
-import type { GestureConfig } from '../pose/gestures.config';
+// Replay InputSource (?input=replay:<fixture>): a recorded PoseFixture through the same pose path
+// as the live camera, including the 2-player split (?players=2).
+import { gestureConfig, type GestureConfig } from '../pose/gestures.config';
 import type { PoseFixture } from '../pose/recorder';
-import { createPoseSource, type GestureMap, type PoseSource } from './pose-source';
+import { createPosePlayers, type PosePlayers } from './pose-players';
+import type { GestureMap } from './pose-source';
 
 export interface ReplayOptions {
   /** 'instant' pushes every frame synchronously on start(); event t = fixture time. */
   mode?: 'instant' | 'realtime';
   toInput: GestureMap;
   config?: GestureConfig;
+  players?: 1 | 2;
   now?: () => number;
 }
 
-export interface ReplaySource extends PoseSource {
+export interface ReplaySource extends PosePlayers {
   /** Resolves after the last frame was pushed. */
   done: Promise<void>;
 }
 
 export function createReplaySource(
   fixture: PoseFixture,
-  { mode = 'realtime', toInput, config, now = () => performance.now() }: ReplayOptions,
+  {
+    mode = 'realtime',
+    toInput,
+    config = gestureConfig,
+    players = 1,
+    now = () => performance.now(),
+  }: ReplayOptions,
 ): ReplaySource {
-  const pose = createPoseSource({
+  const pose = createPosePlayers({
+    players,
     video: () => fixture.video,
     toInput,
+    config,
     now,
     tickMs: 0,
-    ...(config ? { config } : {}),
   });
   let finish = (): void => {};
   const done = new Promise<void>((resolve) => (finish = resolve));

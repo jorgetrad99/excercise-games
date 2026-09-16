@@ -41,9 +41,9 @@ export interface RunSummary {
 // Methods (not function-valued properties) on purpose: their parameters are bivariant, so a
 // MiniGame<SkateSim> fits a MiniGame[] registry without casts.
 export interface GameView<S extends GameSim> {
-  /** Draw the current state; `interpolate` false = exact tick (manual clock). Returns what was
-   *  drawn for judder tracking, or null when nothing moves. */
-  render(sim: S, interpolate: boolean): Drawn | null;
+  /** Draw every player's run side by side (1 = full screen); `interpolate` false = exact tick
+   *  (manual clock). Returns what P1's slot drew, for judder tracking, or null when nothing moves. */
+  render(sims: readonly S[], interpolate: boolean): Drawn | null;
   stats(): RenderStats;
 }
 

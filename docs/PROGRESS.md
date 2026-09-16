@@ -643,3 +643,82 @@ Then `pnpm verify`.
 - **Directory-index imports:** the games rule doesn't catch `../penalty` (from `games/<id>/`). Adding `'../*'` would also block `../types`; revisit if Piece 4 moves the files.
 - **The menu is mouse/keyboard only**; there's no pose selection yet.
 - **Playtest note:** `http://localhost:5173/?seed=42` shows the menu → Skate Run. `?game=skate-run&seed=42` skips it.
+
+---
+
+## 2026-09-16 — Phase 2, Piece 3: local 2-player (Skate Run)
+
+**Result:** `?players=2` runs two independent Skate Run runs from one camera on one seed, split screen. Bodies are assigned to players by screen half with hysteresis. If only one body is visible for > 2 s, both runs pause. All five agreed defaults are implemented as listed:
+
+1. own 0.7 s pause per player + pause both after > 2 s
+2. shared calibrated start, per-player play-again
+3. no rival skater in your half
+4. keyboard → P1 only
+5. lean lanes forced in 2P
+
+### What changed
+
+- **`src/pose/players.ts`:**
+  - Splitter: a body = all 4 torso landmarks visible (the gesture engine's presence rule).
+  - Two bodies → sorted by mirrored x, screen-left = P1.
+  - One body → keeps the player it was nearest to within `trackingLostMs`, and switches only past center ± 0.06. When it crosses over, its old slot is forgotten.
+  - `createPauseBoth(2000)` pause/resume rule.
+- **`src/input/pose-players.ts`:** splitter → one `pose-source` (gesture engine + calibration) per player, plus pause-both. A player's own RESUME is held back while both are paused.
+- **`input/replay.ts`:** now returns `PosePlayers` (with a `players` option), so replay goes through the same split as the camera.
+- **`src/main.ts`:** `Player[]` runs (sim, queue, signals, HUD, results/best).
+  - The calibration gate is decided per run, but a fresh run waits for every player.
+  - Latency/judder instrumentation tracks P1 only.
+  - Bridge: `getPlayerCount()`, `getState(i)`, `getSignals(i)`, `inject({…, player})`; `setSeed`/`advance` apply to all players.
+- **Rendering:**
+  - `render/view.ts`: one renderer and one scene. For each player, world + skater are updated from that sim and drawn into a scissored half (`useSlot`, whole-pixel slots). `renderer.info` is summed across slots.
+  - `games/types.ts` `GameView.render(sims[])`.
+  - HUD `.hud` is now `absolute`, so it can live in a `.player-hud` half box; 1P layout is unchanged.
+- **Test assets:**
+  - `scripts/make-placeholder-clip.mjs` also builds `tests/e2e/assets/placeholder-two-people.mjpeg` (same Apache-2.0 source; listed in `CREDITS.md`). Regenerating left the 1-person clip byte-identical.
+  - `synthetic.ts` `scriptTwo()` makes two-person frames and alternates pose order per frame.
+
+### Verified
+
+- **`pnpm verify` → exit 0:** vitest 283 passed + 1 skipped (17 files); playwright smoke 14/14.
+- **1P regression:** re-rendered seed 42 t0/10/30/60 baselines are **byte-identical** (`git status` clean on the snapshots).
+- **Unit (TEMPORARY(synthetic-fixtures)):**
+  - Splitter: array order, hysteresis walk, detector miss keeps identity, forget after 700 ms, partial torso = no body.
+  - Pause-both timing.
+  - Exact per-player event sequences through the real gesture engines: P1 `LANE_LEFT, JUMP`; P2 `LANE_RIGHT, SLIDE_START, SLIDE_END`.
+  - Short dropout pauses only that player; long dropout pauses both; a player back early can't resume both; zones → lean warning.
+- **e2e `tests/e2e/two-players.smoke.spec.ts`:**
+  - Replay of a synthetic two-person fixture: exact per-player event lists (P1 `LANE_LEFT, JUMP`; P2 `PAUSE, RESUME, LANE_RIGHT`), both calibrated, lanes −1/+1, jumps 1/0, two HUDs. Stress-run 6× in parallel: stable.
+  - Manual clock, seed 42, P2-only lane change: P1 `running`, 70 m, 6 coins; P2 `over` at 56 m, 0 coins. Keyboard moves only P1.
+  - Split-screen screenshot baseline `two-players-seed42-t10.png` (bots).
+  - The first version of the replay test also asserted P2 crashing. That failed under parallel load, because in a realtime replay the lane change lands at a timing-dependent distance. Collision/score independence moved to the deterministic manual-clock test.
+- **Perf, 1920×1080, RTX 4060 Laptop, two bodies on the fake camera, bots driving both runs, measured serially:**
+
+  | | draw calls | triangles | render fps | pose fps | bodies |
+  |---|---|---|---|---|---|
+  | 1 player (existing test) | 57 | 614k | 59–60 | 27–31 | 1 |
+  | 2 players | **110–114** | 1.13–1.26 M | 59–60 | **25–30** (median 25–26) | 2 in 15/15 samples |
+
+  Estimated 110–120 draw calls → **came in at 110–114**, i.e. exactly 2× the 1P scene. The real cost is pose inference: about −4 pose-fps with two bodies, roughly +7 ms sampling interval.
+- **Review:** the reviewer subagent went over the diff. Fixed:
+  - own RESUME breaking pause-both
+  - splitter vs engine presence mismatch
+  - one missed frame resetting hysteresis
+  - global calibration gate freezing a run in progress
+  - pause-both updating while stopped
+  - player init order
+  - P2 events in latency stats
+  - fractional viewport widths
+  - test naming, zones test, TEMPORARY tag
+
+### Known gaps
+
+- **TEMPORARY(synthetic-fixtures):** the replay e2e uses synthetic frames and the perf test a composited clip of one person twice. Replace them with `two-players.json` and a real two-person clip. Two real people standing close (PLAN §1.1: ~75 cm apart) may drop detections, which these tests can't show.
+- **Latency not re-measured with 2 bodies.** The pose-fps drop suggests ~+7 ms of sampling delay. Run `pnpm latency:pipeline` with a real 2-person setup.
+- **Pause-both is edge-triggered.** A player who is on the results screen, or who starts a new run while both are paused, isn't paused again. Rare; make it level-based if playtests hit it.
+- **Lone-body switching** uses the fixed center line even if both players last stood in the same half (`ponytail:` note in `players.ts`).
+- **No rival skater** in your half, as agreed; ghost later if wanted.
+- **The narrower half-screen aspect** (640×720 at 720p) crops the sides of the street. Maybe widen the FOV for 2P after a playtest.
+- **Playtest note for Jorge:** `http://localhost:5173/?game=skate-run&players=2&seed=42`. Stand side by side about 1 m apart and both hold still to calibrate. Check:
+  - assignment stays put when one person leans across the middle
+  - stepping out < 2 s pauses only you, > 2 s pauses both
+- **Artifacts:** `tmp/two-players/replay.png`, `tests/e2e/two-players.smoke.spec.ts-snapshots/two-players-seed42-t10-smoke-win32.png`.
