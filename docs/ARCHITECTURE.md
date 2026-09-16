@@ -4,19 +4,19 @@ Agent-maintained module map. The spec lives in `docs/PLAN.md` §3; this file rec
 
 ## Module map
 
-| Path                   | Status (M0)            | Role                                                                                    |
+| Path                   | Status (M1)            | Role                                                                                    |
 | ---------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
 | `src/core/`            | `prng.ts` (mulberry32) | Pure, deterministic TS: sim, worldgen, scoring, progression. ADR-002.                   |
 | `src/input/`           | —                      | `InputSource` impls: pose, keyboard, replay, network. The only layer that sees both pose and core events. |
-| `src/pose/`            | —                      | Camera manager, worker bridge, One Euro filter, signals, gesture engine.                |
+| `src/pose/`            | M1 pipeline            | Camera manager, worker bridge, One Euro filter, signals, gesture engine. See "Pose pipeline (M1)" below. |
 | `src/render/`          | —                      | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD.       |
 | `src/net/`             | —                      | Colyseus client + room protocol (M6).                                                   |
-| `src/platform/`        | —                      | Profile store, settings, debug bridge (`window.__game`).                                |
+| `src/platform/`        | `rate.ts` (fps meter)  | Profile store, settings, debug bridge (`window.__game`).                                |
 | `src/games/<id>/`      | —                      | One `MiniGame` per folder: sim + view + gesture profile + patterns.                     |
-| `src/main.ts`          | hello-world canvas     | Boot; M0 exposes `window.__game.getState()/getFps()`.                                    |
+| `src/main.ts`          | hello-world canvas     | Boot; parses URL params, mounts the pose panel for `?input=pose` (default), exposes `window.__game.getState()/getFps()/getPoseStats()`. |
 | `src/debug-bridge.d.ts`| `Window.__game` type   | Debug bridge contract shared by app and Playwright tests.                               |
-| `public/models/`       | vendored, gitignored   | MediaPipe wasm + `pose_landmarker_full.task` (model v1). Regenerate: `pnpm vendor:models`. |
-| `tests/e2e/`           | `boot.smoke.spec.ts`   | Playwright; `smoke` project = `*.smoke.spec.ts`, Chromium with fake-camera flags.       |
+| `public/models/`       | vendored, gitignored   | MediaPipe wasm + `pose_landmarker_{lite,full,heavy}.task` (model v1). Regenerate: `pnpm vendor:models`. |
+| `tests/e2e/`           | `boot`, `pose` smoke   | Playwright; `smoke` project = `*.smoke.spec.ts`, new-headless Chromium (real GPU) with the fake camera fed by `tests/e2e/assets/placeholder-person.mjpeg` (interim, see CREDITS.md). |
 | `tests/unit/`          | `boundaries.spec.ts`   | Vitest for cross-cutting checks; module tests are colocated `*.spec.ts`.                |
 
 ## Dependency rules (enforced)
@@ -32,6 +32,22 @@ games/a  ─✗→ games/b
 ```
 
 Also enforced on non-test `src/**`: `max-lines` 400, `max-lines-per-function` 60. `typescript-eslint` recommended bans `any` and `@ts-ignore`.
+
+## Pose pipeline (M1)
+
+```
+getUserMedia 1280x720@30 (camera.ts, ideal constraints, remembered deviceId)
+  → <video> ─ requestVideoFrameCallback (pipeline.ts)
+      → createImageBitmap resize to 640 px wide, aspect kept   [skipped while the worker is busy]
+      → bridge.ts ─ transfer ─→ pose.worker.ts: PoseLandmarker VIDEO mode, GPU delegate on OffscreenCanvas (CPU fallback)
+      ← PoseFrame {t, poses: Landmark[33][]}  (raw, unmirrored coordinates)
+  → pose-panel.ts: mirrored video + skeleton (CSS scaleX(-1) on both), visibility heatmap, fps; recorder.ts for ?record=1
+```
+
+- **Backpressure:** at most one frame in flight. If the worker is slower than the camera, stale frames get dropped instead of queued.
+- **Recovery:** the bridge restarts the worker on `error`, on a posted `fatal`, or when no result arrives within 3 s (watchdog). It backs off 0.5 s → 10 s. The worker runs one warm-up detect before `ready`, so graph build/shader compile (seconds) doesn't trip the watchdog.
+- **Vite gotcha:** MediaPipe's module loader `import()`s `/models/wasm/vision_wasm_module_internal.js`. Vite dev rewrites that import to `?import` and returns 500 for JS under `public/`. The worker installs a `self.import` shim built with `new Function`, which the loader prefers, so the file is fetched as plain static JS.
+- **Fixture format** (`recorder.ts` `PoseFixture`): `{version: 1, recordedAt, model, video: {width, height}, frames: PoseFrame[]}`, with `t` rebased to 0 ms.
 
 ## Frame pipeline (target, PLAN §3)
 

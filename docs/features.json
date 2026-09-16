@@ -21,15 +21,15 @@
       "id": "M1",
       "title": "Camera & pose pipeline",
       "tasks": [
-        { "id": "M1.1", "text": "Camera manager: enumerateDevices after permission, dropdown, remembered deviceId, request 1280x720@30, graceful fallback", "status": "todo" },
-        { "id": "M1.2", "text": "Worker-hosted PoseLandmarker (GPU delegate, VIDEO mode), main-thread bridge with PoseFrame stream, downscale to 640x360", "status": "todo" },
-        { "id": "M1.3", "text": "Debug view: mirrored video + skeleton overlay + FPS (camera/pose/render) + visibility heatmap", "status": "todo" },
-        { "id": "M1.4", "text": "Fixture recorder: ?record=1 dumps last 30 s of PoseFrame[] to downloadable JSON", "status": "todo" },
-        { "id": "M1.5", "text": "HUMAN: Jorge records lean-left-right.json, jump.json, crouch.json, idle.json, two-players.json and one .mjpeg/.y4m clip", "status": "todo" }
+        { "id": "M1.1", "text": "Camera manager: enumerateDevices after permission, dropdown, remembered deviceId, request 1280x720@30, graceful fallback", "status": "done" },
+        { "id": "M1.2", "text": "Worker-hosted PoseLandmarker (GPU delegate, VIDEO mode), main-thread bridge with PoseFrame stream, downscale to 640x360", "status": "done" },
+        { "id": "M1.3", "text": "Debug view: mirrored video + skeleton overlay + FPS (camera/pose/render) + visibility heatmap", "status": "done" },
+        { "id": "M1.4", "text": "Fixture recorder: ?record=1 dumps last 30 s of PoseFrame[] to downloadable JSON", "status": "done" },
+        { "id": "M1.5", "text": "HUMAN: Jorge records lean-left-right.json, jump.json, crouch.json, idle.json, two-players.json and one .mjpeg/.y4m clip", "status": "todo", "note": "Waiting on Jorge. Recorder (?record=1) is ready." }
       ],
       "dod": [
-        { "id": "M1.D1", "text": "e2e with fake camera clip shows >= 1 pose detected at >= 20 pose-fps for 5 s", "status": "todo" },
-        { "id": "M1.D2", "text": "unit test: worker bridge reconnects after worker crash", "status": "todo" }
+        { "id": "M1.D1", "text": "e2e with fake camera clip shows >= 1 pose detected at >= 20 pose-fps for 5 s", "status": "in_progress", "note": "Passing on the INTERIM placeholder clip (tests/e2e/assets/placeholder-person.mjpeg, 30 pose-fps). Real DoD needs Jorge's fixtures/video clip swapped into playwright.config.ts." },
+        { "id": "M1.D2", "text": "unit test: worker bridge reconnects after worker crash", "status": "done" }
       ]
     },
     {

@@ -1,7 +1,14 @@
+import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
 
-// Fake-camera flags are on from day one; M1 adds `--use-file-for-fake-video-capture=fixtures/video/<clip>`.
-const fakeCamera = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'];
+// Fake camera = the INTERIM placeholder clip (scripts/make-placeholder-clip.mjs) until Jorge's
+// fixtures/video/<clip> exists; swap the path then. Chrome loops the file.
+const FAKE_CLIP = path.resolve('tests/e2e/assets/placeholder-person.mjpeg');
+const fakeCamera = [
+  '--use-fake-ui-for-media-stream',
+  '--use-fake-device-for-media-stream',
+  `--use-file-for-fake-video-capture=${FAKE_CLIP}`,
+];
 
 export default defineConfig({
   testDir: 'tests/e2e',
@@ -17,7 +24,8 @@ export default defineConfig({
     {
       name: 'smoke',
       testMatch: /.*\.smoke\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'], launchOptions: { args: fakeCamera } },
+      // channel 'chromium' = new headless: uses the real GPU (headless-shell falls back to SwiftShader).
+      use: { ...devices['Desktop Chrome'], channel: 'chromium', launchOptions: { args: fakeCamera } },
     },
   ],
 });
