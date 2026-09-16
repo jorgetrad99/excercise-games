@@ -240,6 +240,9 @@ function drawObstacles(pools: Pools, c: ChunkState, rz: (z: number) => number): 
   }
 }
 
+/** Items this far behind the player (m) are skipped: missed ones otherwise loom past the close camera. */
+const BEHIND_CULL = 1.5;
+
 function drawItems(
   pools: Pools,
   c: ChunkState,
@@ -248,11 +251,11 @@ function drawItems(
   t: number,
 ): void {
   for (const coin of c.coins) {
-    if (!taken.has(coin.id))
+    if (!taken.has(coin.id) && rz(coin.z) < BEHIND_CULL)
       pools.coins.add(laneX(coin.lane), coin.y, rz(coin.z), 1, 1, 1, t * 3 + coin.z * 0.4);
   }
   for (const p of c.pickups) {
-    if (taken.has(p.id)) continue;
+    if (taken.has(p.id) || rz(p.z) >= BEHIND_CULL) continue;
     pools.pickups[p.kind].add(
       laneX(p.lane),
       1 + Math.sin(t * 3 + p.z) * 0.15,

@@ -584,3 +584,17 @@ Then `pnpm verify`.
 
 - Coins you've already passed in the side lanes still pass close to the camera in the bottom corners (t = 30). This was already there before and is less visible now.
 - **Playtest note:** `http://localhost:5173/?seed=42`. Check that jumps over the tall bars and lane changes at the edges don't feel cramped.
+
+---
+
+## 2026-09-16 — Fix: missed coins looming past the camera
+
+**Bug:** coins and pickups the player didn't collect stayed drawn until their chunk recycled. At the closer camera (Piece 1), they passed right in front of it as large discs in the bottom corners (seed 42, t = 30).
+
+- **Fix:** `render/world-view.ts` `drawItems` skips coins and pickups more than `BEHIND_CULL` = 1.5 m behind the player.
+- **Sim:** untouched. It's a render cull only.
+- **Verified:**
+  - `pnpm verify` → exit 0 (vitest 268 + 1 skipped, smoke 9/9).
+  - The seed 42 t30 baseline was regenerated on purpose; t0/10/60 still pass unchanged.
+  - Before/after: `tmp/coins/{before,after}-t30.png`.
+- **Done before Piece 2**, so the MiniGame refactor's regression screenshot diff can require zero baseline changes.
