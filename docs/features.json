@@ -1,0 +1,123 @@
+{
+  "$comment": "Milestone task list from PLAN §4. Status: todo | in_progress | done | blocked. Agent-maintained.",
+  "milestones": [
+    {
+      "id": "M0",
+      "title": "Bootstrap & harness",
+      "tasks": [
+        { "id": "M0.1", "text": "Vite + TS strict, ESLint (+ boundaries rule), Prettier, Vitest, Playwright (Chromium with fake-camera flags)", "status": "done" },
+        { "id": "M0.2", "text": "pnpm verify = typecheck + lint + unit + e2e-smoke", "status": "done" },
+        { "id": "M0.3", "text": ".claude/settings.json hooks (guard-paths, format-and-typecheck, remind-progress-log), slash commands, subagents (PLAN §5)", "status": "done" },
+        { "id": "M0.4", "text": "typescript-lsp plugin confirmed working (workspaceSymbol returns results)", "status": "done" },
+        { "id": "M0.5", "text": "docs/ARCHITECTURE.md, docs/features.json, docs/PROGRESS.md, ADR-001 (WebGL renderer), ADR-002 (pure core)", "status": "done" },
+        { "id": "M0.6", "text": "Vendored MediaPipe wasm + pose_landmarker_full.task in public/models/", "status": "done" }
+      ],
+      "dod": [
+        { "id": "M0.D1", "text": "pnpm verify green on a hello-world canvas", "status": "done" },
+        { "id": "M0.D2", "text": "Playwright test loads the page and sees window.__game", "status": "done" }
+      ]
+    },
+    {
+      "id": "M1",
+      "title": "Camera & pose pipeline",
+      "tasks": [
+        { "id": "M1.1", "text": "Camera manager: enumerateDevices after permission, dropdown, remembered deviceId, request 1280x720@30, graceful fallback", "status": "todo" },
+        { "id": "M1.2", "text": "Worker-hosted PoseLandmarker (GPU delegate, VIDEO mode), main-thread bridge with PoseFrame stream, downscale to 640x360", "status": "todo" },
+        { "id": "M1.3", "text": "Debug view: mirrored video + skeleton overlay + FPS (camera/pose/render) + visibility heatmap", "status": "todo" },
+        { "id": "M1.4", "text": "Fixture recorder: ?record=1 dumps last 30 s of PoseFrame[] to downloadable JSON", "status": "todo" },
+        { "id": "M1.5", "text": "HUMAN: Jorge records lean-left-right.json, jump.json, crouch.json, idle.json, two-players.json and one .mjpeg/.y4m clip", "status": "todo" }
+      ],
+      "dod": [
+        { "id": "M1.D1", "text": "e2e with fake camera clip shows >= 1 pose detected at >= 20 pose-fps for 5 s", "status": "todo" },
+        { "id": "M1.D2", "text": "unit test: worker bridge reconnects after worker crash", "status": "todo" }
+      ]
+    },
+    {
+      "id": "M2",
+      "title": "Signals & gesture engine",
+      "tasks": [
+        { "id": "M2.1", "text": "One Euro filter", "status": "todo" },
+        { "id": "M2.2", "text": "Signal derivation (leanX, hipRise, headDrop, armsUp, tracking) per PLAN §2.2", "status": "todo" },
+        { "id": "M2.3", "text": "Calibration state machine (neutral 2 s, T-pose/C recalibrate)", "status": "todo" },
+        { "id": "M2.4", "text": "Gesture engine per §2.2 (LANE_LEFT/RIGHT, JUMP, SLIDE, GRAB, REVIVE_ACCEPT, RECALIBRATE, TRACKING_LOST); lean and 3-zone lane modes", "status": "todo" },
+        { "id": "M2.5", "text": "Keyboard InputSource", "status": "todo" },
+        { "id": "M2.6", "text": "Replay InputSource (real-time or instant)", "status": "todo" }
+      ],
+      "dod": [
+        { "id": "M2.D1", "text": "Fixture-driven unit tests assert exact event sequences (jump.json -> exactly N JUMP, zero LANE, etc.)", "status": "todo" },
+        { "id": "M2.D2", "text": "Tuning constants isolated in gestures.config.ts", "status": "todo" },
+        { "id": "M2.D3", "text": "Debug HUD shows live signals with thresholds drawn", "status": "todo" }
+      ]
+    },
+    {
+      "id": "M3",
+      "title": "Core sim",
+      "tasks": [
+        { "id": "M3.1", "text": "GameSim: lanes, jump arc, slide, AABB collision (jump-over, slide-under, wall), coins, score, speed ramp", "status": "todo" },
+        { "id": "M3.2", "text": "Chunk queue with seeded pattern selection", "status": "todo" },
+        { "id": "M3.3", "text": "Power-ups (magnet, 2x coins, hoverboard) and revive", "status": "todo" },
+        { "id": "M3.4", "text": "Pattern library v1: >= 24 patterns across difficulty 1-5, biome-tagged", "status": "todo" },
+        { "id": "M3.5", "text": "Solvability validator over all patterns", "status": "todo" }
+      ],
+      "dod": [
+        { "id": "M3.D1", "text": "Determinism test: same seed + event log => identical state hash after 60 s", "status": "todo" },
+        { "id": "M3.D2", "text": "Solvability test", "status": "todo" },
+        { "id": "M3.D3", "text": "Headless bot plays 2 min on seed 42 with perfect reactions and never crashes", "status": "todo" }
+      ]
+    },
+    {
+      "id": "M4",
+      "title": "Renderer & world view",
+      "tasks": [
+        { "id": "M4.1", "text": "three.js scene: renderer factory, follow camera, lighting (directional + hemisphere + HDRI), biome fog", "status": "todo" },
+        { "id": "M4.2", "text": "Chunk views bound to sim chunks, pools, InstancedMesh coins with spin", "status": "todo" },
+        { "id": "M4.3", "text": "Procedural skater + board (run/jump/slide/grab)", "status": "todo" },
+        { "id": "M4.4", "text": "Obstacles from Kenney kits; biome 1 & 2", "status": "todo" },
+        { "id": "M4.5", "text": "HUD overlay (DOM): score, coins, multiplier, distance, power-up timers, tracking indicator, revive prompt, results card", "status": "todo" },
+        { "id": "M4.6", "text": "Perf gate: 60 fps at 1080p with pose running; draw calls < 150; GPU frame < 8 ms", "status": "todo" }
+      ],
+      "dod": [
+        { "id": "M4.D1", "text": "Playwright screenshot tests on seed 42 at t=0/10/30 s (pixel diff tolerance)", "status": "todo" },
+        { "id": "M4.D2", "text": "Perf test reads getFps() >= 55 over 20 s with keyboard input", "status": "todo" }
+      ]
+    },
+    {
+      "id": "M5",
+      "title": "Progression & persistence",
+      "tasks": [
+        { "id": "M5.1", "text": "ProfileStore (localStorage, versioned schema + migration)", "status": "todo" },
+        { "id": "M5.2", "text": "Missions (10 templates), milestones, revive tokens, power-up unlocks, settings", "status": "todo" },
+        { "id": "M5.3", "text": "Results card wiring", "status": "todo" }
+      ],
+      "dod": [
+        { "id": "M5.D1", "text": "Unit tests for mission progress + schema migration", "status": "todo" },
+        { "id": "M5.D2", "text": "e2e: complete a run, reload, verify persisted totals", "status": "todo" }
+      ]
+    },
+    {
+      "id": "M6",
+      "title": "Multiplayer",
+      "tasks": [
+        { "id": "M6.1", "text": "6a Local split-screen (numPoses: 2, zone assignment, two sims, one seed)", "status": "todo" },
+        { "id": "M6.2", "text": "6b Colyseus server, room protocol, ghost rendering, join-by-code, synced start, leaderboard", "status": "todo" },
+        { "id": "M6.3", "text": "Dockerfile + Coolify-ready compose", "status": "todo" }
+      ],
+      "dod": [
+        { "id": "M6.D1", "text": "6a e2e with two-players.json replay produces two independent runs", "status": "todo" },
+        { "id": "M6.D2", "text": "6b integration test: in-process server + two headless clients complete a synced race", "status": "todo" }
+      ]
+    },
+    {
+      "id": "M7",
+      "title": "Polish & extraction",
+      "tasks": [
+        { "id": "M7.1", "text": "Extract MiniGame interface for real (move Skate Run behind it)", "status": "todo" },
+        { "id": "M7.2", "text": "Tracking-quality coach", "status": "todo" },
+        { "id": "M7.3", "text": "Third biome", "status": "todo" },
+        { "id": "M7.4", "text": "Difficulty tuning from playtest notes", "status": "todo" },
+        { "id": "M7.5", "text": "Soccer stub (games/penalty/) proving the framework", "status": "todo" }
+      ],
+      "dod": []
+    }
+  ]
+}
