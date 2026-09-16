@@ -13,10 +13,12 @@ export interface PosePanelOptions {
   /** ?camera=<deviceId>; wins over the remembered device. */
   cameraId: string | undefined;
   renderFps(): number;
+  /** Every PoseFrame, e.g. into the pose InputSource. */
+  onFrame(frame: PoseFrame): void;
 }
 
 const CSS = `
-.pose-panel { position: fixed; top: 12px; left: 12px; width: min(960px, calc(100vw - 24px)); font: 13px/1.4 system-ui; color: #eee; }
+.pose-panel { position: fixed; top: 12px; left: 12px; width: min(960px, calc(100vw - 560px), calc(100vw - 24px)); font: 13px/1.4 system-ui; color: #eee; }
 .pose-panel .stage { position: relative; background: #000; aspect-ratio: 16 / 9; }
 .pose-panel video, .pose-panel .overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
 .pose-panel .heatmap:not([hidden]) { display: block; margin-top: 6px; }
@@ -188,7 +190,7 @@ async function fillCameraSelect(
 export function mountPosePanel(
   root: HTMLElement,
   opts: PosePanelOptions,
-): { stats(): PoseStats | null } {
+): { stats(): PoseStats | null; videoSize(): { width: number; height: number } } {
   const ui = buildDom(root);
   const recorder = opts.record ? createRecorder() : null;
   let latest: PoseFrame | null = null;
@@ -212,6 +214,7 @@ export function mountPosePanel(
       onFrame: (frame) => {
         latest = frame;
         recorder?.push(frame);
+        opts.onFrame(frame);
       },
     });
   }
@@ -237,5 +240,8 @@ export function mountPosePanel(
     );
 
   restart();
-  return { stats: () => pipeline?.stats() ?? null };
+  return {
+    stats: () => pipeline?.stats() ?? null,
+    videoSize: () => ({ width: ui.video.videoWidth || 1280, height: ui.video.videoHeight || 720 }),
+  };
 }

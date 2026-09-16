@@ -4,19 +4,19 @@ Agent-maintained module map. The spec lives in `docs/PLAN.md` §3; this file rec
 
 ## Module map
 
-| Path                   | Status (M1)            | Role                                                                                    |
+| Path                   | Status (M2)            | Role                                                                                    |
 | ---------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
-| `src/core/`            | `prng.ts` (mulberry32) | Pure, deterministic TS: sim, worldgen, scoring, progression. ADR-002.                   |
-| `src/input/`           | —                      | `InputSource` impls: pose, keyboard, replay, network. The only layer that sees both pose and core events. |
-| `src/pose/`            | M1 pipeline            | Camera manager, worker bridge, One Euro filter, signals, gesture engine. See "Pose pipeline (M1)" below. |
+| `src/core/`            | `prng.ts`, `input.ts` (`InputEvent`) | Pure, deterministic TS: sim, worldgen, scoring, progression. ADR-002.                   |
+| `src/input/`           | keyboard, pose, replay | `InputSource` impls: pose, keyboard, replay, network. The only layer that sees both pose and core events. |
+| `src/pose/`            | M1 pipeline, M2 gestures | Camera manager, worker bridge, One Euro filter, signals, gesture engine, debug HUD. See "Pose pipeline (M1)" and "Gestures (M2)" below. |
 | `src/render/`          | —                      | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD.       |
 | `src/net/`             | —                      | Colyseus client + room protocol (M6).                                                   |
 | `src/platform/`        | `rate.ts` (fps meter)  | Profile store, settings, debug bridge (`window.__game`).                                |
 | `src/games/<id>/`      | —                      | One `MiniGame` per folder: sim + view + gesture profile + patterns.                     |
-| `src/main.ts`          | hello-world canvas     | Boot; parses URL params, mounts the pose panel for `?input=pose` (default), exposes `window.__game.getState()/getFps()/getPoseStats()`. |
+| `src/main.ts`          | hello-world canvas     | Boot; parses URL params, wires keyboard (always) + pose (`?input=pose`, default) or replay (`?input=replay:<fixture>`) into an event log, mounts the signal HUD with `?debug=1`, exposes `window.__game.getState/getFps/getPoseStats/getSignals/getEvents/inject`. |
 | `src/debug-bridge.d.ts`| `Window.__game` type   | Debug bridge contract shared by app and Playwright tests.                               |
 | `public/models/`       | vendored, gitignored   | MediaPipe wasm + `pose_landmarker_{lite,full,heavy}.task` (model v1). Regenerate: `pnpm vendor:models`. |
-| `tests/e2e/`           | `boot`, `pose` smoke   | Playwright; `smoke` project = `*.smoke.spec.ts`, new-headless Chromium (real GPU) with the fake camera fed by `tests/e2e/assets/placeholder-person.mjpeg` (interim, see CREDITS.md). |
+| `tests/e2e/`           | `boot`, `pose`, `gestures` smoke | Playwright; `smoke` project = `*.smoke.spec.ts`, new-headless Chromium (real GPU) with the fake camera fed by `tests/e2e/assets/placeholder-person.mjpeg` (interim, see CREDITS.md). |
 | `tests/unit/`          | `boundaries.spec.ts`   | Vitest for cross-cutting checks; module tests are colocated `*.spec.ts`.                |
 
 ## Dependency rules (enforced)
@@ -48,6 +48,23 @@ getUserMedia 1280x720@30 (camera.ts, ideal constraints, remembered deviceId)
 - **Recovery:** the bridge restarts the worker on `error`, on a posted `fatal`, or when no result arrives within 3 s (watchdog). It backs off 0.5 s → 10 s. The worker runs one warm-up detect before `ready`, so graph build/shader compile (seconds) doesn't trip the watchdog.
 - **Vite gotcha:** MediaPipe's module loader `import()`s `/models/wasm/vision_wasm_module_internal.js`. Vite dev rewrites that import to `?import` and returns 500 for JS under `public/`. The worker installs a `self.import` shim built with `new Function`, which the loader prefers, so the file is fetched as plain static JS.
 - **Fixture format** (`recorder.ts` `PoseFixture`): `{version: 1, recordedAt, model, video: {width, height}, frames: PoseFrame[]}`, with `t` rebased to 0 ms.
+
+## Gestures (M2)
+
+```
+PoseFrame ─ body.ts: 7 landmarks, visibility ≥ 0.5 (hold ≤ 300 ms), One Euro in pixel space → Measures
+          ─ calibration.ts: waiting → calibrating (still + neutral 2 s) → calibrated {shoulderX, hipY, noseY, torsoLen, shoulderWidth}
+          ─ gestures.ts: SignalFrame {leanX, hipRise, hipRiseVel, headDrop, armsUp, tPose, zone, tracking, calibration}
+                         + GestureEvents (lanes, jump/grab, slide, revive hold, T-pose recalibrate, tracking lost/restored)
+input/pose-source.ts: GestureEvent → core InputEvent (REVIVE_ACCEPT→REVIVE, TRACKING_LOST→PAUSE, TRACKING_RESTORED→RESUME)
+input/replay.ts: PoseFixture → pose-source (instant: fixture time; realtime: rebased onto performance.now)
+input/keyboard.ts: ←/→ lanes, Space jump, ↓ slide (down/up), ↑ grab, C recalibrate
+```
+
+- **All tuning** lives in `src/pose/gestures.config.ts`.
+- **Denominators are calibrated values, not live ones.** leanX uses the calibrated shoulder width; hipRise/headDrop use the calibrated torso. Live shoulder width collapses when the player turns (0.03 in the real recording), which would fire false lane changes. Calibrate at the play position (T-pose 1 s or `C`).
+- **The engine is context-free.** It doesn't know whether a run is active, so REVIVE and GRAB relevance is the sim's call (M3).
+- **Tests:** `src/pose/testdata/synthetic.ts` builds keyframed synthetic poses. Every test using it is marked `TEMPORARY(synthetic-fixtures)` until per-gesture recordings exist.
 
 ## Frame pipeline (target, PLAN §3)
 

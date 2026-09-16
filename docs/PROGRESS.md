@@ -137,3 +137,95 @@ M1: camera manager + worker-hosted PoseLandmarker loading from `/models/`. First
 ### Next step
 
 Once your fixtures land: swap the e2e clip to `fixtures/video/…`, flip M1.D1 to done, then start M2 (One Euro filter, signals, gesture engine, fixture-driven event tests).
+
+---
+
+## 2026-09-16 — M2 Signals & gesture engine (code done; recorded-fixture DoD pending)
+
+**Result:** the full gesture path works: PoseFrame → smoothing → calibration → signals → edge-triggered events → core `InputEvent`, with keyboard and replay sources and a live signal HUD. `pnpm verify` passes. Per your instruction, the event-sequence tests run on **synthetic** pose sequences, each marked `TEMPORARY(synthetic-fixtures)`. M2.D1 stays `in_progress` until they're rewired to per-gesture recordings.
+
+### What changed
+
+- `src/pose/gestures.config.ts`: every tuning constant, with units (PLAN §2.2 values).
+- `src/pose/one-euro.ts`: One Euro filter.
+- `src/pose/body.ts`: 7 landmarks (nose, shoulders, wrists, hips).
+  - Visibility < 0.5 → hold ≤ 300 ms, then lost.
+  - One Euro filtering in **pixel space**.
+  - `measure()` computes shoulder/hip centers, torso length and shoulder width (aspect-corrected), `armsUp`, and T-pose.
+- `src/pose/calibration.ts`: waiting → calibrating → calibrated. You need to be neutral (arms down, not T-posing) and hold still for 2 s; drift > 0.08 torso restarts the count.
+- `src/pose/gestures.ts`: the engine. Signals: `leanX, hipRise, hipRiseVel, headDrop, armsUp, tPose, zone, tracking, calibration`. Events:
+  - LANE_LEFT/RIGHT in lean mode (±0.35 enter, ±0.20 re-arm) or zones mode (thirds ± 0.03)
+  - JUMP (rise > 0.15 and velocity > 1.2/s over 100 ms, 500 ms cooldown), then GRAB (arms up while airborne, once per jump)
+  - SLIDE_START (> 0.25 for 100 ms) / SLIDE_END (< 0.12, 400 ms cooldown)
+  - REVIVE_ACCEPT (arms up 1 s, once per hold); RECALIBRATE (T-pose 1 s)
+  - TRACKING_LOST (no raw pose for 700 ms; `tick()` also covers "no frames at all") and TRACKING_RESTORED; CALIBRATED
+- `src/core/input.ts`: `InputEvent` per PLAN §3, **plus `RESUME`** (tracking came back after PAUSE; PLAN §2.2 auto-resume needs a signal).
+- `src/input/`:
+  - `keyboard.ts`: ←/→, Space, ↓ down/up = SLIDE_START/END, ↑ = GRAB, C = RECALIBRATE; ignores auto-repeat.
+  - `pose-source.ts`: gesture → InputEvent mapping. REVIVE_ACCEPT→REVIVE, LOST→PAUSE, RESTORED→RESUME; CALIBRATED is UI-only.
+  - `replay.ts`: `instant` or `realtime` playback.
+- `src/pose/signal-hud.ts` (`?debug=1`): 5 s plots of leanX / hipRise / headDrop with enter (red) and exit/re-arm (amber) threshold lines, a status line (calibration %, tracking, armsUp, T-pose, zone, velocity), and the last 7 events.
+- `src/main.ts`:
+  - Keyboard is always on as the fallback.
+  - `?input=pose` (default) feeds camera frames into the pose source.
+  - `?input=replay:<name>` loads `/fixtures/pose/<name>`; a value containing `/` is used as the URL.
+  - `window.__game` gained `getSignals()`, `getEvents()`, and `inject({type})`. `setSeed` waits for M3.
+
+### Decisions / deviations from PLAN §2.2 (flip them if you disagree)
+
+1. **Calibrated denominators.** leanX divides by the calibrated shoulder width, and hipRise/headDrop by the calibrated torso length, not live per-frame values. In your recording, live shoulder width drops from 0.12 to 0.03 when you turn (18.5 s), which would turn a small shift into a huge leanX and fire false lane changes. Trade-off: if you walk closer or farther away, you need to recalibrate (T-pose 1 s or `C`).
+2. **One Euro runs in pixels.** `minCutoff 1.0, beta 0.007` were tuned for pixel units. In normalized coordinates, beta would be effectively 0, adding ~160 ms of lag and flattening jumps.
+3. **The engine doesn't know game context.** It fires REVIVE_ACCEPT whenever arms are up for 1 s, and GRAB during its own airborne window. The M3 sim ignores events that don't apply.
+4. **Zones mode:** at calibration the zone starts at center (the sim's start lane). If you calibrate off-center you get one catch-up LANE event.
+
+### Verified, and how
+
+- **`pnpm verify` → exit 0:** tsc and eslint clean; vitest **27 passed + 1 skipped** (7 files); playwright smoke **5/5**. Pose e2e still runs at 30 pose-fps on the GPU.
+- **`src/pose/gestures.spec.ts`**, TEMPORARY synthetic exact sequences (30 fps, ±0.002 jitter):
+  - idle 12 s → `[CALIBRATED]` only; pacing never calibrates
+  - lean L → `[LANE_LEFT]`; L, R, L → 3 events; holding 3 s → 1; wobbling between 0.30 and 0.55 → 1; a 0.25 lean → none
+  - the same lean at 0.6 scale gives the same events (distance invariance)
+  - quick jump → `[JUMP]`; two jumps → 2; a slow rise to the same height → none (velocity gate)
+  - crouch → `[SLIDE_START, SLIDE_END]`; a 60 ms dip → none
+  - jump with arms up → `[JUMP, GRAB]`; arms up standing → none; arms up 2.5 s ×2 → `[REVIVE_ACCEPT ×2]`
+  - T-pose → `[RECALIBRATE, CALIBRATED]`; recalibrating mid-slide → `SLIDE_END` first
+  - pose gone 1.2 s → `[TRACKING_LOST, TRACKING_RESTORED]`; a 400 ms gap → none; `tick()` without frames → LOST
+  - zones: walking left then far right → `[LANE_LEFT, LANE_RIGHT, LANE_RIGHT]`; calibrating in the left third → catch-up `LANE_LEFT`
+- **Mutation checks:** removing the jump velocity gate fails the slow-rise test. Removing the lean re-arm condition fails 2 lean tests.
+- **`one-euro.spec.ts`:** a constant signal passes through exactly; ±4 px jitter is damped to < 2 px; a 300 px step is > 250 px after 4 frames with beta, versus < 200 px with beta = 0.
+- **`input.spec.ts`:** keyboard mapping (repeat ignored, stop is clean, stop mid-slide sends SLIDE_END); replay `instant` and `realtime` (fake timers) both → `[LANE_LEFT, JUMP]`.
+- **`gestures.smoke.spec.ts` (e2e):**
+  - real key presses plus `inject` give the exact event list
+  - a synthetic fixture served as `/fixtures/pose/synthetic-lean-jump.json` via `?input=replay:` gives `[LANE_LEFT, JUMP]`, with signals calibrated and tracking ok
+  - HUD screenshot: `tmp/e2e/signal-hud.png`
+- **Reviewer subagent:** boundaries ✅. It found 3 real bugs, all fixed with tests: recalibrating mid-slide didn't end the slide, zones calibration silently offset the lane, and keyboard `stop()` while ↓ was held didn't end the slide. Its other flags weren't bugs: `createGestureEngine` length (passes ESLint's counting after a small extraction) and the skipped combined-recording test (skipped on purpose).
+- **Real-data sanity** (read-only, from `~/Downloads/pose-2026-09-16T18-42-19-146Z.json`, not copied into the repo; output in `tmp/probe-combined.txt`):
+  - It calibrated at 0–4 s while you were close to the camera. After you stepped back, hipRise sat ~+0.7 above that baseline, so the early JUMP at 5.6 s and the LANE_LEFTs come from stale calibration.
+  - **The real jump at 21.4 s was detected**, with velocity peaking at 2.75 torso/s against the 1.2 gate and hipRise +0.4 over the pre-jump level.
+  - Recording rate was ~20 pose-fps (50 ms median frame interval), not 30. Thresholds still worked at that rate.
+
+### Known gaps
+
+- **M2.D1:** real per-gesture fixtures are needed. Every test to swap: `grep -rn "TEMPORARY(synthetic-fixtures)" src tests`.
+- **`fixtures/pose/combined-raw.json` isn't in the repo** (the only recording is in Downloads). The sanity test in `gestures.spec.ts` skips until that file exists, then asserts it runs cleanly with finite signals and a plausible event count.
+- **Not tested with a live body:** real lean/jump/crouch feel and false positives while running in place are playtest items.
+- **Calibration after walking to position:** there's no auto-recalibrate when the torso size changes a lot. If playtests show people forget, add "torso length changed > 25 % for 2 s → recalibrate".
+- **Two players:** only the first pose is used (`?players=2` detects two, but zone assignment is M6).
+
+### Playtest note for Jorge
+
+1. `pnpm dev`, then open `http://localhost:5173/?debug=1`. The signal HUD is bottom-right, the camera panel top-left.
+2. Stand at your play distance and hold still until the HUD reads `calibrated` (2 s). To redo it: T-pose 1 s, or press `C`.
+3. Check each gesture against its HUD line:
+   - **lean:** past the red line fires LANE; come back inside amber before the same side fires again
+   - **jump:** hipRise spike over the red line
+   - **crouch:** headDrop over red = SLIDE_START, under amber = SLIDE_END
+   - **arms up mid-jump:** GRAB; **arms up 1 s standing:** REVIVE
+   - **step out of frame:** PAUSE after 0.7 s, RESUME when you're back
+4. **Zones mode** is config-only for now: set `laneMode: 'zones'` in `gestures.config.ts`. Try both and tell me the default (PLAN §8 Q1).
+5. **Per-gesture fixtures:** use `http://localhost:5173/?debug=1&record=1`. Do one gesture type repeatedly (e.g. 5 jumps), press `R`, and save as `fixtures/pose/jump.json`. Then `lean-left-right.json`, `crouch.json`, `idle.json` (30 s standing and fidgeting), and `two-players.json` (with `&players=2`). Also tell me the exact counts you performed (e.g. "5 jumps, 3 lefts") so the tests can assert exact sequences.
+6. **Replay any recording:** `http://localhost:5173/?input=replay:jump.json&debug=1`.
+
+### Next step
+
+M3 (core sim) can start without fixtures. When recordings land, rewire the TEMPORARY tests first: about 30 minutes, plus tuning in `gestures.config.ts` if the counts don't match.

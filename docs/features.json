@@ -36,17 +36,17 @@
       "id": "M2",
       "title": "Signals & gesture engine",
       "tasks": [
-        { "id": "M2.1", "text": "One Euro filter", "status": "todo" },
-        { "id": "M2.2", "text": "Signal derivation (leanX, hipRise, headDrop, armsUp, tracking) per PLAN §2.2", "status": "todo" },
-        { "id": "M2.3", "text": "Calibration state machine (neutral 2 s, T-pose/C recalibrate)", "status": "todo" },
-        { "id": "M2.4", "text": "Gesture engine per §2.2 (LANE_LEFT/RIGHT, JUMP, SLIDE, GRAB, REVIVE_ACCEPT, RECALIBRATE, TRACKING_LOST); lean and 3-zone lane modes", "status": "todo" },
-        { "id": "M2.5", "text": "Keyboard InputSource", "status": "todo" },
-        { "id": "M2.6", "text": "Replay InputSource (real-time or instant)", "status": "todo" }
+        { "id": "M2.1", "text": "One Euro filter", "status": "done" },
+        { "id": "M2.2", "text": "Signal derivation (leanX, hipRise, headDrop, armsUp, tracking) per PLAN §2.2", "status": "done" },
+        { "id": "M2.3", "text": "Calibration state machine (neutral 2 s, T-pose/C recalibrate)", "status": "done" },
+        { "id": "M2.4", "text": "Gesture engine per §2.2 (LANE_LEFT/RIGHT, JUMP, SLIDE, GRAB, REVIVE_ACCEPT, RECALIBRATE, TRACKING_LOST); lean and 3-zone lane modes", "status": "done" },
+        { "id": "M2.5", "text": "Keyboard InputSource", "status": "done" },
+        { "id": "M2.6", "text": "Replay InputSource (real-time or instant)", "status": "done" }
       ],
       "dod": [
-        { "id": "M2.D1", "text": "Fixture-driven unit tests assert exact event sequences (jump.json -> exactly N JUMP, zero LANE, etc.)", "status": "todo" },
-        { "id": "M2.D2", "text": "Tuning constants isolated in gestures.config.ts", "status": "todo" },
-        { "id": "M2.D3", "text": "Debug HUD shows live signals with thresholds drawn", "status": "todo" }
+        { "id": "M2.D1", "text": "Fixture-driven unit tests assert exact event sequences (jump.json -> exactly N JUMP, zero LANE, etc.)", "status": "in_progress", "note": "Exact-sequence tests pass on TEMPORARY synthetic sequences (grep TEMPORARY(synthetic-fixtures)). Done when rewired to Jorge's per-gesture recordings." },
+        { "id": "M2.D2", "text": "Tuning constants isolated in gestures.config.ts", "status": "done" },
+        { "id": "M2.D3", "text": "Debug HUD shows live signals with thresholds drawn", "status": "done" }
       ]
     },
     {
