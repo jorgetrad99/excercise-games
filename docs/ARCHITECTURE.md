@@ -6,7 +6,7 @@ Agent-maintained module map. The spec lives in `docs/PLAN.md` §3; this file rec
 
 | Path                   | Status (M2)            | Role                                                                                    |
 | ---------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
-| `src/core/`            | `prng.ts`, `input.ts` (`InputEvent`) | Pure, deterministic TS: sim, worldgen, scoring, progression. ADR-002.                   |
+| `src/core/`            | M3 sim: `sim`, `worldgen`, `patterns`, `collision`, `bot`, `hash`, `prng`, `input` | Pure, deterministic TS: sim, worldgen, scoring, progression. ADR-002.                   |
 | `src/input/`           | keyboard, pose, replay | `InputSource` impls: pose, keyboard, replay, network. The only layer that sees both pose and core events. |
 | `src/pose/`            | M1 pipeline, M2 gestures | Camera manager, worker bridge, One Euro filter, signals, gesture engine, debug HUD. See "Pose pipeline (M1)" and "Gestures (M2)" below. |
 | `src/render/`          | —                      | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD.       |
@@ -65,6 +65,22 @@ input/keyboard.ts: ←/→ lanes, Space jump, ↓ slide (down/up), ↑ grab, C r
 - **Denominators are calibrated values, not live ones.** leanX uses the calibrated shoulder width; hipRise/headDrop use the calibrated torso. Live shoulder width collapses when the player turns (0.03 in the real recording), which would fire false lane changes. Calibrate at the play position (T-pose 1 s or `C`).
 - **The engine is context-free.** It doesn't know whether a run is active, so REVIVE and GRAB relevance is the sim's call (M3).
 - **Tests:** `src/pose/testdata/synthetic.ts` builds keyframed synthetic poses. Every test using it is marked `TEMPORARY(synthetic-fixtures)` until per-gesture recordings exist.
+
+## Core sim (M3)
+
+```
+SimOptions {seed, reviveTokens, multiplier} → initState → SimState (plain JSON data)
+tick(state, ctx, events) @ 120 Hz:  events → phase machine → speed ramp → lateral/vertical move
+                                    → ensureChunks (8 ahead, 1 behind) → AABB collide → collect
+GameSim.step(dt, events): accumulator (clamped 0.25 s) over tick(); drainEvents() for HUD/sound
+```
+
+- **Phases:** countdown (3 s) → running → crashed (revive offer 3 s, only with a token, max 2/run) → over. PAUSE from countdown/running/crashed; RESUME returns to the offer, or to a ≥ 1 s countdown.
+- **World:** `worldgen.ts` picks a pattern per chunk with `chunkRng(seed, index)`, filtered by difficulty ceiling (+1 per 300 m) and biome (switches every 1000 m), weighted toward the ceiling. Rows that block every lane ("forced") are kept ≥ 1.5 s of travel apart via `ChunkState.lastForced`.
+- **Patterns:** `patterns.ts` holds ASCII grids (12 rows × 3 lanes, far → near): `J` hurdle (jump), `S` bar (slide), `W` wall (change lane), `c`/`o` coins, `P` power-up spot.
+- **Determinism contract:** logs are **tick-stamped**. `tick()` is exact. `GameSim.step()` applies live events at the next tick, so wall-clock frame pacing decides where a live event lands. Replays and multiplayer record `(tick, type)`.
+- **Bot (`bot.ts`):** DFS over cloned states, horizon 1.5 s, decisions at 20 Hz. It only survives what the real physics allows, so it doubles as the solvability validator (`patterns.spec.ts`) and the sequence check (`tests/unit/core/bot.spec.ts`).
+- **Tuning:** `sim.config.ts`.
 
 ## Frame pipeline (target, PLAN §3)
 

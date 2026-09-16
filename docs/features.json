@@ -53,16 +53,16 @@
       "id": "M3",
       "title": "Core sim",
       "tasks": [
-        { "id": "M3.1", "text": "GameSim: lanes, jump arc, slide, AABB collision (jump-over, slide-under, wall), coins, score, speed ramp", "status": "todo" },
-        { "id": "M3.2", "text": "Chunk queue with seeded pattern selection", "status": "todo" },
-        { "id": "M3.3", "text": "Power-ups (magnet, 2x coins, hoverboard) and revive", "status": "todo" },
-        { "id": "M3.4", "text": "Pattern library v1: >= 24 patterns across difficulty 1-5, biome-tagged", "status": "todo" },
-        { "id": "M3.5", "text": "Solvability validator over all patterns", "status": "todo" }
+        { "id": "M3.1", "text": "GameSim: lanes, jump arc, slide, AABB collision (jump-over, slide-under, wall), coins, score, speed ramp", "status": "done" },
+        { "id": "M3.2", "text": "Chunk queue with seeded pattern selection", "status": "done" },
+        { "id": "M3.3", "text": "Power-ups (magnet, 2x coins, hoverboard) and revive", "status": "done" },
+        { "id": "M3.4", "text": "Pattern library v1: >= 24 patterns across difficulty 1-5, biome-tagged", "status": "done" },
+        { "id": "M3.5", "text": "Solvability validator over all patterns", "status": "done" }
       ],
       "dod": [
-        { "id": "M3.D1", "text": "Determinism test: same seed + event log => identical state hash after 60 s", "status": "todo" },
-        { "id": "M3.D2", "text": "Solvability test", "status": "todo" },
-        { "id": "M3.D3", "text": "Headless bot plays 2 min on seed 42 with perfect reactions and never crashes", "status": "todo" }
+        { "id": "M3.D1", "text": "Determinism test: same seed + event log => identical state hash after 60 s", "status": "done" },
+        { "id": "M3.D2", "text": "Solvability test", "status": "done" },
+        { "id": "M3.D3", "text": "Headless bot plays 2 min on seed 42 with perfect reactions and never crashes", "status": "done" }
       ]
     },
     {

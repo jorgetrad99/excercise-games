@@ -36,7 +36,9 @@ export default defineConfig(
         {
           paths: [{ name: 'three', message: 'core is pure TS (ADR-002)' }],
           patterns: [
-            ...forbid('render', 'pose', 'input', 'net', 'platform', 'games'),
+            ...forbid('render', 'pose', 'net', 'platform', 'games'),
+            // core/input.ts (the InputEvent contract) is core's own file, not the input/ layer.
+            { ...forbid('input')[0], group: ['**/input', '**/input/**', '!./input'] },
             { group: ['three/*', '@mediapipe/*'], message: 'core is pure TS (ADR-002)' },
           ],
         },

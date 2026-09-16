@@ -229,3 +229,78 @@ Once your fixtures land: swap the e2e clip to `fixtures/video/…`, flip M1.D1 t
 ### Next step
 
 M3 (core sim) can start without fixtures. When recordings land, rewire the TEMPORARY tests first: about 30 minutes, plus tuning in `gestures.config.ts` if the counts don't match.
+
+---
+
+## 2026-09-16 — M3 Core sim (DoD green)
+
+**Result:** Skate Run's simulation is a pure, deterministic core module. It covers lanes, the jump arc, sliding, AABB collisions (hurdle / bar / wall), coins, score, the speed ramp, seeded chunk generation from a 28-pattern library, the power-ups (magnet, 2× coins, hoverboard, rare revive token) and revive, plus pause/resume. All three DoD tests pass. Nothing renders it yet; that's M4.
+
+### What changed
+
+- `src/core/sim.config.ts`: every tuning constant, with units.
+  - speed 12 + 0.02·d, capped at 26 m/s
+  - jump 1.4 m high, 0.75 s airtime
+  - slide tap lasts 0.6 s
+  - countdown 3 s; resume countdown 1 s
+  - revive window 3 s, max 2 per run, 2 s grace afterwards
+  - power-ups last 10 s
+- `src/core/types.ts`: `SimState`/`ChunkState` as plain JSON data.
+- `src/core/sim.ts`: `initState`/`tick`/`cloneState`, plus `createGameSim` (PLAN's `GameSim`: `step(dt, events)` on a fixed 120 Hz accumulator, `getState`, `alpha`, `drainEvents`).
+- `src/core/collision.ts`: player, obstacle and pickup boxes.
+- `src/core/patterns.ts`: 28 ASCII patterns. There are 7/6/7/4/4 at difficulty 1–5, some tagged street-only or park-only.
+- `src/core/worldgen.ts`: speed/difficulty/biome curves; pattern choice; forced-row gap rule (1.5 s of travel); power-up spawn rolls.
+- `src/core/bot.ts`: planning bot (DFS over cloned sim states).
+- `src/core/hash.ts` (FNV-1a over JSON); `src/core/testing.ts` (test worlds + `botRun`).
+- `eslint.config.js`: core may import its own `./input` (the `InputEvent` contract). The `input/` layer is still blocked, which a new boundaries test checks.
+
+### Decisions / deviations (flip if you disagree)
+
+1. **Patterns are ASCII grids in TS, not JSON files.** A 12×3 grid is readable at a glance, and the parser checks it.
+2. **Chunk RNG mixes the seed:** `mulberry32(hash(seed, index))`, not `seed + index`. Otherwise seed 43's world is seed 42's shifted by one chunk.
+3. **The determinism contract is tick-stamped.**
+   - `tick()` is exact. `GameSim.step()` applies live events at the next tick, and the accumulator drops time after a stall of more than 0.25 s.
+   - Replays and M6 multiplayer must log `(tick, type)`, not `InputEvent.t`.
+4. **Hoverboard = 10 s of invulnerability** (PLAN §1.5 literally), not Subway Surfers' "absorbs one crash".
+5. **Slide:** a held crouch slides until SLIDE_END; a tap (keyboard) lasts 0.6 s. ↓ in the air fast-falls and slides on landing.
+6. **Close call:** a jump that clears a hurdle, started ≤ 0.3 s before contact, scores +50, at most once per jump.
+7. **Grab:** GRAB while airborne adds airtime·100 on landing.
+8. **The sim ignores RECALIBRATE**, and movement events during countdown/pause.
+9. **The start is 2 empty run-up chunks** (48 m) after the 3 s countdown.
+
+### Verified, and how
+
+- **`pnpm verify` → exit 0:** tsc and eslint clean; vitest **264 passed + 1 skipped** (12 files); playwright smoke **5/5**.
+- **M3.D1 determinism** (`tests/unit/core/determinism.spec.ts`):
+  - Replaying the bot's 60 s seed-42 log through `createGameSim` gives an identical state hash every time.
+  - The hash changes with a different seed, or with one event moved by one tick.
+  - Random mashing (crashes, revives, pauses) replays identically.
+  - Frames of 1/60 s and ticks of 1/120 s give identical states.
+- **M3.D2 solvability** (`src/core/patterns.spec.ts`): every pattern is played by the planning bot in the real sim.
+  - Scope: from all 3 lanes, at the speed where its difficulty unlocks and at 26 m/s, starting right at the chunk edge. That's 168 cases.
+  - It's not vacuous: 3 deliberately impossible grids (full wall, diagonal walls at 26 m/s, hurdle row followed by a bar row) all fail.
+  - Structural rules also pass: obstacles only in rows 3–10, ≤ 1 forced row, none at difficulty 1.
+- **M3.D3 bot** (`tests/unit/core/bot.spec.ts`): seed 42 for 120 s of running.
+  - It never crashed, and was never invulnerable (no hoverboard pickup, no grace) — asserted, so it survived on merit.
+  - Probe: 2815 m, 26 m/s, 418 coins, 20 jumps, 44 slides, 77 lane changes, 17 close calls.
+  - Seeds 1, 7, 1234 and 99999 each survive 60 s.
+- **Mutation checks:** jump height 1.4 → 0.7 fails 33 tests; slide height 0.9 → 1.2 fails 33 tests.
+- **`src/core/sim.spec.ts`** (22 mechanics tests): countdown, speed cap, lane clamp, jump arc/airtime, slide tap/hold, each obstacle class, hoverboard, close call, coins/high coins, magnet+2×, pickups, grab bonus, revive flow and limits, game over with and without tokens, pause/resume (including during the revive offer and the countdown), air slide, `drainEvents` at 60 Hz.
+- **`src/core/worldgen.spec.ts`:**
+  - curves; determinism per seed, and a different seed is not just a shift
+  - difficulty ceiling and biome tags; all 5 difficulties reached
+  - forced-row gap over 50 seeds × 150 chunks
+  - power-up kinds all appear
+- **Reviewer subagent:** boundaries ✅, and the eslint exception still blocks `../input/*`.
+  - It found 3 bugs, all fixed with tests: `lastEvent` dropped events (now per-tick `events` + `GameSim.drainEvents()`); no GAME_OVER on a no-token crash; the event-timing contract was undocumented.
+  - Minor items also fixed: `-Infinity` in the state, pausing in the countdown shortened it to 1 s, the revive window kept running while paused, an air slide tap didn't slide, `revive` didn't clear the held slide, double close calls on a JJJ row, and the forced-gap rule looked only one chunk back.
+
+### Known gaps
+
+- Pattern solvability is checked in isolation plus 5 bot seeds. Transitions between chunks aren't checked exhaustively.
+- **Not tuned by feel.** Jump airtime, slide length, obstacle sizes and the speed curve need playtesting once M4 renders them.
+- Profile-driven values (revive tokens, multiplier) are sim options; M5 will wire them.
+
+### Next step
+
+M4 renderer (starting now, per your instructions).

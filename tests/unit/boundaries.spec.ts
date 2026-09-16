@@ -21,6 +21,13 @@ describe('PLAN §3 boundaries are enforced by lint', () => {
     expect(ids.filter((id) => id === 'no-restricted-imports')).toHaveLength(2);
   });
 
+  it('core may import its own input contract (core/input.ts) but not the input/ layer', async () => {
+    expect(await ruleIds("export * from './input';\n", 'src/core/ok.ts')).toEqual([]);
+    expect(await ruleIds("export * from '../input/keyboard';\n", 'src/core/bad.ts')).toContain(
+      'no-restricted-imports',
+    );
+  });
+
   it('render rejects pose; pose rejects core; games reject sibling games', async () => {
     expect(await ruleIds("export * from '../pose/x';\n", 'src/render/bad.ts')).toContain(
       'no-restricted-imports',
