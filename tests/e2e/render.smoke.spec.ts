@@ -17,7 +17,7 @@ function watchConsole(page: Page): string[] {
 }
 
 async function boot(page: Page, query: string): Promise<void> {
-  await page.goto(`/?${query}`);
+  await page.goto(`/?game=skate-run&${query}`);
   await expect
     .poll(() => page.evaluate(() => window.__game?.getRenderStats()?.frames ?? 0), {
       timeout: 20_000,
@@ -122,7 +122,7 @@ test.describe('perf', () => {
   }) => {
     test.setTimeout(90_000);
     const problems = watchConsole(page);
-    await page.goto('/?input=pose');
+    await page.goto('/?game=skate-run&input=pose');
     await expect
       .poll(() => page.evaluate(() => window.__game.getPoseStats()?.framesWithPose ?? 0), {
         timeout: 45_000,

@@ -14,7 +14,7 @@ test('fake camera clip is tracked by the worker pipeline at >= 20 pose-fps for 5
   page.on('console', (m) => logs.push(`[${m.type()}] ${m.text()}`));
   page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`));
 
-  await page.goto('/?input=pose&debug=1&record=1');
+  await page.goto('/?game=skate-run&input=pose&debug=1&record=1');
   try {
     await expect
       .poll(async () => (await stats(page)).s?.framesWithPose ?? 0, { timeout: 45_000 })

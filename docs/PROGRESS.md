@@ -598,3 +598,48 @@ Then `pnpm verify`.
   - The seed 42 t30 baseline was regenerated on purpose; t0/10/60 still pass unchanged.
   - Before/after: `tmp/coins/{before,after}-t30.png`.
 - **Done before Piece 2**, so the MiniGame refactor's regression screenshot diff can require zero baseline changes.
+
+---
+
+## 2026-09-16 — Phase 2, Piece 2: MiniGame framework extraction + game-select menu
+
+**Result:** Skate Run now runs behind the `MiniGame` contract (PLAN §2.6) with no change in behaviour. `main.ts` is a game-agnostic shell. `?game=<id>` launches a game directly; without it a plain DOM menu lists the registered games. `window.__game.getActiveGame()` reports the active id. As agreed (option A), Skate Run is wrapped where it lives: no `core/`/`render/` files moved.
+
+### What changed
+
+- **`src/games/types.ts`:** `MiniGame<S>`:
+  - the PLAN fields: `id`, `requiredSignals`, `createSim`, `createView`, `gestureProfile`
+  - plus what the shell actually needed: `title`, `fixedDt`, `mountHud`, and `summary(sim)` → `{started, over, score}` (calibration gate, results/best, play again)
+  - `createView(canvas)` takes the canvas rather than the sim, because the view outlives restarts
+  - `GameSim` = `seed`, `step`, `getState`, `drainEvents`
+- **`src/games/skate-run/`:**
+  - `index.ts` wraps `core/sim`, `core/bot`, `render/view`, `render/interp` (render extrapolation), `render/hud`, plus the latency judder sample
+  - `gestures.ts` holds the gesture → input map, which used to be hard-coded in `input/pose-source.ts`
+- **`input/pose-source.ts`, `input/replay.ts`:** `toInput` is now a required option, so the shared input layer has no Skate Run table. `input.spec.ts` passes `SKATE_GESTURES`; assertions unchanged.
+- **`src/platform/menu.ts`:** one button per game; the first button is focused, so Enter launches it.
+- **`src/main.ts`:**
+  - `launch(game)` mounts the signal HUD, latency overlay, pose panel and HUD in the same order as before, and starts the keyboard.
+  - Bridge calls that need a run throw a clear "no game launched" error while the menu is up.
+  - Events injected before launch are dropped.
+- **`eslint.config.js`:** the "games never import each other" rule now applies to `src/games/*/**`, so the shared `games/types.ts` can import layer types.
+- **Docs and tooling:** every e2e URL plus AGENTS §5, `/playtest` and ARCHITECTURE got `game=skate-run`; `features.json` M7.1 → done.
+
+### Verified
+
+- **`pnpm verify` → exit 0:** vitest 268 passed + 1 skipped (unchanged); playwright smoke 10/10, including the new `boot.smoke` menu test:
+  - no `?game`: menu visible, `getActiveGame()` null, no render
+  - click "Skate Run": menu gone, `getActiveGame() === 'skate-run'`, frames render, no console errors
+- **Regression screenshots:** the seed 42 t = 0/10/30/60 test passes against the pre-refactor baselines. Re-running with `--update-snapshots` left all four PNGs **byte-identical**: `git status` is clean for the snapshots dir.
+- **Review:** the reviewer subagent went over the diff. Fixed from its findings:
+  - `drainEvents` runs every frame in the shell again (it had moved into `view.render`, so events would pile up while models load)
+  - the bridge before launch throws a clear error instead of a TypeError
+  - the input queue is cleared at launch
+
+### Known gaps / deferred to Piece 4 (when a second game exists)
+
+- **Registry typing:** `MiniGame<SkateSim>` fits `MiniGame[]` through method-parameter bivariance. Nothing checks that the sim passed to `summary`/`render`/`hud` came from the same game. The fix is a `defineGame` that closes over its sim type (a session object); it's only worth it with two games.
+- **Bridge types:** `__game.getState()` and `advance()` cast to Skate Run's `SimState` (`ponytail:` comments). Widen when boxing lands.
+- **Contract imports:** `games/types.ts` uses `HudExtras`, `RenderStats` and `Drawn` from `render/` and `platform/`. There's no lint rule stopping it from importing a specific game.
+- **Directory-index imports:** the games rule doesn't catch `../penalty` (from `games/<id>/`). Adding `'../*'` would also block `../types`; revisit if Piece 4 moves the files.
+- **The menu is mouse/keyboard only**; there's no pose selection yet.
+- **Playtest note:** `http://localhost:5173/?seed=42` shows the menu → Skate Run. `?game=skate-run&seed=42` skips it.

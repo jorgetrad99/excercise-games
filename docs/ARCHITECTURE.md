@@ -11,9 +11,9 @@ Agent-maintained module map. The spec lives in `docs/PLAN.md` §3; this file rec
 | `src/pose/`            | M1 pipeline, M2 gestures | Camera manager, worker bridge, One Euro filter, signals, gesture engine, debug HUD. See "Pose pipeline (M1)" and "Gestures (M2)" below. |
 | `src/render/`          | M4 view + HUD          | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD.       |
 | `src/net/`             | —                      | Colyseus client + room protocol (M6).                                                   |
-| `src/platform/`        | `rate.ts` (fps meter)  | Profile store, settings, debug bridge (`window.__game`).                                |
-| `src/games/<id>/`      | —                      | One `MiniGame` per folder: sim + view + gesture profile + patterns.                     |
-| `src/main.ts`          | game loop              | Boot: URL params → sim (`?seed`, `?tokens`), inputs (`?input=pose|keyboard|bot|replay:<fixture>`, keyboard always on), rAF loop (sim.step → view.render → HUD; `?clock=manual` for screenshots), calibration gate for pose/replay, restart on JUMP after game over, `window.__game`. |
+| `src/platform/`        | `rate`, `latency`, `menu` | Profile store, settings, debug bridge (`window.__game`), game-select menu (DOM, unstyled). |
+| `src/games/`           | `types.ts`, `skate-run/` | `types.ts` = the `MiniGame` contract (PLAN §2.6). One `MiniGame` per `<id>/` folder. `skate-run/` wraps `core/` + `render/` in place (Phase 2 option A: not moved yet) and owns its gesture→input map. |
+| `src/main.ts`          | game-agnostic shell    | Boot: `?game=<id>` launches that MiniGame, otherwise the menu; URL params → sim (`?seed`, `?tokens`), inputs (`?input=pose|keyboard|bot|replay:<fixture>`, keyboard always on), rAF loop (sim.step → view.render → HUD; `?clock=manual` for screenshots), calibration gate for pose/replay, restart on JUMP after game over, `window.__game`. |
 | `src/debug-bridge.d.ts`| `Window.__game` type   | Debug bridge contract shared by app and Playwright tests.                               |
 | `public/models/`       | vendored, gitignored   | MediaPipe wasm + `pose_landmarker_{lite,full,heavy}.task` (model v1). Regenerate: `pnpm vendor:models`. |
 | `tests/e2e/`           | `boot`, `pose`, `gestures` smoke | Playwright; `smoke` project = `*.smoke.spec.ts`, new-headless Chromium (real GPU) with the fake camera fed by `tests/e2e/assets/placeholder-person.mjpeg` (interim, see CREDITS.md). |
@@ -28,7 +28,7 @@ core     ─✗→ render, pose, input, net, platform, games, three, @mediapipe/
 core     ─✗→ window, document, navigator, performance, requestAnimationFrame, setTimeout, setInterval, localStorage, Math.random
 render   ─✗→ pose
 pose     ─✗→ core          (only input/ bridges pose ⇄ core events)
-games/a  ─✗→ games/b
+games/a  ─✗→ games/b     (rule covers src/games/*/**; the shared games/types.ts may import layers)
 ```
 
 Also enforced on non-test `src/**`: `max-lines` 400, `max-lines-per-function` 60. `typescript-eslint` recommended bans `any` and `@ts-ignore`.
@@ -56,7 +56,7 @@ PoseFrame ─ body.ts: 7 landmarks, visibility ≥ 0.5 (hold ≤ 300 ms), One Eu
           ─ calibration.ts: waiting → calibrating (still + neutral 2 s) → calibrated {shoulderX, hipY, noseY, torsoLen, shoulderWidth}
           ─ gestures.ts: SignalFrame {leanX, hipRise, hipRiseVel, headDrop, armsUp, tPose, zone, tracking, calibration}
                          + GestureEvents (lanes, jump/grab, slide, revive hold, T-pose recalibrate, tracking lost/restored)
-input/pose-source.ts: GestureEvent → core InputEvent (REVIVE_ACCEPT→REVIVE, TRACKING_LOST→PAUSE, TRACKING_RESTORED→RESUME)
+input/pose-source.ts: GestureEvent → core InputEvent via the game's `gestureProfile.toInput` (Skate Run: REVIVE_ACCEPT→REVIVE, TRACKING_LOST→PAUSE, TRACKING_RESTORED→RESUME)
 input/replay.ts: PoseFixture → pose-source (instant: fixture time; realtime: rebased onto performance.now)
 input/keyboard.ts: ←/→ lanes, Space jump, ↓ slide (down/up), ↑ grab, C recalibrate
 ```

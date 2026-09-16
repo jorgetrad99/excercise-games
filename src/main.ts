@@ -1,25 +1,25 @@
-// Boot: parse URL params, wire InputSources into the sim, render loop, HUD and window.__game.
-import { createBot } from './core/bot';
+// Boot: parse URL params, pick a MiniGame (?game=<id>, else the menu), wire InputSources into its sim,
+// render loop, HUD and window.__game. Game-specific rules sit behind the MiniGame contract (games/).
 import type { InputEvent, InputEventType } from './core/input';
-import { createGameSim, type GameSim } from './core/sim';
-import { simConfig } from './core/sim.config';
+import type { SimState } from './core/types';
+import { skateRun } from './games/skate-run';
+import type { GameHud, GameSim, GameView, MiniGame } from './games/types';
 import { createKeyboardSource } from './input/keyboard';
 import { createPoseSource, type PoseSource } from './input/pose-source';
 import { createReplaySource } from './input/replay';
 import { createLatencyTracker } from './platform/latency';
 import { mountLatencyOverlay } from './platform/latency-overlay';
+import { mountMenu } from './platform/menu';
 import { createRate } from './platform/rate';
 import type { SignalFrame } from './pose/gestures';
-import { gestureConfig } from './pose/gestures.config';
 import { mountPosePanel } from './pose/pose-panel';
 import type { PoseFixture } from './pose/recorder';
 import { mountSignalHud } from './pose/signal-hud';
 import type { ModelVariant } from './pose/types';
-import { mountHud } from './render/hud';
-import { loadModels } from './render/models';
-import { renderPose } from './render/interp';
-import { createGameView, type GameView } from './render/view';
 import type { FrameTiming } from './pose/types';
+
+/** Registered MiniGames, in menu order. */
+const GAMES: readonly MiniGame[] = [skateRun];
 
 const params = new URLSearchParams(location.search);
 const input = params.get('input') ?? 'pose';
@@ -33,7 +33,11 @@ const model: ModelVariant =
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const renderRate = createRate();
-let sim: GameSim = newRun(Number(params.get('seed') ?? 42));
+/** The launched game; null while the menu is up. The run state below is only read after launch. */
+let game: MiniGame | null = null;
+let sim: GameSim;
+let hud: GameHud<GameSim>;
+let view: GameView<GameSim> | null = null;
 let best = 0;
 /** performance.now() when the current run was first seen as over (null while playing). */
 let overSince: number | null = null;
@@ -42,22 +46,19 @@ let keyboardUsed = false;
 /** Results stay up at least this long, so a late dodge-jump doesn't skip them, ms. */
 const RESULTS_MIN_MS = 1000;
 
-function newRun(seed: number): GameSim {
-  const next = createGameSim({ seed, reviveTokens: tokens });
+function newRun(g: MiniGame, seed: number): GameSim {
   // ?autoplay=1 lets the bot drive while another input (e.g. the camera) is live: latency tooling.
-  if (input === 'bot' || params.has('autoplay')) next.setController(createBot(next.context).act);
-  return next;
+  const autoplay = input === 'bot' || params.has('autoplay');
+  return g.createSim(seed, { reviveTokens: tokens, autoplay });
 }
 
 // Every source feeds one queue; the frame loop hands it to the sim. The log is for tests and the HUD.
 const queue: InputEvent[] = [];
 const events: InputEvent[] = [];
-const signalHud = debug ? mountSignalHud(document.body, gestureConfig) : null;
+let signalHud: ReturnType<typeof mountSignalHud> | null = null;
 let signals: SignalFrame | null = null;
 const latency = createLatencyTracker();
-const latencyOverlay = params.has('latency')
-  ? mountLatencyOverlay(document.body, latency.summary)
-  : null;
+let latencyOverlay: ReturnType<typeof mountLatencyOverlay> | null = null;
 /** Set while a pose frame is inside the gesture engine, so its events inherit the frame's timing. */
 let pushing: FrameTiming | null = null;
 function record(e: InputEvent): void {
@@ -68,11 +69,10 @@ function record(e: InputEvent): void {
   signalHud?.event(e);
 }
 
-// Keyboard is always on: it's the fallback for every mode (PLAN §2.2).
+// Keyboard is always on once a game launched: it's the fallback for every mode (PLAN §2.2).
 const keyboard = createKeyboardSource();
 keyboard.onEvent(record);
 keyboard.onEvent(() => (keyboardUsed = true));
-keyboard.start();
 
 function attach(source: PoseSource): void {
   source.onEvent(record);
@@ -85,35 +85,41 @@ function attach(source: PoseSource): void {
 }
 
 let pose: ReturnType<typeof mountPosePanel> | null = null;
-if (input === 'pose') {
-  const source = createPoseSource({
-    video: () => pose?.videoSize() ?? { width: 1280, height: 720 },
-  });
-  pose = mountPosePanel(document.body, {
-    debug,
-    record: params.get('record') === '1',
-    model,
-    numPoses: params.get('players') === '2' ? 2 : 1,
-    cameraId: params.get('camera') ?? undefined,
-    renderFps: () => renderRate.value(),
-    onFrame: (f) => {
-      pushing = f.timing ?? null;
-      const t0 = performance.now();
-      source.push(f);
-      latency.poseFrame(f.timing, performance.now() - t0);
-      pushing = null;
-    },
-  });
-  attach(source);
-  // Outside debug the camera preview is a small corner thumbnail over the game.
-  document.querySelector('.pose-panel')?.classList.toggle('compact', !debug);
-} else if (input.startsWith('replay:')) {
-  // replay:jump.json → /fixtures/pose/jump.json; anything with a slash is used as the URL as-is.
-  const name = input.slice('replay:'.length);
-  fetch(name.includes('/') ? name : `/fixtures/pose/${name}`)
-    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${name}: HTTP ${r.status}`))))
-    .then((fx: PoseFixture) => attach(createReplaySource(fx)))
-    .catch((err: unknown) => console.error('replay failed', err));
+
+function startInput({ gestureProfile: { toInput, config } }: MiniGame): void {
+  keyboard.start();
+  if (input === 'pose') {
+    const source = createPoseSource({
+      video: () => pose?.videoSize() ?? { width: 1280, height: 720 },
+      toInput,
+      config,
+    });
+    pose = mountPosePanel(document.body, {
+      debug,
+      record: params.get('record') === '1',
+      model,
+      numPoses: params.get('players') === '2' ? 2 : 1,
+      cameraId: params.get('camera') ?? undefined,
+      renderFps: () => renderRate.value(),
+      onFrame: (f) => {
+        pushing = f.timing ?? null;
+        const t0 = performance.now();
+        source.push(f);
+        latency.poseFrame(f.timing, performance.now() - t0);
+        pushing = null;
+      },
+    });
+    attach(source);
+    // Outside debug the camera preview is a small corner thumbnail over the game.
+    document.querySelector('.pose-panel')?.classList.toggle('compact', !debug);
+  } else if (input.startsWith('replay:')) {
+    // replay:jump.json → /fixtures/pose/jump.json; anything with a slash is used as the URL as-is.
+    const name = input.slice('replay:'.length);
+    fetch(name.includes('/') ? name : `/fixtures/pose/${name}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${name}: HTTP ${r.status}`))))
+      .then((fx: PoseFixture) => attach(createReplaySource(fx, { toInput, config })))
+      .catch((err: unknown) => console.error('replay failed', err));
+  }
 }
 
 function trackingLabel(): { tracking: string; trackingOk: boolean } {
@@ -129,73 +135,73 @@ function trackingLabel(): { tracking: string; trackingOk: boolean } {
   return { tracking: '📷 tracking', trackingOk: true };
 }
 
-const hud = mountHud(document.body);
-let view: GameView | null = null;
 let last = performance.now();
 
 /** "Play again" = jump (PLAN §2.1), only for jumps made after the results were up for 1 s. */
-function playAgain(now: number): void {
-  const state = sim.getState();
-  if (state.phase !== 'over') {
+function playAgain(g: MiniGame, now: number): void {
+  const run = g.summary(sim);
+  if (!run.over) {
     overSince = null;
     return;
   }
-  best = Math.max(best, state.score);
+  best = Math.max(best, run.score);
   overSince ??= now;
   if (queue.some((e) => e.type === 'JUMP' && e.t >= overSince! + RESULTS_MIN_MS)) {
     queue.length = 0;
-    sim = newRun(sim.seed);
+    sim = newRun(g, sim.seed);
     overSince = null;
   }
 }
 
 /** Pose/replay: a fresh run waits for calibration (PLAN §2.1: calibrate, then 3-2-1). */
-function waitingForCalibration(): boolean {
+function waitingForCalibration(g: MiniGame): boolean {
   if (input === 'keyboard' || input === 'bot' || keyboardUsed) return false;
-  return sim.getState().tick === 0 && signals?.calibration.state !== 'calibrated';
+  return !g.summary(sim).started && signals?.calibration.state !== 'calibrated';
 }
 
 function frame(now: number): void {
+  const g = game!; // only scheduled by launch()
   renderRate.tick();
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
-  playAgain(now);
-  const waiting = waitingForCalibration();
+  playAgain(g, now);
+  const waiting = waitingForCalibration(g);
   const applied = waiting || manualClock ? [] : queue.splice(0);
   if (waiting) queue.length = 0;
   latency.frameStart(now, performance.now(), applied);
   if (!waiting && !manualClock) sim.step(dt, applied);
   sim.drainEvents(); // ponytail: nothing consumes sim events yet (sound/juice come later)
-  const state = sim.getState();
-  const drawn = renderPose(state, sim.previous(), manualClock ? 0 : sim.alpha());
-  view?.render(state, drawn);
-  const running = view !== null && state.phase === 'running';
-  const changingLane = Math.abs(state.targetLane * simConfig.world.laneWidth - drawn.x) > 0.3;
-  latency.rendered(
-    performance.now(),
-    running
-      ? {
-          ...drawn,
-          speed: state.speed,
-          lateralSpeed: changingLane ? simConfig.player.laneSpeed : 0,
-        }
-      : null,
-  );
+  latency.rendered(performance.now(), view?.render(sim, !manualClock) ?? null);
   if (applied.length > 0) latencyOverlay?.onEventRendered(now);
   latencyOverlay?.frame(now);
-  hud.update(sim.getState(), { ...trackingLabel(), best, waiting });
+  hud.update(sim, { ...trackingLabel(), best, waiting });
   requestAnimationFrame(frame);
 }
 
-loadModels()
-  .then((models) => {
-    view = createGameView(canvas, models);
-  })
-  .catch((err: unknown) => console.error('renderer failed', err))
-  .finally(() => requestAnimationFrame(frame));
+function launch(g: MiniGame): void {
+  game = g;
+  queue.length = 0; // nothing injected while the menu was up leaks into the first tick
+  sim = newRun(g, Number(params.get('seed') ?? 42));
+  if (debug) signalHud = mountSignalHud(document.body, g.gestureProfile.config);
+  if (params.has('latency')) latencyOverlay = mountLatencyOverlay(document.body, latency.summary);
+  startInput(g);
+  hud = g.mountHud(document.body);
+  g.createView(canvas)
+    .then((v) => (view = v))
+    .catch((err: unknown) => console.error('renderer failed', err))
+    .finally(() => requestAnimationFrame(frame));
+}
+
+/** Bridge calls that need a run fail loudly (not with a TypeError) while the menu is up. */
+function launched(): MiniGame {
+  if (!game) throw new Error('no game launched: open with ?game=<id> or pick one in the menu');
+  return game;
+}
 
 window.__game = {
-  getState: () => sim.getState(),
+  getActiveGame: () => game?.id ?? null,
+  // ponytail: typed as Skate Run's state while it's the only game; widen when game #2 lands.
+  getState: () => (launched(), sim.getState() as SimState),
   getFps: () => renderRate.value(),
   getPoseStats: () => pose?.stats() ?? null,
   getSignals: () => signals,
@@ -203,13 +209,22 @@ window.__game = {
   inject: (e: { type: InputEventType; t?: number }) => record({ t: performance.now(), ...e }),
   setSeed: (seed: number) => {
     queue.length = 0;
-    sim = newRun(seed);
+    sim = newRun(launched(), seed);
   },
   advance: (seconds: number) => {
-    const ticks = Math.round(seconds / simConfig.fixedDt);
-    for (let i = 0; i < ticks; i++) sim.step(simConfig.fixedDt, i === 0 ? queue.splice(0) : []);
-    return sim.getState().t;
+    const { fixedDt } = launched();
+    const ticks = Math.round(seconds / fixedDt);
+    for (let i = 0; i < ticks; i++) sim.step(fixedDt, i === 0 ? queue.splice(0) : []);
+    return (sim.getState() as SimState).t; // ponytail: same Skate Run typing as getState
   },
   getRenderStats: () => view?.stats() ?? null,
   getLatency: () => latency.summary(),
 };
+
+const requested = params.get('game');
+const chosen = GAMES.find((g) => g.id === requested);
+if (chosen) launch(chosen);
+else {
+  if (requested) console.warn(`unknown ?game=${requested}; showing the menu`);
+  mountMenu(document.body, GAMES, launch);
+}

@@ -57,7 +57,7 @@ Beyond that, verify at the level of the thing you changed:
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | gesture logic / signals       | fixture-driven unit tests (`fixtures/pose/*.json` → exact event sequences). Add a fixture-based test for every new event.                                              |
 | core sim / worldgen / scoring | determinism test, solvability test, headless bot run (`tests/unit/core/bot.spec.ts`)                                                                                   |
-| rendering                     | Playwright with `?input=keyboard&seed=42&debug=1`: screenshot at fixed times, compare to baseline; read `window.__game.getFps()`; check console for three.js warnings  |
+| rendering                     | Playwright with `?game=skate-run&input=keyboard&seed=42&debug=1`: screenshot at fixed times, compare to baseline; read `window.__game.getFps()`; check console for three.js warnings  |
 | camera / pose pipeline        | Playwright with fake camera (`--use-fake-device-for-media-stream --use-file-for-fake-video-capture=fixtures/video/<clip>`): assert pose-fps ≥ 20 and ≥ 1 pose detected |
 | multiplayer                   | in-process Colyseus server + 2 headless clients; assert both finish with the same chunk sequence for the shared seed                                                   |
 | docs only                     | `pnpm lint:md` if present; otherwise nothing, but still log                                                                                                            |
@@ -68,8 +68,8 @@ Screenshots and state dumps go to `tmp/` (git-ignored). Reference them by path i
 
 ## 5. How to use the runtime as an agent
 
-- `pnpm dev` then open `http://localhost:5173/?debug=1&input=keyboard&seed=42`
-- `window.__game.getState()` — full sim snapshot; `getSignals()` — live pose signals; `inject({type:'JUMP'})` — fire an input event; `setSeed(n)` — restart deterministic run.
+- `pnpm dev` then open `http://localhost:5173/?game=skate-run&debug=1&input=keyboard&seed=42` (without `?game=<id>` the game-select menu shows)
+- `window.__game.getActiveGame()` — launched MiniGame id (null on the menu); `getState()` — full sim snapshot; `getSignals()` — live pose signals; `inject({type:'JUMP'})` — fire an input event; `setSeed(n)` — restart deterministic run.
 - `?input=replay:jump.json` — drives the game from a recorded fixture; `?record=1` — records a fixture (human only).
 - `?players=2` — split screen; `?model=lite|full|heavy`; `?camera=<deviceId>`.
 - The `/playtest <seed> <input>` command wraps the above in headed Playwright and saves artifacts.

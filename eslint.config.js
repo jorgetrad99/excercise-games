@@ -69,7 +69,7 @@ export default defineConfig(
     rules: { 'no-restricted-imports': ['error', { patterns: forbid('core') }] },
   },
   {
-    files: ['src/games/**/*.ts'],
+    files: ['src/games/*/**/*.ts'], // games/<id>/…; the shared contract games/types.ts may import layers,
     rules: {
       'no-restricted-imports': [
         'error',

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { CALIBRATE, JUMP, fixture, script } from '../../src/pose/testdata/synthetic';
 
 test('keyboard input and inject() land in the event log', async ({ page }) => {
-  await page.goto('/?input=keyboard&debug=1');
+  await page.goto('/?game=skate-run&input=keyboard&debug=1');
   await expect.poll(() => page.evaluate(() => typeof window.__game?.getEvents)).toBe('function');
   for (const k of ['ArrowLeft', 'ArrowRight', 'Space']) await page.keyboard.press(k);
   await page.keyboard.down('ArrowDown');
@@ -37,7 +37,7 @@ test('replay input drives the gesture engine end to end, HUD shows live signals'
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
 
-  await page.goto('/?input=replay:synthetic-lean-jump.json&debug=1');
+  await page.goto('/?game=skate-run&input=replay:synthetic-lean-jump.json&debug=1');
   await expect
     .poll(() => page.evaluate(() => window.__game.getEvents().map((e) => e.type)), {
       timeout: 15_000,

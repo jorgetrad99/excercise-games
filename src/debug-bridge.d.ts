@@ -1,6 +1,8 @@
 // Debug bridge contract (PLAN §3).
 interface Window {
   __game: {
+    /** MiniGame id launched via ?game=<id> or the menu; null while the menu is up. */
+    getActiveGame(): string | null;
     /** Full sim snapshot (live object: copy it if you keep it). */
     getState(): import('./core/types').SimState;
     getFps(): number;

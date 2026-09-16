@@ -1,11 +1,12 @@
 // Replay InputSource (?input=replay:<fixture>): a recorded PoseFixture through the same pose path.
 import type { GestureConfig } from '../pose/gestures.config';
 import type { PoseFixture } from '../pose/recorder';
-import { createPoseSource, type PoseSource } from './pose-source';
+import { createPoseSource, type GestureMap, type PoseSource } from './pose-source';
 
 export interface ReplayOptions {
   /** 'instant' pushes every frame synchronously on start(); event t = fixture time. */
   mode?: 'instant' | 'realtime';
+  toInput: GestureMap;
   config?: GestureConfig;
   now?: () => number;
 }
@@ -17,10 +18,11 @@ export interface ReplaySource extends PoseSource {
 
 export function createReplaySource(
   fixture: PoseFixture,
-  { mode = 'realtime', config, now = () => performance.now() }: ReplayOptions = {},
+  { mode = 'realtime', toInput, config, now = () => performance.now() }: ReplayOptions,
 ): ReplaySource {
   const pose = createPoseSource({
     video: () => fixture.video,
+    toInput,
     now,
     tickMs: 0,
     ...(config ? { config } : {}),

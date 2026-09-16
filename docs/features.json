@@ -111,7 +111,7 @@
       "id": "M7",
       "title": "Polish & extraction",
       "tasks": [
-        { "id": "M7.1", "text": "Extract MiniGame interface for real (move Skate Run behind it)", "status": "todo" },
+        { "id": "M7.1", "text": "Extract MiniGame interface for real (move Skate Run behind it)", "status": "done", "note": "Phase 2 Piece 2, option A: src/games/types.ts contract; games/skate-run wraps core/ + render/ in place (files not moved). ?game=<id> or DOM menu; __game.getActiveGame()." },
         { "id": "M7.2", "text": "Tracking-quality coach", "status": "todo" },
         { "id": "M7.3", "text": "Third biome", "status": "todo" },
         { "id": "M7.4", "text": "Difficulty tuning from playtest notes", "status": "todo" },

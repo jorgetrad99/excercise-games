@@ -11,7 +11,7 @@ test.use({ viewport: { width: 1920, height: 1080 } });
 
 test('pipeline latency by stage', async ({ page }) => {
   test.setTimeout(120_000);
-  await page.goto('/?input=pose&autoplay=1&latency=1&seed=42&tokens=99');
+  await page.goto('/?game=skate-run&input=pose&autoplay=1&latency=1&seed=42&tokens=99');
   await expect
     .poll(() => page.evaluate(() => window.__game.getPoseStats()?.framesWithPose ?? 0), {
       timeout: 45_000,

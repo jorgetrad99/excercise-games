@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InputEvent } from '../core/input';
+import { SKATE_GESTURES } from '../games/skate-run/gestures';
 import { CALIBRATE, JUMP, fixture, script } from '../pose/testdata/synthetic';
 import { createKeyboardSource } from './keyboard';
 import { createReplaySource } from './replay';
@@ -64,7 +65,7 @@ describe('replay source — TEMPORARY synthetic fixture', () => {
   afterEach(() => vi.useRealTimers());
 
   it('instant: plays the whole fixture on start() through the gesture engine', async () => {
-    const replay = createReplaySource(fx, { mode: 'instant' });
+    const replay = createReplaySource(fx, { mode: 'instant', toInput: SKATE_GESTURES });
     const got: InputEvent[] = [];
     replay.onEvent((e) => got.push(e));
     replay.start();
@@ -75,7 +76,7 @@ describe('replay source — TEMPORARY synthetic fixture', () => {
 
   it('realtime: emits the same events on the live clock, in order', async () => {
     vi.useFakeTimers();
-    const replay = createReplaySource(fx, { now: () => Date.now() });
+    const replay = createReplaySource(fx, { toInput: SKATE_GESTURES, now: () => Date.now() });
     const got: InputEvent[] = [];
     replay.onEvent((e) => got.push(e));
     const start = Date.now();
