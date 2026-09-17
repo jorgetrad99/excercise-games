@@ -2119,3 +2119,38 @@ The core requirement of the brief is met and measured.
 - **Pending test fix:** `body-input.spec` "body scan changes reach" varies only the `BODY` normalisation, not the engine's bone lengths, so it asserts "longer arms reach less", the opposite of what the app does. The whole-path version (engine `setArms` + `bodyFromPose`, longer → deeper by > 0.1 m) is written but not applied: the Edit tool was blocked by the fail-closed hook launcher until the merge, and after it a `.ts` edit would have run tsc during the other sessions' quiet window. Next session, first thing.
 - **1080p fps and pose-fps gate values are provisional** until the display/contention rule is settled (Jorge's display routing change, or its replacement).
 - **Next:** main merged at e83c45b (0a49beb) and ec9ba77 (hook launcher, zero-gates reporter, guard over agent config, config-drift Stop hook); both merges unverified. Jorge restarts this session so the hooks load; then apply the pending `body-input.spec` fix and re-run verify on the merged tree (zero-gates reporter present). BX-PRED-1 awaits Jorge's call after the playtest. Then M7.16–M7.19 are unblocked.
+
+---
+
+## 2026-09-17 — Session ↔ branch map; `feat/visual-expressiveness` is superseded
+
+Docs only. For the next coordination round, so messages go to one session instead of a broadcast.
+
+| Branch | Worktree | Session | Has main `ec9ba77` |
+| --- | --- | --- | --- |
+| `chore/perf-lock` → `main` | `tmp/perf-lock-worktree` | `move-arcade-32` | is main |
+| `docs/skate-step-propulsion` | main checkout | `move-arcade-32` | yes (`44e2162`) |
+| `docs/plan-boxing` | `tmp/plan-boxing-worktree` | `move-arcade-bd` | yes (`7ba0a05`) |
+| `feat/player-authority` | `tmp/player-authority-worktree` | `move-arcade-64` | yes (`6d7dd46`) |
+| `feat/visual-expressiveness` | `tmp/visual-expressiveness-worktree` | **none** | **no** |
+
+- **`feat/visual-expressiveness` is unmerged and unclaimed on purpose (Jorge, 2026-09-17).** It was superseded: the inversion work moved to `feat/player-authority`, and the visual work it carried is in that branch's history. It isn't pending work. Don't merge main into it or pick it up; its Stop hook will keep reporting drift from main.
+- **Restarts:** sessions pick up the new hooks (A + B) at restart. Restart at a clean stopping point, not mid-task. It only matters before the next real gate run.
+- **AGENTS.md drift still open:**
+  - `docs/plan-boxing` differs from main by the §4 contention bullets and the `?names=` line in §5.
+  - `feat/player-authority` differs by `786cd25` (Body scan entry, pose-Boxing input notes).
+  - Jorge applies these by hand in one pass.
+- **Hold on step-propulsion constants (Skate M8):** `move-arcade-64` found that with a body scan applied, a plain guard reads 1.23 m forward against a 0.99 m touch threshold. Scan-derived reach is disabled until it's diagnosed against Jorge's drill recordings. The same gesture pipeline feeds step propulsion, so no Skate constants get built on scan-calibrated arm or leg proportions until that diagnosis lands.
+
+## 2026-09-17 — No real pose recordings exist (correction, applies to every session)
+
+Docs + one warning line in vitest setup. **Earlier entries on every branch that say "Jorge's drill recordings", "once Jorge confirms which recordings are clean" or "provisional until the drills" assume recordings that were never made** (Jorge, 2026-09-17). The file in his Downloads (`pose-2026-09-16T18-42-19-146Z.json`) is old and unrelated. `fixtures/pose/` doesn't exist on any branch. Same situation as `src/pose/march.ts`, which also doesn't exist yet and was planned around by two sessions.
+
+- **What this means:**
+  - **Every pose before/after is synthetic.** Say so each time, but don't list "use a real recording" as an option.
+  - **BX-CAL-6 is blocked on recordings that don't exist, not pending work.** Choosing between its two hypotheses needed real drills. `APPLY_BODY_SCAN` stays `false` indefinitely.
+  - **The Skate M8 hold above follows from that:** scan-calibrated proportions stay off, so step propulsion builds on default bone lengths, not "after the diagnosis lands".
+  - **Values marked "provisional until Jorge's drills" stay provisional and untuned.** Don't wait on them, don't tune them on synthetic poses.
+  - **If a bug only shows with a real body,** ask Jorge for one short clip aimed at that bug, not the drill set.
+- **Where it trips you:** every vitest run (`scripts/vitest-perf-lock.mjs`, globalSetup of both vitest configs) prints `NO REAL POSE RECORDINGS: fixtures/pose/ has none…` while that folder holds no `.json`. It disappears on its own when the first recording lands. `fixtures/README.md` is human-owned (guarded), so its text was handed to Jorge to place.
+- **Verified:** `PLAYWRIGHT_PORT=5193 pnpm verify` exit 0 (`tmp/verify/verify-no-recordings.log`): the warning prints at vitest start; vitest 364 passed + 1 skipped; e2e 22 passed. **Gate values not usable:** all 4 read `CONTENDED` (2 other node processes: the Boxing bug-triage agent working in parallel). The change doesn't touch app code.
