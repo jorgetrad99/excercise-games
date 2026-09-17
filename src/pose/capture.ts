@@ -9,6 +9,8 @@ export const TRAIL_MS = 1000;
 export interface CaptureStep {
   id: string;
   prompt: string;
+  /** Plain-language description shown under the demo; not stored in the take. */
+  howTo?: string;
   durationS: number;
 }
 

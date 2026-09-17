@@ -8,6 +8,7 @@ import {
   type CaptureStep,
   type CaptureTake,
 } from './capture';
+import { drawDemo } from './capture-demo';
 import { CAPTURE_SCRIPTS } from './capture-scripts';
 import { downloadJson, type PoseFixture } from './recorder';
 import type { PoseFrame } from './types';
@@ -18,14 +19,25 @@ type LoggedEvent = ReturnType<Window['__game']['getEvents']>[number];
 const COUNTDOWN_MS = 3000;
 /** Wait after a take ends before showing Keep/Redo, so events of its last frames have arrived, ms. */
 const SETTLE_MS = 500;
-/** Keys free in every game (Z/X/C/R/Space/Enter/arrows are taken): K = Keep (and Start), D = reDo. */
+/** Keys free in every game (Z/X/C/R/Space/Enter/arrows are taken): K = Keep (and Start), D = reDo;
+ *  L = Learn the moves (practice, nothing recorded), N / B = next / back in practice. */
 const KEEP_KEY = 'k';
 const REDO_KEY = 'd';
+const LEARN_KEY = 'l';
+const NEXT_KEY = 'n';
+const BACK_KEY = 'b';
 
 const CSS = `
-.capture { position: fixed; left: 50%; bottom: 4vh; transform: translateX(-50%); width: min(90vw, 1100px);
-  padding: 2vh 3vw; background: #000c; color: #fff; font: 600 4.5vh/1.25 system-ui; text-align: center;
+.capture { position: fixed; left: 50%; bottom: 3vh; transform: translateX(-50%); width: min(90vw, 1100px);
+  padding: 2vh 3vw; background: #000; color: #fff; font: 600 4.5vh/1.25 system-ui; text-align: center;
   border-radius: 12px; z-index: 10; }
+/* Demo steps: figure left, text right, sized to read from ~2.5 m (prompt 6vh, description 4.5vh). */
+.capture canvas { display: none; height: 60vh; aspect-ratio: 1.5; }
+.capture.demo { display: grid; grid-template-columns: auto 1fr; gap: 2vw; align-items: center;
+  width: 96vw; box-sizing: border-box; padding: 2vh 2vw; }
+.capture.demo canvas { display: block; }
+.capture .prompt { font-size: 6vh; font-weight: 800; }
+.capture .how { font-size: 4.5vh; font-weight: 500; margin-top: 1.5vh; text-align: left; }
 .capture .big { font-size: 14vh; line-height: 1; }
 .capture .rec { color: #f44; }
 .capture .go { color: #4f6; }
@@ -33,7 +45,7 @@ const CSS = `
 .capture button { font: 600 4vh system-ui; padding: 1vh 3vw; margin: 1.5vh 1vw 0; border-radius: 8px; }
 `;
 
-type Phase = 'ready' | 'countdown' | 'recording' | 'review' | 'done';
+type Phase = 'ready' | 'preview' | 'countdown' | 'recording' | 'review' | 'done';
 
 interface Wizard {
   name: string;
@@ -62,9 +74,13 @@ const button = (key: string, label: string): string =>
 function view(w: Wizard, now: number): string {
   if (w.phase === 'done') return `<div class="go">Done</div><div class="detail">${w.done}</div>`;
   const s = w.steps[w.index]!;
-  const head = `<div class="detail">Step ${w.index + 1}/${w.steps.length} · ${w.name}</div>`;
-  const prompt = `<div>${s.prompt}</div>`;
-  if (w.phase === 'ready') return `${head}${prompt}${button(KEEP_KEY, 'Start')}`;
+  const n = `${w.index + 1}/${w.steps.length}`;
+  const prompt = `<div class="prompt">${s.prompt}</div>${s.howTo ? `<div class="how">${s.howTo}</div>` : ''}`;
+  if (w.phase === 'preview')
+    return `<div class="detail">Practice ${n} · nothing is recorded</div>${prompt}${button(BACK_KEY, 'Back')}${button(NEXT_KEY, 'Next')}${button(KEEP_KEY, 'Done')}`;
+  const head = `<div class="detail">Step ${n} · ${w.name}</div>`;
+  if (w.phase === 'ready')
+    return `${head}${prompt}${button(KEEP_KEY, 'Start')}${button(LEARN_KEY, 'Learn the moves')}`;
   if (w.phase === 'countdown')
     return `${head}${prompt}<div class="big">${Math.ceil((w.start - now) / 1000)}</div>`;
   if (w.phase === 'review')
@@ -120,6 +136,24 @@ function tick(
   }
 }
 
+/** K/D/L/N/B, or the clicked button's key. */
+function press(
+  w: Wizard,
+  key: string | undefined,
+  video: () => PoseFixture['video'],
+  model: PoseFixture['model'],
+): void {
+  const last = w.steps.length - 1;
+  if (key === LEARN_KEY && w.phase === 'ready') w.phase = 'preview';
+  else if (key === NEXT_KEY && w.phase === 'preview') w.index = Math.min(last, w.index + 1);
+  else if (key === BACK_KEY && w.phase === 'preview') w.index = Math.max(0, w.index - 1);
+  else if (key === KEEP_KEY && w.phase === 'preview')
+    Object.assign(w, { phase: 'ready', index: 0 });
+  else if (key === KEEP_KEY && w.phase === 'ready') begin(w);
+  else if (key === KEEP_KEY && w.phase === 'review') keep(w, video(), model);
+  else if (key === REDO_KEY && w.phase === 'review') begin(w); // retakes this step only
+}
+
 /** Mounts the wizard for `?capture=<name>`; null when the URL has none (or names no script). */
 export function mountCaptureWizard(
   root: HTMLElement,
@@ -129,6 +163,9 @@ export function mountCaptureWizard(
   const name = new URLSearchParams(location.search).get('capture');
   if (name === null) return null;
   const box = Object.assign(document.createElement('div'), { className: 'capture' });
+  const canvas = document.createElement('canvas');
+  const text = document.createElement('div');
+  box.append(canvas, text);
   root.append(Object.assign(document.createElement('style'), { textContent: CSS }), box);
   const steps = CAPTURE_SCRIPTS[name];
   if (!steps) {
@@ -147,11 +184,7 @@ export function mountCaptureWizard(
     summary: '',
     done: '',
   };
-  const act = (key: string | undefined): void => {
-    if (key === KEEP_KEY && w.phase === 'ready') begin(w);
-    else if (key === KEEP_KEY && w.phase === 'review') keep(w, video(), model);
-    else if (key === REDO_KEY && w.phase === 'review') begin(w); // retakes this step only
-  };
+  const act = (key: string | undefined): void => press(w, key, video, model);
   box.addEventListener('click', (e) =>
     act((e.target as HTMLElement).closest('button')?.dataset['key']),
   );
@@ -159,11 +192,16 @@ export function mountCaptureWizard(
 
   const seen = new WeakSet<LoggedEvent>();
   let shown = '';
+  let demo = { id: '', since: 0 }; // restarts each step's demo loop when it first shows
   const loop = (): void => {
     tick(w, seen, video, model);
-    const html = view(w, performance.now());
+    const now = performance.now();
+    const html = view(w, now);
     // Only on change: rebuilding the buttons every frame would swallow clicks.
-    if (html !== shown) box.innerHTML = shown = html;
+    if (html !== shown) text.innerHTML = shown = html;
+    const id = w.phase === 'review' || w.phase === 'done' ? '' : w.steps[w.index]!.id;
+    if (id !== demo.id) demo = { id, since: now };
+    box.classList.toggle('demo', id !== '' && drawDemo(canvas, id, now - demo.since));
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);

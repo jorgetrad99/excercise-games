@@ -2361,3 +2361,59 @@ Built by a subagent, reviewed and verified by the orchestrator. It unblocks Jorg
 - **Verified:** `PLAYWRIGHT_PORT=5196 pnpm verify` exit 0 (`tmp/verify/verify-handover-merge.log`): vitest 441 passed + 1 skipped (40 files), e2e 34 passed, `GATES: 6 measured`. Every gate reads `lock held · other heavy: 1 CONTENDED`: pid 22360 is VS Code's Playwright extension `test-server` (idle since 08:04), not a run. CPU 15–21 %; values match the quiet runs (boxing-1p-face 60 fps / pose-fps min 29, skate-2p pose-fps min 25, total latency 1P p50 40.6 ms). The machine-state check counts an idle test-server as heavy.
 - **`?record=1&capture=b1` on the fake camera** (ad-hoc probe, `tmp/probe-b1/`, not committed): 6 steps in order, Keep on each, one `capture-b1-*.json` with 6 takes, step ids match, `windowMs` = [1000, 1000 + duration], 115–297 frames per take, no page errors. Events "none" per take is expected: the placeholder clip doesn't move. Real-camera readability is still Jorge's first take.
 - **Next:** Jorge records the B1 clip on this branch. Still pending from the handover: the `body-input.spec` whole-path fix and BX-PRED-1 implementation.
+
+## 2026-09-17 — Capture wizard: move demos, plain-language steps, practice mode
+
+Jorge couldn't tell from the words what "square" vs "natural right straight" or a guard looks like. Recording a wrong interpretation would make B1 data worthless.
+
+### What changed
+
+- **`src/pose/capture-demo.ts` (new):** a looping 2D canvas stick figure per b1 step, keyed by step id.
+  - **How it works:** hand-authored keyframes of 5 posture numbers (body turn, guard, right/left punch, left arm up) → 3D joints → two views side by side.
+  - **Why this option:** no assets, no dependency, readable at a distance. The 3D rig would need its own camera and renderer over the game, for a less clear picture.
+  - **FROM BEHIND:** the figure's right is your right, with no mirroring (B1 is a handedness question). For punches, the camera orbits 40° so the punching fist extends on its own side instead of hiding behind the body.
+  - **FROM ABOVE:** a `▲ SCREEN ▲` marker, and a dashed "shoulders square" line under a thick yellow shoulder bar.
+    - **Square:** the bar stays on the dashed line.
+    - **Natural:** the bar turns 45° (hips 22°).
+  - **Colour and labels:** right arm orange with an `R` fist, left arm cyan with an `L` fist. Fists always draw on top.
+- **`capture-scripts.ts`:** prompts are now plain language ("3 right punches — NO twist" / "— WITH twist", "Fists up", "Left arm up"). Each step has a `howTo` sentence written for someone who has never boxed. **Step ids are unchanged**, so takes still match PLAN-BOXING's names. The take stores the new prompt text; `howTo` isn't stored.
+- **`capture-panel.ts`:**
+  - Layout: demo on the left, text on the right.
+  - The demo shows on the ready screen, during the 3 s countdown, during get-ready, and during GO. It's hidden on Keep/Redo.
+  - Background is solid black (was 80 % alpha; game HUD text showed through).
+  - Type sizes: prompt 6vh bold, description 4.5vh.
+- **Practice mode:** **L** on the Start screen = "Learn the moves". **N** / **B** step through all 6 demos at your own pace ("nothing is recorded"). **K** = Done, back to Step 1 with Start. Nothing counts down or downloads. L, N and B are free in every game.
+
+### Verified
+
+- **`capture-demo.spec.ts`** (6 tests). Each check was broken on purpose and the test failed:
+  - every b1 step has a demo and a `howTo`
+  - loops have no jump
+  - overhead raises the **left** fist
+  - square turn < 1°, natural ≥ 35°
+  - the punching fist extends and the other stays at the chin
+  - on screen, in both views, the punching fist is on its own side (orbit sign flipped for the left punch or for square → fails)
+  - Mutations run: natural yaw 45→10, overhead on the right hand, square punches with the left, loop end ≠ start, both orbit flips.
+- **e2e `capture.smoke.spec.ts`**, new test "practice mode":
+  - L → Practice 1/6, canvas visible with > 2000 lit pixels
+  - N ×6 clamps at 6/6; B → 5/6 "WITH twist"; K → Step 1/6 Start
+  - 3.5 s later nothing has started; no page errors
+- **Screenshots (1920×1080, fake camera):** `tmp/probe-demo/shots/{1..6}-peak.png`, `countdown.png`, and `tmp/capture-demo/practice-6.png`. I checked each one: L/R stay on their sides in both views, and square vs twist differs clearly from above.
+  - Three problems were found this way and fixed: the head disc covered the shoulder bar from above; a straight-behind punch read as "raise your fist"; with a fixed orbit, the left punch crossed to screen-right.
+- **`PLAYWRIGHT_PORT=5196 pnpm verify` exit 0** (`tmp/verify/verify-capture-demo.log`): vitest 447 passed + 1 skipped (41 files), e2e 35 passed, `GATES: 6 measured`.
+  - Every gate reads `lock held · other heavy: 1 CONTENDED`: pid 22360 is the idle VS Code Playwright test-server, as in the previous verify.
+  - This change only mounts under `?record=1&capture=`, so no gate path is touched.
+
+### Not verified (needs Jorge at 2.5 m): playtest note
+
+URL: `/?game=boxing&record=1&capture=b1`, press **L**. Check each of these:
+
+1. **Text:** can you read the description line (the smallest text, 4.5vh) without leaning in? On a 27" monitor that's about 15 mm type. On a laptop it will be too small. If so, say so, and the fix is one CSS number.
+2. **Views:** in "FROM BEHIND" and "FROM ABOVE", is `R` on your right and `L` on your left, like looking at your own back?
+3. **Square vs twist:** flip between steps 4 and 5 with B/N. Is the difference obvious from where you stand without reading the title?
+4. **Guard:** step 3, "Fists up". Does the figure match what you'd do?
+5. **Colour:** the orange/cyan pair should survive common colour-blindness, and the R/L letters carry it anyway. Say if the colours wash out on your screen.
+
+### Next
+
+- Jorge practises, then records the B1 clip on this branch.
