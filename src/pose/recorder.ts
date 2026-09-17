@@ -12,6 +12,16 @@ export interface PoseFixture {
   frames: PoseFrame[];
 }
 
+/** Fixture time: ms since `t0`, 0.1 ms resolution. */
+export const rebaseT = (t: number, t0: number): number => Math.round((t - t0) * 10) / 10;
+
+/** A live frame as a fixture stores it: rebased t, no live timing. */
+export const rebaseFrame = (f: PoseFrame, t0: number): PoseFrame => ({
+  t: rebaseT(f.t, t0),
+  poses: f.poses,
+  ...(f.world ? { world: f.world } : {}),
+});
+
 export function createRecorder(windowMs = RECORD_WINDOW_MS) {
   const frames: PoseFrame[] = [];
   return {
@@ -28,11 +38,7 @@ export function createRecorder(windowMs = RECORD_WINDOW_MS) {
         version: 1,
         recordedAt: recordedAt.toISOString(),
         ...meta,
-        frames: frames.map((f) => ({
-          t: Math.round((f.t - t0) * 10) / 10,
-          poses: f.poses,
-          ...(f.world ? { world: f.world } : {}),
-        })),
+        frames: frames.map((f) => rebaseFrame(f, t0)),
       };
     },
   };

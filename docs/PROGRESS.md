@@ -2288,3 +2288,45 @@ Quiet runs only (`lock held · other heavy: none`), p50, ms, median [range]:
 2. B4 (lean-left dodge), with removal of lean → `DODGE_*` for pose players.
 3. B5 (1P CPU face).
 4. Merge the architecture session's handover commit before Jorge plays. It still isn't committed on `feat/player-authority`.
+
+## 2026-09-17 — Perf lock: a waiter can delete a live holder's lock (defect found, not fixed; harness, not Boxing)
+
+Triggered by `verify-d12b.log` (fix/boxing-phase0, 08:03–08:07 UTC). **All 6 gates read `lock NOT HELD · other heavy: none`.** skate-1p-bot fps min 45 failed. A/B latency run 1 B (01:47 local) showed the same pattern once. Jorge: don't file this as an fps anomaly; decide whether the lock was really not held or held but misreported.
+
+- **"held" can't be a false positive.** `machine-state.ts` reports held only when the lockfile exists and its pid is in this run's own process tree. So every `lock held` line (including `verify-d12c.log`'s six) is direct evidence the file existed with our pid at that gate. Short of pid reuse, those claims stand.
+- **"NOT HELD" has two possible causes, and the logs can't tell them apart:**
+  1. **Really not held: the lockfile was deleted mid-run. Demonstrated possible.**
+     - `currentHolder()` (`scripts/e2e-lock.mjs`) treats an *unreadable* lockfile as stale and unlinks it.
+     - On Windows a read that overlaps `acquire()`'s create-then-write (an empty file) or another process's file access fails (`EPERM`, empty JSON).
+     - Probe: a tight `currentHolder()` poller against a loop of `acquire()` on a scratch lockfile. **The lock vanished right after acquire in 411 of 434 acquisitions**; 0 of 243 with no poller. A slower poller saw `EPERM` on 13 of 5263 reads.
+     - Every waiter polls `currentHolder()`: vitest globalSetup, `pnpm typecheck` / `lint`, the format hook, and each gate's own machine sample. So a waiter from any session can silently remove a live run's lock. From then on nothing waits for that run, and it reports `NOT HELD` for the rest of the run: all gates, which matches run 2.
+     - This is the same class as the triage agent's probes getting past the lock earlier: the lock stops excluding without anyone deciding to bypass it.
+  2. **Held but misreported: not ruled out, weaker.** `processes()` returns `[]` on any failure, which yields `lockHeld: false` **and** `otherHeavy: []` ("none") at once. A failed process listing therefore reads as a *quiet* machine. 30 back-to-back listings on the idle machine all succeeded, so there's no evidence it happened, but a listing failure also makes "other heavy: none" unverified. It should report "unknown", not "none".
+- **Consequence for tonight's numbers:** runs with `lock held` on every gate are sound (`verify-d12c`, the B2/B3 and B1 verifies, the quiet A/B runs used for the latency headline). Run 2 of the decision 1–2 verify and A/B run 1 B are not usable, whichever cause applied.
+- **Proposed fix (harness, owned on main, not this branch; Jorge decides who takes it):**
+  - `currentHolder()` unlinks only a lockfile that parses and whose pid is dead. An unreadable file means "held, retry".
+  - `acquire()` writes a temp file and links or renames it into place, so the file is never empty.
+  - `processes()` failure reports `otherHeavy: null` → `machine: UNKNOWN`, counted as not quiet.
+  - A regression test: the poller-vs-acquire probe above, run as a unit test on a temp path.
+- **Open question:** which waiter deleted run 2's lock (or whether the listing failed) can't be recovered from the logs. Nothing records lock deletions. The fix above should also log who unlinked a lock and why.
+
+## 2026-09-17 — Capture wizard (PLAN-BOXING §11.1): `?record=1&capture=<script>`
+
+Built by a subagent, reviewed and verified by the orchestrator. It unblocks Jorge's B1 clip and every later real-data capture (guard reach, gesture drills: new step lists in `src/pose/capture-scripts.ts`).
+
+- **Files:**
+  - `src/pose/capture.ts`: pure slicing, rebasing and `replaceTake`
+  - `capture-scripts.ts`: `b1` (3/3/2/8/8/8 s) and `smoke`
+  - `capture-panel.ts`: UI; K = Start/Keep, D = Redo, free in every game
+  - `recorder.ts`: rebasing shared with the wizard; the 30 s recorder is unchanged
+  - `pose-panel.ts` +5 lines
+  - **`src/main.ts` unchanged at 401.** Events come from `window.__game.getEvents()`, which already logs every non-BODY event.
+- **Deviations from §11.1, accepted:**
+  - `capture.ts` uses a local `{t, type}` event type, because `src/pose` can't import `core/` (lint boundary). Events keep all their fields.
+  - Extras: a Start step, so nothing runs before the camera is up, and the Keep/Redo screen lists frame count and events fired, as an on-the-spot cross-check.
+- **Known limit:** the event log holds 200 events. A tab hidden long enough to fire more than 200 would lose some. Not a concern for a foreground capture.
+- **Verified:**
+  - BX-CAP-1…4 each fail when their logic is broken on purpose: lead-in dropped; Redo empties the previous take; countdown events credited to the next take; pause events credited to the previous take; extra fixture field.
+  - `tests/e2e/capture.smoke.spec.ts` drives `capture=smoke` on the fake camera. It injects `PUNCH_LEFT` in each countdown and `PUNCH_RIGHT` in each window, and asserts 2 takes, `windowMs [1000, 2000]`, and RIGHT present / LEFT absent per take.
+  - **`PLAYWRIGHT_PORT=5196 pnpm verify` exit 0** (`tmp/verify/verify-wizard.log`): vitest 441 passed + 1 skipped, e2e 34 passed. All 6 gates measured, every gate `lock held · other heavy: none`.
+- **Not verified:** readability from a distance and the flow with a real camera. Jorge's first B1 take is that check.

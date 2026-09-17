@@ -1,6 +1,7 @@
 // Camera preview + device picker + skeleton overlay; with debug: fps, visibility heatmap; with record: fixture download.
 import { PoseLandmarker } from '@mediapipe/tasks-vision';
 import { listCameras, openCamera, rememberedCameraId } from './camera';
+import { mountCaptureWizard } from './capture-panel';
 import { startPosePipeline, type PoseStats } from './pipeline';
 import { createRecorder, downloadJson } from './recorder';
 import type { Landmark, ModelVariant, PoseFrame } from './types';
@@ -238,12 +239,16 @@ export function mountPosePanel(
 } {
   const ui = buildDom(root);
   const recorder = opts.record ? createRecorder() : null;
+  const videoSize = () => ({ width: ui.video.videoWidth, height: ui.video.videoHeight });
+  // ?record=1&capture=<script>: the step-by-step wizard (PLAN-BOXING §11.1), beside the 30 s download.
+  const capture = opts.record ? mountCaptureWizard(root, opts.model, videoSize) : null;
   let latest: PoseFrame | null = null;
   let stream: MediaStream | null = null;
   let deviceId = opts.cameraId ?? rememberedCameraId();
   const pipeline = lazyPipeline(ui.video, opts, (frame) => {
     latest = frame;
     recorder?.push(frame);
+    capture?.push(frame);
     opts.onFrame(frame);
   });
 
