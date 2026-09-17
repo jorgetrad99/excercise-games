@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
+import { recordGate } from './gates';
 
 // M1 DoD shape: fake camera → worker PoseLandmarker → ≥ 1 pose at ≥ 20 pose-fps for 5 s.
 // Runs on the INTERIM placeholder clip, not Jorge's recorded fixture (see docs/PROGRESS.md).
@@ -41,6 +42,11 @@ test(
       inferMs: b.s!.inferMs,
     };
     console.log('pose e2e', JSON.stringify(summary));
+    recordGate(
+      'pose-1p-5s',
+      { poseFps: [summary.poseFps], withPoseRatio: [withPose / processed] },
+      { poseFps: '>= 20', withPoseRatio: '> 0.9' },
+    );
     await page.screenshot({ path: 'tmp/e2e/pose-smoke.png' });
 
     expect(b.s!.video).toEqual({ width: 1280, height: 720 });

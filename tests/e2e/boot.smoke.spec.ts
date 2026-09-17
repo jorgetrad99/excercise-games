@@ -34,6 +34,11 @@ test('without ?game the menu lists registered games and launches the chosen one'
 
   await pick.click();
   await expect(pick).toBeHidden();
+  // "Who's playing?": a fresh profile preselects nobody, so Start waits for a name.
+  await expect(page.getByRole('button', { name: 'Start' })).toBeDisabled();
+  expect(await page.evaluate(() => window.__game.getActiveGame())).toBeNull();
+  await page.getByRole('button', { name: 'Player 1' }).click();
+  await page.getByRole('button', { name: 'Start' }).click();
   expect(await page.evaluate(() => window.__game.getActiveGame())).toBe('skate-run');
   await expect
     .poll(() => page.evaluate(() => window.__game.getRenderStats()?.frames ?? 0))

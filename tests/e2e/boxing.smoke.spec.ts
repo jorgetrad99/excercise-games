@@ -46,6 +46,8 @@ test('menu lists Boxing and launches it', async ({ page }) => {
   const problems = watchConsole(page);
   await page.goto('/?input=keyboard&seed=42');
   await page.getByRole('button', { name: 'Boxing' }).click();
+  await page.getByRole('button', { name: 'Player 1' }).click();
+  await page.getByRole('button', { name: 'Start' }).click();
   expect(await page.evaluate(() => window.__game.getActiveGame())).toBe('boxing');
   await expect
     .poll(() => page.evaluate(() => window.__game.getRenderStats()?.frames ?? 0))

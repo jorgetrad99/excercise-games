@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { recordGate } from './gates';
 
 const ROOT = 'tmp/visual-expressiveness';
 async function harness(page: Page) {
@@ -210,15 +211,15 @@ test(
     test.setTimeout(60_000);
     await page.setViewportSize({ width: 1920, height: 1080 });
     const errors: string[] = [];
-    let crops = 0;
     page.on('console', (m) => {
-      if (m.text().startsWith('FACEDBG')) crops++;
       if (m.type() === 'error' || (m.type() === 'warning' && /THREE/.test(m.text())))
         errors.push(m.text());
     });
     page.on('pageerror', (e) => errors.push(e.message));
     await page.goto('/?game=boxing&input=pose&seed=42&clock=manual');
-    await expect.poll(() => crops, { timeout: 30_000 }).toBeGreaterThan(0);
+    await expect
+      .poll(() => page.evaluate(() => window.__game.getFaceVersion()), { timeout: 30_000 })
+      .toBeGreaterThan(0);
     await page.keyboard.press('Space');
     await page.evaluate(() => window.__game.advance(3.1));
     await expect
@@ -237,6 +238,15 @@ test(
     }
     await mkdir(ROOT, { recursive: true });
     await writeFile(`${ROOT}/live-face-performance.json`, JSON.stringify(samples, null, 2));
+    recordGate(
+      'boxing-1p-1080p-face',
+      {
+        fps: samples.map((s) => s.fps),
+        poseFps: samples.map((s) => s.pose?.poseFps ?? 0),
+        calls: samples.map((s) => s.render?.calls ?? NaN),
+      },
+      { fps: '>= 55 each', poseFps: '>= 20 each', calls: '< 150 each' },
+    );
     for (const sample of samples) {
       expect(sample.fps).toBeGreaterThanOrEqual(55);
       expect(sample.pose!.poseFps).toBeGreaterThanOrEqual(20);

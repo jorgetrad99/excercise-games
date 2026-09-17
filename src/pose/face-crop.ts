@@ -79,7 +79,6 @@ export function createFaceCrops(players: number) {
         ctx.restore();
         slot.lastT = frame.t;
         slot.version++;
-        if (slot.version % 30 === 1) console.log('FACEDBG', slot.canvas.toDataURL());
       });
     },
   };

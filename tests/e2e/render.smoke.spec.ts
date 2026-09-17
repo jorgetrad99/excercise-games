@@ -1,5 +1,6 @@
 // M4 DoD: screenshot tests on seed 42 at t = 0/10/30 s, HUD flows, draw-call budget, console hygiene.
 import { expect, test, type Page } from '@playwright/test';
+import { recordGate } from './gates';
 import type { SimState } from '../../src/core/types';
 
 /** Not ours: ANGLE's D3D compiler warns about float precision in three's PMREM shaders
@@ -109,6 +110,11 @@ test.describe('perf', { tag: '@perf' }, () => {
       distance: Math.round(window.__game.getState<SimState>().distance),
     }));
     console.info('perf fps samples', samples.join(','), stats);
+    recordGate(
+      'skate-1p-1080p-bot',
+      { fps: samples, calls: [stats.render?.calls ?? NaN] },
+      { fps: '>= 55 min', calls: '< 150' },
+    );
     expect(Math.min(...samples)).toBeGreaterThanOrEqual(55);
     expect(stats.render!.calls).toBeLessThan(150);
     expect(stats.phase).toBe('running');
@@ -142,6 +148,11 @@ test.describe('perf', { tag: '@perf' }, () => {
     }
     const calls = await page.evaluate(() => window.__game.getRenderStats()?.calls ?? 0);
     console.info('perf with pose', JSON.stringify(samples), { calls });
+    recordGate(
+      'skate-1p-1080p-pose',
+      { fps: samples.map((s) => s.fps), poseFps: samples.map((s) => s.poseFps), calls: [calls] },
+      { fps: '>= 55 min', poseFps: '>= 20 min', calls: '> 20' },
+    );
     expect(Math.min(...samples.map((s) => s.fps))).toBeGreaterThanOrEqual(55);
     expect(Math.min(...samples.map((s) => s.poseFps))).toBeGreaterThanOrEqual(20);
     expect(calls).toBeGreaterThan(20); // the 3D scene really drew

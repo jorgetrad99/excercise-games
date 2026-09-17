@@ -6,6 +6,7 @@ import type { InputEvent } from '../core/input';
 import type { KeyMap } from '../input/keyboard';
 import type { GestureMap } from '../input/pose-source';
 import type { Drawn } from '../platform/latency';
+import type { MatchStats } from '../platform/profile-store';
 import type { SignalFrame } from '../pose/gestures';
 import type { GestureConfig } from '../pose/gestures.config';
 import type { PoseState } from '../pose/pose-state';
@@ -96,6 +97,8 @@ export interface MiniGame<S extends GameSim = GameSim> {
   /** `player`: whose HUD this is (0-based). */
   mountHud: (root: HTMLElement, player: number) => GameHud<S>;
   summary: (sim: S, player: number) => RunSummary;
+  /** `player`'s numbers once summary().over, saved to their match history. */
+  matchStats: (sim: S, player: number) => MatchStats;
 }
 
 declare const opaque: unique symbol;

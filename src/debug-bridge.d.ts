@@ -33,6 +33,8 @@ interface Window {
     advance(seconds: number): number;
     /** Renderer counters from the last frame; null until the models loaded. */
     getRenderStats(): import('./render/view').RenderStats | null;
+    /** Live face crops made for `player` (default P1): 0 until the first one. */
+    getFaceVersion(player?: number): number;
     /** Per-stage input-to-screen latency, frame pacing and judder (see platform/latency.ts). */
     getLatency(): import('./platform/latency').LatencySummary;
     /** Feed a PoseFrame as if the camera produced it: menu hand cursors, or the game's pose input. */

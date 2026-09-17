@@ -11,6 +11,7 @@ import { createReplaySource } from './input/replay';
 import { createLatencyTracker } from './platform/latency';
 import { mountLatencyOverlay } from './platform/latency-overlay';
 import { mountMenu } from './platform/menu';
+import { cleanName, createProfileStore } from './platform/profile-store';
 import { createFaceCrops } from './pose/face-crop';
 import { createHandCursors } from './pose/hand-cursor';
 import { gestureConfig } from './pose/gestures.config';
@@ -33,6 +34,10 @@ const manualClock = params.get('clock') === 'manual';
 const tokens = Math.max(0, Number(params.get('tokens') ?? 1) || 0);
 const model: ModelVariant =
   (['lite', 'full', 'heavy'] as const).find((m) => m === params.get('model')) ?? 'full';
+
+const profiles = createProfileStore();
+/** Session player names, by slot (P1 = left body). ?names=Ana,Beto for direct links and tests. */
+let names: string[] = [];
 
 /** One player's run: own inputs, results and best. The sim is theirs alone, or the same object for
  *  every player when the game shares it. */
@@ -207,9 +212,23 @@ function playAgain(g: RegisteredGame, p: Player, index: number, now: number): vo
     return;
   }
   p.best = Math.max(p.best, run.score);
+  if (p.overSince === null) recordMatch(g, p, index);
   const since = (p.overSince ??= now);
   if (p.queue.some((e) => e.type === 'JUMP' && e.t >= since + RESULTS_MIN_MS))
     restart(g, p.sim.seed, [p]);
+}
+
+/** Once per finished match: this player's stats into their history (not for ?input=bot demo runs). */
+function recordMatch(g: RegisteredGame, p: Player, index: number): void {
+  if (input === 'bot') return;
+  const opponent = players.length > 1 ? names[1 - index]! : g.sharedSim ? 'CPU' : null;
+  profiles.addMatch(names[index]!, {
+    game: g.id,
+    at: new Date().toISOString(),
+    players: players.length,
+    opponent,
+    ...g.matchStats(p.sim, index),
+  });
 }
 
 /** Pose/replay: a fresh run waits until every player calibrated (PLAN §2.1; a fair 2-player start).
@@ -244,7 +263,7 @@ function frame(now: number): void {
   if (applied.some((a) => a.length > 0)) latencyOverlay?.onEventRendered(now);
   latencyOverlay?.frame(now);
   players.forEach((p, i) =>
-    p.hud.update(p.sim, { ...trackingLabel(p), best: p.best, waiting: waiting[i]! }),
+    p.hud.update(p.sim, { ...trackingLabel(p), best: p.best, waiting: waiting[i]!, names }),
   );
   requestAnimationFrame(frame);
 }
@@ -269,9 +288,15 @@ function hudRoot(player: number): HTMLElement {
   return box;
 }
 
-function launch(g: RegisteredGame, count = playerCount): void {
+function launch(g: RegisteredGame, count = playerCount, chosen?: string[]): void {
   game = g;
   playerCount = count;
+  const fromUrl = (params.get('names') ?? '').split(',').map(cleanName);
+  const last = profiles.lastNames();
+  names = Array.from(
+    { length: count },
+    (_, i) => chosen?.[i] ?? fromUrl[i] ?? last[i] ?? `Player ${i + 1}`,
+  );
   frameSink = null;
   const seed = Number(params.get('seed') ?? 42);
   if (debug) signalHud = mountSignalHud(document.body, g.gestureProfile.config);
@@ -330,6 +355,7 @@ window.__game = {
     return player(0).sim.getState().t;
   },
   getRenderStats: () => view?.stats() ?? null,
+  getFaceVersion: (index = 0) => faces?.version(index) ?? 0,
   getLatency: () => latency.summary(),
   injectPose: (frame) => frameSink?.(frame),
 };
@@ -343,6 +369,7 @@ else {
   const menu = mountMenu(document.body, GAMES, launch, {
     players: playerCount,
     dwellMs: gestureConfig.cursor.dwellMs,
+    profiles,
   });
   const cursors = createHandCursors(gestureConfig);
   frameSink = (f) => {

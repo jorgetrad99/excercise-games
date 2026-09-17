@@ -1,5 +1,6 @@
 // Worker-hosted PoseLandmarker (VIDEO mode). GPU delegate via OffscreenCanvas, CPU if GPU init fails.
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
+import { glRenderer, isSoftwareRenderer } from '../platform/gpu';
 import type { WorkerIn, WorkerInit, WorkerOut } from './bridge';
 
 // MediaPipe's module loader calls `self.import(url)` when present, else `import(url)`. Vite dev rewrites
@@ -26,14 +27,19 @@ async function init({ wasmPath, modelPath, numPoses }: WorkerInit): Promise<void
     lm.detectForVideo(new OffscreenCanvas(256, 256), 0);
     return lm;
   };
-  let delegate: 'GPU' | 'CPU' = 'GPU';
+  // On a software GL (WARP, SwiftShader) the "GPU" delegate runs shaders on the CPU: measured 188 ms
+  // per frame vs ≈ 50 ms for the CPU (WASM) delegate, so go straight to CPU there.
+  const gl = new OffscreenCanvas(1, 1).getContext('webgl2');
+  const gpu = gl ? glRenderer(gl) : 'no WebGL2';
+  let delegate: 'GPU' | 'CPU' = gl && !isSoftwareRenderer(gpu) ? 'GPU' : 'CPU';
   try {
-    landmarker = await create('GPU');
+    landmarker = await create(delegate);
   } catch (err) {
+    if (delegate === 'CPU') throw err;
     console.warn('pose worker: GPU delegate unavailable, using CPU', err);
     landmarker = await create((delegate = 'CPU'));
   }
-  post({ type: 'ready', delegate });
+  post({ type: 'ready', delegate, gpu });
 }
 
 addEventListener('message', (e: MessageEvent<WorkerIn>) => {

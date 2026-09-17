@@ -1344,3 +1344,254 @@ Item 2: light the face like the shell (the seam).
 ### Next
 
 M7.11 is complete on the agent side and waits on the playtest above. The branch is ready to merge into `main` after the playtest.
+
+---
+
+## 2026-09-16 — Perf diagnosis (1P/2P Boxing) + movement-detection research
+
+### TL;DR
+
+1. **The slowness isn't a code regression. Your Chrome renders WebGL in software.**
+   - Its GPU process was launched with `--use-angle=d3d11-warp-webgl` (WARP = Microsoft's CPU rasterizer), has run since 2026-09-15 22:18, and was using 4.4 CPU cores continuously.
+   - A tab of that Chrome was connected to the dev server.
+   - Reproduced by launching Chromium with `--use-angle=d3d11-warp`:
+
+     | | Normal GPU: render / pose-fps | WARP: render / pose-fps / infer |
+     | --- | --- | --- |
+     | Boxing 1P | 60 / 30 | 32 / 4.8 / 188 ms |
+     | Boxing 2P | 60 / 25 | 22 / 2 / 492 ms |
+     | Skate Run | 60 / 30 | 8 / 1.2 / 478 ms |
+
+   - The worker still said `delegate GPU`, so nothing in the HUD showed it.
+   - **At 2–5 pose-fps, detection is also broken.** That is the connection you suspected, but through the browser, not our features.
+   - **Check `chrome://gpu` in your Chrome.** Then turn on Settings → System → "Use graphics acceleration when available" and relaunch. I can't change that setting for you.
+2. **On a working GPU, no recent feature regressed anything measurable.** 60 fps and 29–30 pose-fps in 1P. 2P is the tight case: 23–29 ms of inference against a 33 ms camera interval.
+3. **Research (item 2):** keep the thresholds and tune them on recordings first. Details in `docs/RESEARCH-movement-detection.md`. **Waiting for your decision.**
+
+### How it was measured
+
+- **`scripts/perf-probe.mjs`**, not in verify. It runs Chromium with the fake camera at 1920×1080 and patches the page from outside the app, so any commit can be measured:
+  - rAF callbacks timed by name (`frame` = sim + render, `draw` = pose panel overlay)
+  - 2D `drawImage` bucketed by target size (1280×720 = face snapshot, 192×192 = face crop)
+  - WebGL texture uploads, `createImageBitmap`, `toDataURL`, long tasks
+  - `getFps` / `getPoseStats` / `getRenderStats` sampled for 10 s
+  - Options: `--angle d3d11-warp` (software GL), `--no-draw` (page draw calls become no-ops), `--viewport`
+- **Feature attribution:** the same probe against worktrees of `a79349b` (latency work), `8ef2072` (Quaternius), `bf938fb` (Boxing), `be2a33a` (hover menu), `f4a903c` (faces), `6708eb4` (mirroring = HEAD).
+- **`tmp/bench/`:** a throwaway page that runs PoseLandmarker in workers with a chosen delegate / model / layout, to compare cheaper 2P paths without touching the app.
+- **`tests/tools/punch-sampling.tool.ts`:** synthetic punches (continuous smoothstep profile, sampled at arbitrary instants, 8 phases) through the real gesture engine at 30…10 pose-fps.
+- **Noise:** this laptop was also running your WARP Chrome, VS Code and Codex. The same code gave 2P pose-fps means of 23.9, 25.2, 27.6, 28.3 and 29.7 across runs, and one run spiked to 47 ms of inference (pose min 4). Treat differences under ~3 pose-fps as noise.
+- **Raw data:** `tmp/perf/probe-*.json`, `tmp/perf/punch-sampling.json`.
+
+### Numbers (normal GPU, RTX 4060 Laptop, 1080p, fake camera capped at 30 fps)
+
+| Scenario | Render fps | Pose fps mean (min) | Infer p50 ms | Draw calls | Triangles |
+| --- | --- | --- | --- | --- | --- |
+| M4 gate / latency work, Skate 1P (`a79349b`) | 60 | 30 (29) | 12.2 | 51 | 39.7k |
+| Skate 1P, HEAD | 60 | 29.7–30 (27) | 12.4–15.4 | 57 | 586k |
+| Skate 2P, HEAD | 60 | 25–29.8 (19) | 26.6–28.7 | 114 | 1.17 M |
+| **Boxing 1P**, HEAD | 60 | 29.6–30 (27) | 10.6–11.4 | 44 | 16.2k |
+| **Boxing 2P**, HEAD | 60 | 23.9–29.7 (20) | 24.8–28.8 | 88 | 32.5k |
+| Boxing 1P keyboard (no camera) | 60 | – | – | 43 | 15.5k |
+| Menu, camera on (2 poses, 1 body) | – | 26–30 | 18–24 | – | – |
+| Menu → Boxing 1P (worker restart) | 60 | 30 (29) | 10.6 | 44 | 16.2k |
+| Boxing 1P `debug=1&record=1` | 60 | 30 (29) | 12.3 | 44 | 16.2k |
+| Boxing 1P / 2P, main thread throttled 4× | 59 (47) / 60 (42) | 29 / 26.1 | 12.3 / 23.1 | | |
+
+**Where one second of main-thread time goes (Boxing 2P pose, HEAD before the fixes, ms per s):**
+
+| Stage | Cost |
+| --- | --- |
+| Sim + render (`frame`) | 138 ms/s = 2.2 ms per frame p50 |
+| Face snapshot: full 720p `drawImage`, every submitted frame | 16 ms/s (0.55 ms × 28/s) |
+| Downscale bitmap for the worker | 5.6 ms/s |
+| Face crops (192²) | 0.6 ms/s |
+| Face texture upload | 0.8 ms/s |
+| Pose panel overlay redraw (60 Hz) | 9.4 ms/s |
+| Leftover `FACEDBG` `toDataURL` log | 2.2 ms/s; under WARP, **39 ms per call** every 2 s |
+
+Pose inference runs in the worker: 25 ms per frame in 2P. It's the only big item.
+
+### What each recently added feature costs (answers to your list)
+
+- **`numPoses: 2`: the largest cost.**
+  - Inference 11 → 23–29 ms.
+  - With `numPoses: 2` and only one body in view (the menu) it is still 18–24 ms. The detector runs every frame while looking for the second person.
+  - In 2P this leaves 5–10 ms of headroom in a 33 ms camera interval, so any contention costs pose frames. That's why the 2P perf gate is the one that flakes (baseline verify this session: red, min 15 pose-fps while your WARP Chrome used 4.4 cores).
+- **Live face capture:** yes, it copies the **full 720p frame on every submitted frame** (≈ 30/s) although crops run at ≤ 15/s.
+  - Measured 0.5 ms per copy, 15–20 ms/s: about 1–2 % of one core, no fps effect.
+  - **Not changed:** a face-region crop would save ≈ 10 ms/s for a noticeably more complex snapshot/result pairing.
+  - The crop and texture upload together are < 1.5 ms/s.
+- **Oversized head:** +1 draw call and +768 triangles (the face cap). No measurable cost.
+- **Hover menu (camera always on):** only costs while the menu is up (2-pose inference, no render).
+  - Launching restarts the worker for 1 pose. Measured after the restart: 30 pose-fps, 0 restarts, same as a direct launch.
+- **Pose mirroring:** world-landmark copy + PoseState math sit inside the 2.2 ms `frame` and the worker round trip.
+  - Worktree before/after (`f4a903c` → HEAD): no difference beyond noise.
+- **Park biome (Quaternius):** 39.7k → 586k triangles in 1P, 1.17 M in 2P. Skate frame p50 1.3 → 2.1 ms, inference +1–3 ms from GPU sharing, fps unchanged on this GPU.
+  - Not Boxing's problem; still open (see gaps).
+- **Renderer vs inference:** with every page draw call turned into a no-op (`--no-draw`), 2P inference was 24–25 ms vs 27–30 ms drawn. So rendering costs 2P ≈ 2–5 ms. Render resolution (1920×1080 vs 960×540) made no difference.
+
+**Against the M4 / latency numbers** (60 fps / 51–59 draw calls / 28–31 pose-fps):
+- Skate 1P still holds 60 fps and ~30 pose-fps. Triangles ×15 since the Quaternius swap; draw calls 51 → 57.
+- Boxing 1P matches the old Skate numbers.
+- **The only real regression on a GPU is 2P pose-fps: 28–31 → 24–29, min dips to 15–20.** It comes from `numPoses: 2`, which is inherent to 2P, not from the faces or the menu.
+
+### Levers evaluated (measure → decision)
+
+| Lever | Measured | Decision |
+| --- | --- | --- |
+| Lite model | GPU 1P: 9.7–10.7 vs 10.8–11.6 ms. GPU 2P: 17.6–20.2 vs 18.9–19.5 ms (bench). In-game 2P: 22.6 vs 25.4 ms | ≈ 0–10 %, within noise |
+| Lite auto-fallback (PLAN §1.1 "pose fps < 20 for 3 s") | **Not wired: nothing in `src/` implements it.** CPU delegate: lite 34–47 ms vs full 50–52 ms | **Deliberately not wired.** A worker restart costs 2–3 s of lost tracking mid-match for ≤ 10 % back. Needs your OK because it deviates from PLAN §1.1 |
+| Two workers × 1 pose on overlapping 60 % halves, instead of 1 worker × 2 poses | Each worker 17.5 ms (GPU shared) vs 18.9–19.5 ms for one 2-pose worker; throughput identical (both hit the 30 fps camera cap) | Rejected: no gain, and it breaks when a player crosses the middle |
+| **CPU delegate when WebGL is software** | Bench (no render): CPU 50 ms vs GPU-on-WARP 188 ms. In-game WARP after the fix: render 32 → 50 fps (1P), 22 → 34 (2P); pose-fps 4.7 / 3 (WARP rendering eats the same cores) | **Done**, plus a visible warning: the real fix is enabling the GPU |
+| Pose panel overlay only on new poses | 5.2–11.4 → 3.7–5 ms/s (15.4 in debug, was 19.9) | Done |
+| Remove leftover `FACEDBG` `toDataURL` console log | 1–2.5 ms/s; 39 ms stalls under WARP | Done |
+| Face snapshot as a face-region crop | ≈ 10 ms/s possible saving | Not worth it (see above) |
+| Park triangles | See above | Not changed: no fps effect on a GPU; asset decimation is its own task |
+
+### Does pose-fps explain missed punches? (the question behind item 2)
+
+`tests/tools/punch-sampling.tool.ts`, detection rate over 8 sampling phases. Out = time to full extension; "snap" = straight back with no pause.
+
+| Punch | 30 | 25 | 20 | 15 | 12 | 10 pose-fps |
+| --- | --- | --- | --- | --- | --- | --- |
+| Full reach, out 60 ms, snap | 1 | 1 | 1 | 1 | 0.88 | 0.75 |
+| 0.5 reach, out 60 ms, snap | 1 | 1 | 1 | 0.63 | 0.63 | 0.50 |
+| 0.5 reach, out 90 ms, snap | 1 | 1 | 1 | 1 | 0.75 | 0.75 |
+| ≥ 0.5 reach, out ≥ 120 ms | 1 | 1 | 1 | 1 | 1 | 0.88–1 |
+| 0.3 reach, any speed | 0 | 0 (one 0.38) | 0 | 0 | 0 | 0 |
+
+- **At ≥ 20 pose-fps, sampling rate doesn't lose punches.** Shallow punches fail at every fps because of `fists.rearm` (0.6 torso reach), a threshold question.
+- **Caveat:** synthetic motion has no motion blur and no MediaPipe tracking lag on a fast wrist; both are worse at low fps. Only real drills can measure those.
+- **Found on the way:** the keyframe `script()` sampler always puts a frame on each keyframe, so every synthetic punch got its peak for free (the first run said 100 % everywhere). The tool samples a continuous profile instead. The existing TEMPORARY fist tests still use `script()`; this doesn't invalidate them (they test sequences, not rates), but keep it in mind.
+
+### What changed
+
+- **`src/platform/gpu.ts`** (+ spec): `glRenderer`, `isSoftwareRenderer`, and `warnSoftwareGl`, a red banner shown once telling the player to enable graphics acceleration.
+- **`pose.worker.ts`:** reads its own WebGL renderer before creating the landmarker. Software GL → CPU delegate. Reports `gpu` in `ready`.
+- **`bridge.ts`, `pipeline.ts`:** `PoseStats.gpu`; the warning fires when the worker's GL is software. The debug stats show a `gpu …` line.
+- **`render/renderer.ts`:** the same check for the page's renderer.
+- **`pose-panel.ts`:** the skeleton/heatmap redraw only when a new PoseFrame arrived.
+- **`face-crop.ts`:** removed the leftover `FACEDBG` log.
+- **Tools:** `scripts/perf-probe.mjs`, `tests/tools/punch-sampling.tool.ts`.
+- **Docs:** `docs/RESEARCH-movement-detection.md`; features M7.11, M7.12.
+
+### Verified
+
+- **`pnpm verify` → exit 0** (`tmp/perf/verify-perf.log`): tsc, eslint, vitest 323 passed + 1 skipped (22 files), playwright smoke 22/22. The 2P perf test sampled pose-fps 24–25.
+- **The session-start verify was red** (`tmp/perf/verify-start.log`): the 2P Skate perf gate hit min 15 pose-fps while your WARP Chrome was using 4.4 cores. That's the flake described above, not a code change.
+- **After-probe on GPU** (`probe-after.json`): Boxing 1P 60 / 29.6 pose (infer 11.4, delegate GPU), 2P 60 / 25.2 (24.8), Skate 1P 60 / 29.7, Skate 2P 60 / 28.9. Same as before within noise.
+- **WARP e2e by hand:** banner shown; stats `delegate CPU`, `gpu ANGLE (Microsoft, Microsoft Basic Render Driver …)`. Screenshot `tmp/perf/warp-banner.png`.
+- `gpu.spec.ts`: the WARP string is the one Chromium actually reported; the RTX string is the real one from this machine.
+
+### Known gaps
+
+- **Your real Chrome is unverified from here:** I saw the GPU process flag and the dev-server connection, not `chrome://gpu`. After enabling acceleration, open `http://localhost:5173/?game=boxing&debug=1` and check that the stats line says `delegate GPU` and `gpu ANGLE (NVIDIA …)`, with pose ≈ 30 (1P) / ≈ 25 (2P).
+- **The real webcam isn't measured:** a dim room can drop a webcam to 15 fps. `camera … fps` in the debug stats shows it.
+- **2P has little headroom** (≈ 5–10 ms). A bigger lever would be a 60 fps-capable camera + a 1-pose "tracker" path, not worth it until 2P is played for real.
+- **Park biome at 586k / 1.17 M triangles** is still open (decimate Quaternius props or cut instance counts).
+- **Lite auto-fallback per PLAN §1.1 is not wired**, on purpose (table above). Your call.
+
+### Item 2 decision needed
+
+`docs/RESEARCH-movement-detection.md`. My recommendation:
+1. Record the drills and tune the thresholds (built, ~2 h each side).
+2. Pilot pose-embedding k-NN only for guard/duck/lean if they stay fragile across people (~1 day, no dependency, < 0.1 ms per frame).
+3. No sequence model for punches now: it would add 100–200 ms of detection latency.
+4. No other MediaPipe task applies.
+
+---
+
+## 2026-09-16 — Named players, match history and stats charts (item 3)
+
+**Result:** before a match the menu asks "Who's playing?". Each player claims a slot by hovering (or with the mouse) and picks or types a name. Every finished match is saved under that name, and a new **Stats** page in the menu charts each stat across matches. No accounts, no new dependency.
+
+### 3a. Who's playing?
+
+- **Flow:** Menu → players 1|2 → game → **"Who's playing \<game\>?"** → Start.
+- **Slots:**
+  - 1P has one slot, "Player", **preselected with the last P1**, so a rematch is one hover on Start.
+  - 2P has "Left player · P1" and "Right player · P2", and **always claims explicitly**: the same two people may have swapped sides since last time.
+- **Choices per slot:** recent names (up to 6, most recently played first), "Player N", and a text field + Add for new names (keyboard; hands can only pick). A name taken by the other slot is disabled. Start is enabled only when every slot has a name.
+- **Claiming is tied to your side of the screen:** a slot's name buttons only react to the hand cursor from that side, the same screen-half split the 2P games use. So the body on the left can't claim "Right player". Mouse and keyboard work on everything. Back/Start react to either hand.
+- **Identity is still positional during the match.** The name is bound to the side you claimed it from. Swapping sides mid-session swaps the names. Knowing who is who from the body itself would need re-identification; not built, and I don't recommend it for a living-room game.
+- **Direct `?game=` links skip the screen.** Names come from `?names=Ana,Beto`, else the last session, else "Player N".
+- **The Boxing HUD shows the names** instead of You/Opponent (CPU in 1P).
+
+### 3b. Match history (`platform/profile-store.ts`)
+
+- **Format:** `localStorage['move-arcade.profile']` = `{ version: 1, players: { [name]: { matches[] } }, lastNames }`.
+- **Each match:** `{ game, at, players, opponent, result, stats }`. `opponent` is the other name in 2P, `"CPU"` in 1P Boxing, null in 1P Skate Run.
+- **What gets saved:** the new `MiniGame.matchStats(sim, player)` contract, recorded once per player when a match first ends (not for `?input=bot`).
+  - **Boxing:** result win/loss/draw; `cleanHits` (clean hits are what decide the match on points), `hitsTaken`, `knockdownsScored`, `knockdownsTaken`, `rounds`.
+  - **Skate Run:** result null; `score`, `distance`, `coins`.
+- **Schema and migration (PLAN §2.4 / M5 pattern):**
+  - `migrate()` upgrades an unversioned object to v1.
+  - Data from a **newer** version makes the store read-only, so this build never overwrites it.
+  - **Corrupt** JSON is copied to `move-arcade.profile.corrupt-<ms>` before a fresh profile starts. If that backup can't be written, nothing is overwritten either.
+  - Blocked storage works in memory for the page.
+  - Cap: 1000 matches per player (`ponytail:` note).
+- **There was no ProfileStore before this.** M5 hasn't been built. This is the M5.1 store, holding only what item 3 needs. PLAN §2.4's single-player fields (coins total, multiplier, tokens, missions, settings) get added when M5 is built, as a v2 migration.
+
+### 3c. Stats page (`platform/stats-view.ts`, `platform/line-chart.ts`)
+
+- **Layout:** player chips × game chips, then:
+  - **Record:** matches, W – L – D, win rate.
+  - **Last 20 results** as W/L/D chips (letter + colour, never colour alone).
+  - **One small line chart per stat** (small multiples, one axis each, zero-based, whole-number gridlines for counts).
+  - **The latest 10 matches as a table** (the accessible view).
+- **Hover:** a crosshair on the chart; a readout under it shows the value, match number, opponent, result and date. When not hovering, it shows the latest match.
+- **Charts are drawn on a canvas by hand (~140 lines), with no library and so no ADR.**
+  - There is one series per chart, and the only interaction is hover.
+  - A library (Chart.js ≈ 70 KB gz, uPlot ≈ 20 KB) would bring its own theming, a runtime dependency and an ADR, and buy nothing needed here.
+  - The series colour is the dataviz reference palette's dark slot 1 `#3987e5`, validated against the menu surface `#1b1f3b` (lightness band, chroma, ≥ 3:1 contrast: all pass).
+- **Screenshots:** `tmp/e2e/stats-page-14b.png` (14 seeded matches, hover), `tmp/e2e/stats-page.png` (the e2e's real match), `tmp/e2e/who-1p.png`.
+
+### Also changed: perf gates run in their own serial Playwright project
+
+- **Why:** item 3's verify went red 3× on the 2P pose-fps gate, with one or two samples of 19 against ≥ 20. The same gate was already red at session start before any change. It measures a GPU that the other smoke pages use at the same time.
+- **A/B on that gate alone:** item-3 tree 20–27 and 20–26; previous commit 2–30 in the same window. So it's noise, not item 3.
+- **Fix:** `playwright.config.ts` now has a `smoke-perf` project: the three `perf` describe blocks, `dependencies: ['smoke']`, `workers: 1`. `smoke` excludes them. `pnpm test:smoke` runs both.
+- **No threshold changed.** With the gates isolated, 2P pose-fps sampled **26–30**.
+- AGENTS §4 and ARCHITECTURE Harness updated.
+
+### What changed
+
+- **New:** `platform/profile-store.ts` (+ spec, 7 tests), `platform/stats-view.ts`, `platform/line-chart.ts` (+ spec), `tests/e2e/player-stats.smoke.spec.ts`.
+- **`platform/menu.ts`:**
+  - pages: home / who's playing / stats
+  - Stats button
+  - slot-restricted hover
+  - the dwell key covers every `data-*`
+- **`games/types.ts`:** `MiniGame.matchStats`. Boxing and Skate Run implement it.
+- **`main.ts`:** profile store, `names`, `recordMatch`, `?names=`, `launch(g, count, names)`.
+- **`render/hud.ts`:** `HudExtras.names`. **`render/boxing/hud.ts`:** names on the pies (escaped).
+- **e2e:**
+  - `menu-hover.smoke` rewritten with two synthetic bodies: the right hand can't claim the left slot; both claim, hover Start, 2P Boxing launches with the names on both HUDs; plus mouse + typed name.
+  - `boot.smoke` / `boxing.smoke` pick a name before Start.
+- **Harness:** `playwright.config.ts` `smoke-perf`, `package.json` `test:smoke`.
+- **Docs:** ARCHITECTURE "Players & match history", AGENTS `?names=`, features M5.1 (in_progress), M7.13.
+
+### Verified
+
+- **`pnpm verify` → exit 0** (`tmp/perf/verify-stats-4.log`): tsc, eslint, vitest 332 passed + 1 skipped (24 files), playwright 24/24 (21 smoke + 3 smoke-perf). 2P pose-fps 26–30.
+- **`player-stats.smoke`:**
+  - 2P bot-vs-bot Boxing to the end with `names=Ana,Beto`: both records saved; opponents cross-linked; `cleanHits` = the sim's `landed`; Ana's knockdowns taken = Beto's scored; W/L matches `winner`; no duplicate after the results card stays up.
+  - After a reload, Stats shows "Ana · Boxing: 1 match", 5 charts and 1 table row.
+  - 1P: opponent "CPU", HUD shows "Cleo".
+- **The hover e2e caught two bugs while writing it:**
+  - a `<button>` outside any form still reports `type === 'submit'`, so every button was being ignored
+  - my synthetic "left" body was actually on the right: negative `walk` = screen-left
+
+### Known gaps
+
+- **Not played with a real camera:** the two-person hover flow is tested on synthetic poses only. Button spacing within a slot may be tight for a hand cursor at 2.5 m; a playtest will tell.
+- **No rename, delete or merge of players** (a typo creates a new player). Add when needed.
+- **Stats only cover matches that reach the end.** Quitting mid-match (reload) records nothing.
+- **Skate Run 2P** saves each player's run with the other as opponent and no result (independent runs).
+- **On a small window, the compact camera thumbnail (top-left) can cover part of the left slot.**
+
+### Playtest note for Jorge
+
+1. `http://localhost:5173/?debug=1`: raise a hand, hover **2**, hover **Boxing**. Each of you hovers your own column's name, then either hovers **Start**.
+2. Play to the end, then Menu (reload) → **Stats** → your name → Boxing.
+3. To see charts with more data without playing: `?game=boxing&input=keyboard&autoplay=1&names=Ana,Beto` finishes bot matches under those names.
