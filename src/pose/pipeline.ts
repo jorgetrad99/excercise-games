@@ -24,6 +24,9 @@ export interface PipelineOptions {
   model: ModelVariant;
   numPoses: number;
   onFrame(frame: PoseFrame): void;
+  /** When it returns a canvas, each submitted camera frame is also drawn into it at full size, so
+   *  results can be matched with the exact image they came from (face crops). */
+  snapshot?: () => HTMLCanvasElement | null;
 }
 
 /** Per camera frame: count it, and if the worker is idle, downscale and submit it. Returns stop(). */
@@ -32,6 +35,7 @@ function startCapture(
   bridge: PoseBridge,
   cameraRate: ReturnType<typeof createRate>,
   pending: Map<number, Omit<FrameTiming, 'resultT' | 'inferMs'>>,
+  snapshot: PipelineOptions['snapshot'],
 ): () => void {
   let capturing = false; // createImageBitmap is async; don't start a second one meanwhile
   let stopped = false;
@@ -43,6 +47,14 @@ function startCapture(
     capturing = true;
     const t = performance.now();
     const height = Math.round((INFER_WIDTH * video.videoHeight) / video.videoWidth); // keep aspect
+    const snap = snapshot?.();
+    if (snap) {
+      // Same video frame as the bitmap below (both read synchronously in this callback). Only one
+      // frame is in flight, so the snapshot matches the next result until that result arrives.
+      if (snap.width !== video.videoWidth) snap.width = video.videoWidth;
+      if (snap.height !== video.videoHeight) snap.height = video.videoHeight;
+      snap.getContext('2d')!.drawImage(video, 0, 0);
+    }
     createImageBitmap(video, {
       resizeWidth: INFER_WIDTH,
       resizeHeight: height,
@@ -63,7 +75,7 @@ function startCapture(
   };
 }
 
-export function startPosePipeline({ video, model, numPoses, onFrame }: PipelineOptions) {
+export function startPosePipeline({ video, model, numPoses, onFrame, snapshot }: PipelineOptions) {
   const cameraRate = createRate();
   const poseRate = createRate();
   const pending = new Map<number, Omit<FrameTiming, 'resultT' | 'inferMs'>>();
@@ -100,7 +112,7 @@ export function startPosePipeline({ video, model, numPoses, onFrame }: PipelineO
     },
   });
 
-  const stopCapture = startCapture(video, bridge, cameraRate, pending);
+  const stopCapture = startCapture(video, bridge, cameraRate, pending, snapshot);
 
   return {
     stats: (): PoseStats => ({

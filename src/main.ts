@@ -11,6 +11,7 @@ import { createReplaySource } from './input/replay';
 import { createLatencyTracker } from './platform/latency';
 import { mountLatencyOverlay } from './platform/latency-overlay';
 import { mountMenu } from './platform/menu';
+import { createFaceCrops } from './pose/face-crop';
 import { createHandCursors } from './pose/hand-cursor';
 import { gestureConfig } from './pose/gestures.config';
 import { createRate } from './platform/rate';
@@ -122,6 +123,8 @@ function attach(source: PosePlayers): void {
 let pose: ReturnType<typeof mountPosePanel> | null = null;
 /** Where camera frames (and window.__game.injectPose) go: the menu's cursors, then the game's pose input. */
 let frameSink: ((f: PoseFrame) => void) | null = null;
+/** Players' live face crops for games that draw them (pose input only). */
+let faces: ReturnType<typeof createFaceCrops> | undefined;
 const videoSize = () => pose?.videoSize() ?? { width: 1280, height: 720 };
 
 /** ?input=pose: the camera opens at boot, so the menu can already be driven by hand. */
@@ -139,7 +142,11 @@ function mountCamera(numPoses: number): void {
   document.querySelector('.pose-panel')?.classList.toggle('compact', !debug);
 }
 
-function startInput({ gestureProfile: { toInput, config }, keys }: RegisteredGame): void {
+function startInput({
+  gestureProfile: { toInput, config },
+  keys,
+  faces: usesFaces,
+}: RegisteredGame): void {
   keyboard = createKeyboardSource(window, undefined, keys);
   keyboard.onEvent((e) => record(e));
   keyboard.onEvent(() => (keyboardUsed = true));
@@ -147,6 +154,10 @@ function startInput({ gestureProfile: { toInput, config }, keys }: RegisteredGam
   if (input === 'pose') {
     const source = createPosePlayers({ players: playerCount, video: videoSize, toInput, config });
     pose?.setNumPoses(playerCount);
+    if (usesFaces) {
+      const crops = (faces = createFaceCrops(playerCount));
+      source.onFrames((frames) => pose && crops.update(pose.frameImage(), frames));
+    }
     frameSink = (f) => {
       pushing = f.timing ?? null;
       const t0 = performance.now();
@@ -269,7 +280,7 @@ function launch(g: RegisteredGame, count = playerCount): void {
   startInput(g);
   // HUDs after the pose panel: same DOM (stacking) order as before split screen.
   players.forEach((p, i) => (p.hud = g.mountHud(hudRoot(i), i)));
-  g.createView(canvas)
+  g.createView(canvas, faces)
     .then((v) => (view = v))
     .catch((err: unknown) => console.error('renderer failed', err))
     .finally(() => requestAnimationFrame(frame));

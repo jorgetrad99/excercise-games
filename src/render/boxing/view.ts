@@ -17,6 +17,7 @@ import {
 } from 'three';
 import type { BoxingSim } from '../../core/boxing/sim';
 import type { BoxerId } from '../../core/boxing/types';
+import type { FaceFeed } from '../big-head';
 import { loadModel } from '../models';
 import { createRenderer } from '../renderer';
 import { useSlot, type RenderStats } from '../view';
@@ -64,7 +65,9 @@ function buildRing(): Object3D {
   return ring;
 }
 
-export async function createBoxingView(canvas: HTMLCanvasElement) {
+/** `faces`: live camera faces (pose input). 2P: each boxer wears its player's face; 1P: both wear
+ *  P1's, so you fight yourself (your own boxer is only visible as gloves anyway). */
+export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFeed) {
   const renderer = createRenderer(canvas);
   renderer.info.autoReset = false; // one frame can be several render() calls (split screen)
   const scene = new Scene();
@@ -102,7 +105,14 @@ export async function createBoxingView(canvas: HTMLCanvasElement) {
         const s = sim.getState();
         const me = (index === 1 ? 1 : 0) as BoxerId;
         useSlot(renderer, camera, canvas, { index, count: sims.length });
-        boxers.forEach((b, who) => b.update(s, who as BoxerId, who === me));
+        boxers.forEach((b, who) =>
+          b.update(
+            s,
+            who as BoxerId,
+            who === me,
+            faces && { feed: faces, player: sims.length === 2 ? who : 0 },
+          ),
+        );
         holders.forEach((h) => h.updateMatrixWorld(true));
         boxers[me].eye(eye);
         const them = boxers[me === 0 ? 1 : 0];

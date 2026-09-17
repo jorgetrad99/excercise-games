@@ -13,6 +13,7 @@ import {
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { boxingConfig as C } from '../../core/boxing/boxing.config';
 import type { Boxer, BoxerId, BoxingState, Fist } from '../../core/boxing/types';
+import { createBigHead, type FaceFeed } from '../big-head';
 import type { LoadedModel } from '../models';
 import { rig } from '../skater';
 
@@ -32,8 +33,14 @@ const REACH = 1.05;
 
 export interface BoxerView {
   readonly object: Group;
-  /** `self`: drawn from this boxer's own eyes (body hidden, gloves kept). */
-  update(s: Readonly<BoxingState>, who: BoxerId, self: boolean): void;
+  /** `self`: drawn from this boxer's own eyes (body hidden, gloves kept). `face`: whose camera
+   *  face this boxer wears, if any. */
+  update(
+    s: Readonly<BoxingState>,
+    who: BoxerId,
+    self: boolean,
+    face?: { feed: FaceFeed; player: number },
+  ): void;
   /** Eye position behind this boxer's head, world space (the player's camera). */
   eye(out: Vector3): Vector3;
 }
@@ -87,10 +94,11 @@ export function createBoxer(model: LoadedModel, color: string): BoxerView {
   });
   const dizzy = stars();
   object.add(figure, ...gloves, dizzy);
+  const bigHead = createBigHead(body.body, object);
 
   return {
     object,
-    update(s, who, self) {
+    update(s, who, self, face) {
       const b = s.boxers[who];
       const t = s.t;
       figure.scale.setScalar(HEIGHT / 1.83);
@@ -118,6 +126,7 @@ export function createBoxer(model: LoadedModel, color: string): BoxerView {
         -side * 0.25 * dodgeK + (b.dizzy ? Math.sin(t * 5) * 0.08 : 0),
       );
       if (b.dodge === 'duck') for (const g of gloves) g.position.y -= 0.1 * dodgeK;
+      bigHead.update(face?.feed ?? null, face?.player ?? 0, !self); // after object moved
       dizzy.visible = b.dizzy && !floored;
       dizzy.children.forEach((star, i) => {
         const a = t * 4 + (i * Math.PI * 2) / 3;

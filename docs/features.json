@@ -117,7 +117,9 @@
         { "id": "M7.4", "text": "Difficulty tuning from playtest notes", "status": "todo" },
         { "id": "M7.5", "text": "Soccer stub (games/penalty/) proving the framework", "status": "todo" },
         { "id": "M7.6", "text": "Boxing minigame (Wii Sports Boxing rules): per-wrist punches with recovery, guard, sway/duck, stamina/dizzy/knockdown/TKO, 3 x 60 s rounds, 1P reactive bot, 2P shared match", "status": "done", "note": "Phase 2 Piece 4. Pose thresholds (gestures.config fists) are UNTUNED: synthetic poses only until a real-camera playtest or recording." },
-        { "id": "M7.7", "text": "MiniGame framework hardening: defineGame + OpaqueSim registry typing, generic __game.getState<S>(), shared-sim support in the shell, per-game keyboard maps, lint rule for sibling-game folder-index imports", "status": "done" }
+        { "id": "M7.7", "text": "MiniGame framework hardening: defineGame + OpaqueSim registry typing, generic __game.getState<S>(), shared-sim support in the shell, per-game keyboard maps, lint rule for sibling-game folder-index imports", "status": "done" },
+        { "id": "M7.8", "text": "Kinect-style hand-hover menu: raised hand = per-player cursor, ~1 s dwell selects; player-count choice; mouse/keyboard fallback", "status": "done", "note": "gestureConfig.cursor zone/dwell are UNTUNED: synthetic poses only. Needs a real-camera playtest." },
+        { "id": "M7.9", "text": "Cabezota faces (Piece 5, Boxing): oversized heads wearing each player's live camera face crop from pose landmarks (no face model)", "status": "done", "note": "Boxing only. Skate Run's rear camera never shows the face: separate work." }
       ],
       "dod": []
     }

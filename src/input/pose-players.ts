@@ -27,6 +27,8 @@ export interface PosePlayers {
   push(frame: PoseFrame): void;
   onEvent(cb: (e: InputEvent & { player: number }) => void): () => void;
   onSignals(cb: (s: SignalFrame & { player: number }) => void): () => void;
+  /** Each pushed frame split per player ([P1] or [P1, P2]; a player with no body has no poses). */
+  onFrames(cb: (frames: readonly PoseFrame[]) => void): () => void;
   recalibrate(t: number): void;
   start(): void;
   stop(): void;
@@ -41,6 +43,7 @@ export function createPosePlayers({ players, config, ...rest }: PosePlayersOptio
   const sources = Array.from({ length: players }, () => createPoseSource({ ...rest, config }));
   const events = createListeners<InputEvent & { player: number }>();
   const signals = createListeners<SignalFrame & { player: number }>();
+  const perPlayer = createListeners<readonly PoseFrame[]>();
   const split = createPlayerSplitter({
     visibilityMin: config.visibilityMin,
     hysteresis: SPLIT_HYSTERESIS,
@@ -59,8 +62,12 @@ export function createPosePlayers({ players, config, ...rest }: PosePlayersOptio
 
   return {
     push(frame) {
-      if (players === 1) return sources[0]!.push(frame);
+      if (players === 1) {
+        sources[0]!.push(frame);
+        return perPlayer.emit([frame]);
+      }
       const frames = split(frame);
+      perPlayer.emit(frames);
       frames.forEach((f, i) => sources[i]!.push(f));
       if (!running) return;
       const both = pauseBoth(frame.t, frames.filter((f) => f.poses.length > 0).length);
@@ -70,6 +77,7 @@ export function createPosePlayers({ players, config, ...rest }: PosePlayersOptio
     },
     onEvent: events.add,
     onSignals: signals.add,
+    onFrames: perPlayer.add,
     recalibrate: (t) => sources.forEach((s) => s.recalibrate(t)),
     start() {
       running = true;

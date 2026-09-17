@@ -945,3 +945,105 @@ The break was in the gesture engine, `pose/fists.ts`, **before any event existed
 ### Verified
 
 - `pnpm verify` → exit 0: vitest 306 passed + 1 skipped; playwright smoke 19/19.
+
+## 2026-09-16 — Features: 2P auto-pause, hand-hover menu (Piece 2b), cabezota faces (Piece 5, Boxing)
+
+### 4. Auto-pause when a second body is missing
+
+- **Already worked in every game, no code change.** The rule lives in the game-agnostic `input/pose-players.ts` and emits `PAUSE`/`RESUME` for both players.
+  - Boxing's shared sim holds the match until every `PAUSE` is answered.
+  - One player's own tracking loss already pauses the match after 0.7 s.
+  - After 2 s the pause-both rule takes over, so that player coming back alone can't resume it.
+- **New e2e** `boxing.smoke` "2P pose replay: one body missing > 2 s…": events exactly `1:PAUSE, 0:PAUSE, 1:PAUSE, 0:RESUME, 1:RESUME`, phase `paused` in between.
+
+### 5. Hand-hover menu
+
+**Design / estimate (given before building; it matched the spec, so no stop):** ~400 lines incl. tests, about half a day. The cost is mostly the camera moving to boot, not the cursor.
+
+- **Cursor:** each body's higher raised wrist maps from a box around its shoulders (a "physical interaction zone", in shoulder widths) onto the whole screen, One Euro smoothed.
+  - Hands below mid-chest = no cursor.
+  - Bodies split by screen half with the same splitter as 2P games, so each player gets their own cursor (P1 cyan, P2 amber).
+- **Dwell:** 1 s on the same button clicks it once; leaving re-arms. Mouse/keyboard unchanged.
+- **Player count:** the menu gains a "Players 1 | 2" choice (hoverable), since 2P used to be URL-only.
+
+**What changed:**
+
+- `pose/hand-cursor.ts` (+ spec): `handPoint`, `createHandCursors`, `createDwell`.
+- `gestureConfig.cursor`: zone, `lowered`, filter, `dwellMs`.
+- `platform/menu.ts`: player-count buttons, cursor dots with a dwell ring.
+- `main.ts`:
+  - With `?input=pose` the camera opens at boot, with `numPoses` 2 on the menu.
+  - Frames go through one `frameSink` (menu → game).
+  - Launching restarts the worker when the game needs another body count (`pose-panel setNumPoses`; checked: menu 2 poses → 1P Boxing 1 pose, tracking ok).
+  - `playerCount` is now set at launch.
+- `window.__game.injectPose(frame)` feeds frames like the camera (tests).
+
+**Verified:**
+
+- `hand-cursor.spec` (5 tests):
+  - hands down → null
+  - left/right/up mapping
+  - zone center → screen center
+  - 2 bodies → screen-left is P1
+  - dwell timing/re-arm
+- e2e `menu-hover.smoke` (2 tests):
+  - a half dwell selects nothing
+  - a full dwell on "2" then Boxing launches Boxing with 2 players
+  - hands down shows no cursor, and the mouse still works
+
+  It caught a real bug: the cursor's `display: grid` beat `[hidden]`.
+- Menu with the fake 2-person camera: `tmp/diag/menu-camera.png`.
+
+**Known gaps:**
+
+- **Zone and dwell values are untuned**; a real person may find the box too big or small.
+- A lone player standing right of center is labelled P2 (cosmetic).
+- If both hands are raised, the cursor follows the higher one and can flip.
+- **Playtest:** `http://localhost:5173/?debug=1` → raise a hand, hover "2" then a game for 1 s each. Try it with two people.
+
+### 6. Cabezota faces (Boxing)
+
+**Design / estimate:** ~250 lines, about half a day. No new model or dependency.
+
+- **Crop:**
+  - Square around the nose, sized 2× ear-to-ear (eyes ×3.4 when an ear is hidden), lifted 15 % toward the forehead.
+  - Oval-masked into a 192 px canvas at ≤ 15 Hz.
+  - Box smoothed with the landmarks' One Euro filter.
+- **Head:** the rig's `Head` bone scaled ×1.8, plus a sphere-cap mesh (unlit, alpha-tested) textured with the crop. The cap sits at the head bone but keeps the boxer's facing.
+- **Who wears what:** in 2P each boxer wears its player's face. **In 1P both boxers wear P1's face (you fight yourself)**, because your own boxer is only gloves from your view. Changing that is one expression in `render/boxing/view.ts`.
+
+**Found while building:**
+
+- **Cropping from the live `<video>` put the face half out of the box.** The landmarks are ~100 ms older than the current video frame.
+  - The pipeline can now snapshot the exact frame it sends to the worker (`snapshot`/`frameImage`).
+  - It only starts when a game sets `faces: true`, so Skate Run pays nothing.
+- **A fixed 0.35 blend lagged** a swaying head by half a face. Replaced with the One Euro filter (`tmp/diag/crop.png` centered).
+
+**What changed:**
+
+- `pose/face-crop.ts` (+ spec for `faceBox`), `render/big-head.ts` (`FaceFeed`, `createBigHead`), `boxer.ts`/`view.ts` wiring.
+- Contract: `MiniGame.faces?` and `createView(canvas, faces?)`.
+- `PosePlayers.onFrames` (per-player split frames).
+- `pipeline` snapshot option.
+
+**Verified:**
+
+- Screenshots with the fake camera: 1P `tmp/diag/face-1p-zoom1.png`, `-zoom3.png`; 2P `tmp/diag/face-2p-zoom2.png`.
+- Perf at 1920×1080 with crops on: 1P 59–60 fps, pose 27–30; 2P 59–60 fps, pose 22–27.
+- `boxing-seed42-*` baselines still pass within their 1 % tolerance (the head is a few hundred px), so they were not rewritten.
+
+**Known gaps:**
+
+- **No automated test that a face reaches the head:** replay has no camera image, and the fake clip moves.
+- The crop edge shows background (no segmentation).
+- Head turns aren't mirrored on the cap.
+- Dim rooms give dark faces (unlit material, by design).
+
+**Skate Run:** the rig code is reusable as-is (same `Head` bone, same helper). But the follow camera sits behind the skater, so the face is never on screen. This is separate work: a front-facing moment (results turnaround, intro shot) or a camera change, not a one-liner.
+
+**Playtest:** `http://localhost:5173/?game=boxing` (and `&players=2`). Check that the face stays centered through sways and ducks, and whether ×1.8 reads as fun. `HEAD_SCALE` and `CAP_*` are in `render/big-head.ts`.
+
+### Verified (whole session)
+
+- `pnpm verify` → exit 0: vitest 314 passed + 1 skipped (20 files); playwright smoke 22/22.
+- One earlier run failed the 2P Skate Run perf test: a single pose-fps sample of 16 while 3 new GPU pages ran in parallel. The rerun alone had min 23, and the next full verify was green (min 21). Watch it.

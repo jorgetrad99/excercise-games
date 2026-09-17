@@ -8,6 +8,7 @@ import type { GestureMap } from '../input/pose-source';
 import type { Drawn } from '../platform/latency';
 import type { SignalFrame } from '../pose/gestures';
 import type { GestureConfig } from '../pose/gestures.config';
+import type { FaceFeed } from '../render/big-head';
 import type { HudExtras } from '../render/hud';
 import type { RenderStats } from '../render/view';
 
@@ -69,6 +70,8 @@ export interface MiniGame<S extends GameSim = GameSim> {
   id: string;
   title: string;
   requiredSignals: readonly SignalId[];
+  /** Draws players' live camera faces: the shell then crops them and passes them to createView. */
+  faces?: boolean;
   gestureProfile: GestureProfile;
   /** Keyboard fallback keys; absent = Skate Run's. */
   keys?: KeyMap;
@@ -78,7 +81,8 @@ export interface MiniGame<S extends GameSim = GameSim> {
   sharedSim: boolean;
   /** Pure and deterministic. */
   createSim: (seed: number, opts: SimOptions) => S;
-  createView: (canvas: HTMLCanvasElement) => Promise<GameView<S>>;
+  /** `faces`: players' live camera face crops (pose input only); games may ignore them. */
+  createView: (canvas: HTMLCanvasElement, faces?: FaceFeed) => Promise<GameView<S>>;
   /** `player`: whose HUD this is (0-based). */
   mountHud: (root: HTMLElement, player: number) => GameHud<S>;
   summary: (sim: S, player: number) => RunSummary;

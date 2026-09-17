@@ -14,6 +14,7 @@ export default defineGame<BoxingSim>({
   id: 'boxing',
   title: 'Boxing',
   requiredSignals: ['fistL', 'fistR', 'leanX', 'headDrop'],
+  faces: true, // "cabezota": big heads wearing the players' faces
   gestureProfile: { toInput: BOXING_GESTURES, config: gestureConfig },
   keys: BOXING_KEYS,
   fixedDt: boxingConfig.fixedDt,
@@ -26,7 +27,7 @@ export default defineGame<BoxingSim>({
     return createBoxingSim({ seed }, bots.length > 0 ? boxingBot(bots) : null);
   },
 
-  createView: (canvas) => createBoxingView(canvas),
+  createView: (canvas, faces) => createBoxingView(canvas, faces),
 
   mountHud: (root, player) => {
     const hud = mountBoxingHud(root, player === 1 ? 1 : 0);

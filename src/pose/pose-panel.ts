@@ -198,11 +198,15 @@ function lazyPipeline(
 ) {
   let pipeline: ReturnType<typeof startPosePipeline> | null = null;
   let numPoses = opts.numPoses;
+  let snap: HTMLCanvasElement | null = null;
+  const snapshot = () => snap;
   const ensure = (): void => {
-    pipeline ??= startPosePipeline({ video, model: opts.model, numPoses, onFrame });
+    pipeline ??= startPosePipeline({ video, model: opts.model, numPoses, onFrame, snapshot });
   };
   return {
     ensure,
+    /** The full-size image of the latest pose result; snapshots start on the first call. */
+    frameImage: (): HTMLCanvasElement => (snap ??= document.createElement('canvas')),
     stats: () => pipeline?.stats() ?? null,
     /** `open`: the camera is running (else ensure() runs once it opens). */
     setNumPoses(n: number, open: boolean): void {
@@ -221,6 +225,8 @@ export function mountPosePanel(
 ): {
   stats(): PoseStats | null;
   videoSize(): { width: number; height: number };
+  /** The camera image the latest PoseFrame was computed from (starts snapshotting on first call). */
+  frameImage(): HTMLCanvasElement;
   /** Restart the pose worker for another body count (menu: 2 cursors → a 1P game). */
   setNumPoses(n: number): void;
 } {
@@ -264,6 +270,7 @@ export function mountPosePanel(
   restart();
   return {
     stats: pipeline.stats,
+    frameImage: pipeline.frameImage,
     videoSize: () => ({ width: ui.video.videoWidth || 1280, height: ui.video.videoHeight || 720 }),
     setNumPoses: (n) => pipeline.setNumPoses(n, stream !== null),
   };
