@@ -3,6 +3,7 @@
 // composited two-person placeholder clip, until Jorge records two-players.json and a real 2-person clip.
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { recordGate } from './gates';
 import type { SimState } from '../../src/core/types';
 import { CALIBRATE, JUMP, fixture, scriptTwo, type Key } from '../../src/pose/testdata/synthetic';
 
@@ -199,6 +200,17 @@ test.describe('perf', { tag: '@perf' }, () => {
       [0, 1].map((i) => window.__game.getState<SimState>(i).phase),
     );
     console.info('perf 2 players', JSON.stringify(samples), { phases });
+    await recordGate(
+      page,
+      'skate-2p-1080p',
+      {
+        fps: samples.map((s) => s.fps),
+        poseFps: samples.map((s) => s.poseFps),
+        poses: samples.map((s) => s.poses),
+        calls: samples.map((s) => s.calls),
+      },
+      { fps: '>= 55 min', poseFps: '>= 20 min', poses: '2 in >= 12 of 15', calls: '< 150 max' },
+    );
     expect(phases).toEqual(['running', 'running']);
     expect(Math.min(...samples.map((s) => s.fps))).toBeGreaterThanOrEqual(55);
     expect(Math.min(...samples.map((s) => s.poseFps))).toBeGreaterThanOrEqual(20);

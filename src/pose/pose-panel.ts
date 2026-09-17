@@ -105,6 +105,7 @@ function formatStats(s: PoseStats, renderFps: number): string {
   return [
     `camera ${s.cameraFps} fps  pose ${s.poseFps} fps  render ${renderFps.toFixed(0)} fps`,
     `infer ${s.inferMs.toFixed(1)} ms  delegate ${s.delegate ?? '-'}  worker ${s.state}  restarts ${s.restarts}`,
+    `gpu ${s.gpu ?? '-'}`,
     `video ${s.video.width}x${s.video.height}  poses ${s.lastPoseCount}  frames ${s.framesWithPose}/${s.framesProcessed} with pose`,
   ].join('\n');
 }
@@ -120,11 +121,16 @@ function startDrawLoop(
   renderFps: () => number,
 ): void {
   ui.heatmap.hidden = ui.stats.hidden = !debug;
+  let drawn: PoseFrame | null | undefined;
   const draw = (): void => {
     const frame = latest();
-    drawSkeleton(ui.overlay, ui.video, frame);
+    // Poses arrive at ≤ 30 Hz: repainting the 720p overlay on every 60 Hz rAF only doubles its cost.
+    if (frame !== drawn) {
+      drawn = frame;
+      drawSkeleton(ui.overlay, ui.video, frame);
+      if (debug) drawHeatmap(ui.heatmap, frame?.poses[0]);
+    }
     const s = debug ? stats() : null;
-    if (debug) drawHeatmap(ui.heatmap, frame?.poses[0]);
     if (s) ui.stats.textContent = formatStats(s, renderFps());
     requestAnimationFrame(draw);
   };

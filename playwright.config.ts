@@ -15,6 +15,7 @@ const fakeCamera = [
 
 export default defineConfig({
   testDir: 'tests/e2e',
+  globalSetup: './tests/e2e/global-setup.ts',
   outputDir: 'tmp/test-results',
   reporter: 'list',
   use: { baseURL: BASE_URL },

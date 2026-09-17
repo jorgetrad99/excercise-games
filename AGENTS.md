@@ -51,6 +51,18 @@ If you are stuck on the same problem for two attempts, stop, write what you trie
 
 `pnpm verify` = `tsc --noEmit` + `eslint` + `vitest run` + `playwright test --project=smoke --project=perf` (`@perf` fps gates and `@realtime` wall-clock replays run after smoke, one worker). It must be green before any commit and before you say a task is done.
 
+**Perf lock (enforced, not a convention).** Perf numbers are only valid on a quiet machine. On identical code and GPU, 2P pose-fps read min 15 while another session ran tsc and a probe, and min 28 without (PROGRESS 2026-09-16).
+- **Lock:** `scripts/e2e-lock.mjs` owns one lockfile, `.git/move-arcade-e2e.lock`, shared by every worktree and session. A lock whose pid is dead is stale and taken over.
+- **Holders:** the Playwright run (global setup; a second e2e run fails fast naming the holder) and `scripts/perf-probe.mjs`.
+- **Waiters:**
+  - `pnpm typecheck` and `pnpm lint`: `node scripts/e2e-lock.mjs wait` prefix
+  - every vitest run, direct calls included: `globalSetup` in `vite.config.ts` / `vitest.tools.config.ts`
+  - tools-only Playwright probes (`--project=tools`)
+  - the format-and-typecheck hook: waits ≤ 45 s, then skips tsc and says so
+- **Anything else heavy** (an ad-hoc `node` probe, a build): run `node scripts/e2e-lock.mjs wait` first.
+- **Fallback when a process can't check the lock:** every perf gate records the GPU (`GATE <name> gpu:`) **and the machine state it observed** (`GATE <name> machine:`: CPU busy %, GPU util %, whether this run holds the lock, and other tsc/eslint/vitest/playwright/build/probe processes outside this run). Both are also written to `tmp/verify/gates.jsonl`. A gate value reported without its machine line isn't a usable number; `CONTENDED` means re-measure.
+- **Worktrees:** set `PLAYWRIGHT_PORT`, so a stale Vite from another checkout isn't silently reused.
+
 Beyond that, verify at the level of the thing you changed:
 
 | You changed…                  | Verify with…                                                                                                                                                           |

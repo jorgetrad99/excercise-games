@@ -1402,3 +1402,201 @@ Branch `docs/plan-boxing`, from `feat/visual-expressiveness` (`a68568a`). Docs o
 ### Next
 
 Jorge signs off on the spec (and D1). Then M7.14, the inversion, runs against it.
+
+---
+
+## 2026-09-16 — Perf diagnosis (1P/2P Boxing) + movement-detection research
+
+### TL;DR
+
+1. **The slowness isn't a code regression. Your Chrome renders WebGL in software.**
+   - Its GPU process was launched with `--use-angle=d3d11-warp-webgl` (WARP = Microsoft's CPU rasterizer), has run since 2026-09-15 22:18, and was using 4.4 CPU cores continuously.
+   - A tab of that Chrome was connected to the dev server.
+   - Reproduced by launching Chromium with `--use-angle=d3d11-warp`:
+
+     | | Normal GPU: render / pose-fps | WARP: render / pose-fps / infer |
+     | --- | --- | --- |
+     | Boxing 1P | 60 / 30 | 32 / 4.8 / 188 ms |
+     | Boxing 2P | 60 / 25 | 22 / 2 / 492 ms |
+     | Skate Run | 60 / 30 | 8 / 1.2 / 478 ms |
+
+   - The worker still said `delegate GPU`, so nothing in the HUD showed it.
+   - **At 2–5 pose-fps, detection is also broken.** That is the connection you suspected, but through the browser, not our features.
+   - **Check `chrome://gpu` in your Chrome.** Then turn on Settings → System → "Use graphics acceleration when available" and relaunch. I can't change that setting for you.
+2. **On a working GPU, no recent feature regressed anything measurable.** 60 fps and 29–30 pose-fps in 1P. 2P is the tight case: 23–29 ms of inference against a 33 ms camera interval.
+3. **Research (item 2):** keep the thresholds and tune them on recordings first. Details in `docs/RESEARCH-movement-detection.md`. **Waiting for your decision.**
+
+### How it was measured
+
+- **`scripts/perf-probe.mjs`**, not in verify. It runs Chromium with the fake camera at 1920×1080 and patches the page from outside the app, so any commit can be measured:
+  - rAF callbacks timed by name (`frame` = sim + render, `draw` = pose panel overlay)
+  - 2D `drawImage` bucketed by target size (1280×720 = face snapshot, 192×192 = face crop)
+  - WebGL texture uploads, `createImageBitmap`, `toDataURL`, long tasks
+  - `getFps` / `getPoseStats` / `getRenderStats` sampled for 10 s
+  - Options: `--angle d3d11-warp` (software GL), `--no-draw` (page draw calls become no-ops), `--viewport`
+- **Feature attribution:** the same probe against worktrees of `a79349b` (latency work), `8ef2072` (Quaternius), `bf938fb` (Boxing), `be2a33a` (hover menu), `f4a903c` (faces), `6708eb4` (mirroring = HEAD).
+- **`tmp/bench/`:** a throwaway page that runs PoseLandmarker in workers with a chosen delegate / model / layout, to compare cheaper 2P paths without touching the app.
+- **`tests/tools/punch-sampling.tool.ts`:** synthetic punches (continuous smoothstep profile, sampled at arbitrary instants, 8 phases) through the real gesture engine at 30…10 pose-fps.
+- **Noise:** this laptop was also running your WARP Chrome, VS Code and Codex. The same code gave 2P pose-fps means of 23.9, 25.2, 27.6, 28.3 and 29.7 across runs, and one run spiked to 47 ms of inference (pose min 4). Treat differences under ~3 pose-fps as noise.
+- **Raw data:** `tmp/perf/probe-*.json`, `tmp/perf/punch-sampling.json`.
+
+### Numbers (normal GPU, RTX 4060 Laptop, 1080p, fake camera capped at 30 fps)
+
+| Scenario | Render fps | Pose fps mean (min) | Infer p50 ms | Draw calls | Triangles |
+| --- | --- | --- | --- | --- | --- |
+| M4 gate / latency work, Skate 1P (`a79349b`) | 60 | 30 (29) | 12.2 | 51 | 39.7k |
+| Skate 1P, HEAD | 60 | 29.7–30 (27) | 12.4–15.4 | 57 | 586k |
+| Skate 2P, HEAD | 60 | 25–29.8 (19) | 26.6–28.7 | 114 | 1.17 M |
+| **Boxing 1P**, HEAD | 60 | 29.6–30 (27) | 10.6–11.4 | 44 | 16.2k |
+| **Boxing 2P**, HEAD | 60 | 23.9–29.7 (20) | 24.8–28.8 | 88 | 32.5k |
+| Boxing 1P keyboard (no camera) | 60 | – | – | 43 | 15.5k |
+| Menu, camera on (2 poses, 1 body) | – | 26–30 | 18–24 | – | – |
+| Menu → Boxing 1P (worker restart) | 60 | 30 (29) | 10.6 | 44 | 16.2k |
+| Boxing 1P `debug=1&record=1` | 60 | 30 (29) | 12.3 | 44 | 16.2k |
+| Boxing 1P / 2P, main thread throttled 4× | 59 (47) / 60 (42) | 29 / 26.1 | 12.3 / 23.1 | | |
+
+**Where one second of main-thread time goes (Boxing 2P pose, HEAD before the fixes, ms per s):**
+
+| Stage | Cost |
+| --- | --- |
+| Sim + render (`frame`) | 138 ms/s = 2.2 ms per frame p50 |
+| Face snapshot: full 720p `drawImage`, every submitted frame | 16 ms/s (0.55 ms × 28/s) |
+| Downscale bitmap for the worker | 5.6 ms/s |
+| Face crops (192²) | 0.6 ms/s |
+| Face texture upload | 0.8 ms/s |
+| Pose panel overlay redraw (60 Hz) | 9.4 ms/s |
+| Leftover `FACEDBG` `toDataURL` log | 2.2 ms/s; under WARP, **39 ms per call** every 2 s |
+
+Pose inference runs in the worker: 25 ms per frame in 2P. It's the only big item.
+
+### What each recently added feature costs (answers to your list)
+
+- **`numPoses: 2`: the largest cost.**
+  - Inference 11 → 23–29 ms.
+  - With `numPoses: 2` and only one body in view (the menu) it is still 18–24 ms. The detector runs every frame while looking for the second person.
+  - In 2P this leaves 5–10 ms of headroom in a 33 ms camera interval, so any contention costs pose frames. That's why the 2P perf gate is the one that flakes (baseline verify this session: red, min 15 pose-fps while your WARP Chrome used 4.4 cores).
+- **Live face capture:** yes, it copies the **full 720p frame on every submitted frame** (≈ 30/s) although crops run at ≤ 15/s.
+  - Measured 0.5 ms per copy, 15–20 ms/s: about 1–2 % of one core, no fps effect.
+  - **Not changed:** a face-region crop would save ≈ 10 ms/s for a noticeably more complex snapshot/result pairing.
+  - The crop and texture upload together are < 1.5 ms/s.
+- **Oversized head:** +1 draw call and +768 triangles (the face cap). No measurable cost.
+- **Hover menu (camera always on):** only costs while the menu is up (2-pose inference, no render).
+  - Launching restarts the worker for 1 pose. Measured after the restart: 30 pose-fps, 0 restarts, same as a direct launch.
+- **Pose mirroring:** world-landmark copy + PoseState math sit inside the 2.2 ms `frame` and the worker round trip.
+  - Worktree before/after (`f4a903c` → HEAD): no difference beyond noise.
+- **Park biome (Quaternius):** 39.7k → 586k triangles in 1P, 1.17 M in 2P. Skate frame p50 1.3 → 2.1 ms, inference +1–3 ms from GPU sharing, fps unchanged on this GPU.
+  - Not Boxing's problem; still open (see gaps).
+- **Renderer vs inference:** with every page draw call turned into a no-op (`--no-draw`), 2P inference was 24–25 ms vs 27–30 ms drawn. So rendering costs 2P ≈ 2–5 ms. Render resolution (1920×1080 vs 960×540) made no difference.
+
+**Against the M4 / latency numbers** (60 fps / 51–59 draw calls / 28–31 pose-fps):
+- Skate 1P still holds 60 fps and ~30 pose-fps. Triangles ×15 since the Quaternius swap; draw calls 51 → 57.
+- Boxing 1P matches the old Skate numbers.
+- **The only real regression on a GPU is 2P pose-fps: 28–31 → 24–29, min dips to 15–20.** It comes from `numPoses: 2`, which is inherent to 2P, not from the faces or the menu.
+
+### Levers evaluated (measure → decision)
+
+| Lever | Measured | Decision |
+| --- | --- | --- |
+| Lite model | GPU 1P: 9.7–10.7 vs 10.8–11.6 ms. GPU 2P: 17.6–20.2 vs 18.9–19.5 ms (bench). In-game 2P: 22.6 vs 25.4 ms | ≈ 0–10 %, within noise |
+| Lite auto-fallback (PLAN §1.1 "pose fps < 20 for 3 s") | **Not wired: nothing in `src/` implements it.** CPU delegate: lite 34–47 ms vs full 50–52 ms | **Deliberately not wired.** A worker restart costs 2–3 s of lost tracking mid-match for ≤ 10 % back. Needs your OK because it deviates from PLAN §1.1 |
+| Two workers × 1 pose on overlapping 60 % halves, instead of 1 worker × 2 poses | Each worker 17.5 ms (GPU shared) vs 18.9–19.5 ms for one 2-pose worker; throughput identical (both hit the 30 fps camera cap) | Rejected: no gain, and it breaks when a player crosses the middle |
+| **CPU delegate when WebGL is software** | Bench (no render): CPU 50 ms vs GPU-on-WARP 188 ms. In-game WARP after the fix: render 32 → 50 fps (1P), 22 → 34 (2P); pose-fps 4.7 / 3 (WARP rendering eats the same cores) | **Done**, plus a visible warning: the real fix is enabling the GPU |
+| Pose panel overlay only on new poses | 5.2–11.4 → 3.7–5 ms/s (15.4 in debug, was 19.9) | Done |
+| Remove leftover `FACEDBG` `toDataURL` console log | 1–2.5 ms/s; 39 ms stalls under WARP | Done |
+| Face snapshot as a face-region crop | ≈ 10 ms/s possible saving | Not worth it (see above) |
+| Park triangles | See above | Not changed: no fps effect on a GPU; asset decimation is its own task |
+
+### Does pose-fps explain missed punches? (the question behind item 2)
+
+`tests/tools/punch-sampling.tool.ts`, detection rate over 8 sampling phases. Out = time to full extension; "snap" = straight back with no pause.
+
+| Punch | 30 | 25 | 20 | 15 | 12 | 10 pose-fps |
+| --- | --- | --- | --- | --- | --- | --- |
+| Full reach, out 60 ms, snap | 1 | 1 | 1 | 1 | 0.88 | 0.75 |
+| 0.5 reach, out 60 ms, snap | 1 | 1 | 1 | 0.63 | 0.63 | 0.50 |
+| 0.5 reach, out 90 ms, snap | 1 | 1 | 1 | 1 | 0.75 | 0.75 |
+| ≥ 0.5 reach, out ≥ 120 ms | 1 | 1 | 1 | 1 | 1 | 0.88–1 |
+| 0.3 reach, any speed | 0 | 0 (one 0.38) | 0 | 0 | 0 | 0 |
+
+- **At ≥ 20 pose-fps, sampling rate doesn't lose punches.** Shallow punches fail at every fps because of `fists.rearm` (0.6 torso reach), a threshold question.
+- **Caveat:** synthetic motion has no motion blur and no MediaPipe tracking lag on a fast wrist; both are worse at low fps. Only real drills can measure those.
+- **Found on the way:** the keyframe `script()` sampler always puts a frame on each keyframe, so every synthetic punch got its peak for free (the first run said 100 % everywhere). The tool samples a continuous profile instead. The existing TEMPORARY fist tests still use `script()`; this doesn't invalidate them (they test sequences, not rates), but keep it in mind.
+
+### What changed
+
+- **`src/platform/gpu.ts`** (+ spec): `glRenderer`, `isSoftwareRenderer`, and `warnSoftwareGl`, a red banner shown once telling the player to enable graphics acceleration.
+- **`pose.worker.ts`:** reads its own WebGL renderer before creating the landmarker. Software GL → CPU delegate. Reports `gpu` in `ready`.
+- **`bridge.ts`, `pipeline.ts`:** `PoseStats.gpu`; the warning fires when the worker's GL is software. The debug stats show a `gpu …` line.
+- **`render/renderer.ts`:** the same check for the page's renderer.
+- **`pose-panel.ts`:** the skeleton/heatmap redraw only when a new PoseFrame arrived.
+- **`face-crop.ts`:** removed the leftover `FACEDBG` log.
+- **Tools:** `scripts/perf-probe.mjs`, `tests/tools/punch-sampling.tool.ts`.
+- **Docs:** `docs/RESEARCH-movement-detection.md`; features M7.11, M7.12.
+
+### Verified
+
+- **`pnpm verify` → exit 0** (`tmp/perf/verify-perf.log`): tsc, eslint, vitest 323 passed + 1 skipped (22 files), playwright smoke 22/22. The 2P perf test sampled pose-fps 24–25.
+- **The session-start verify was red** (`tmp/perf/verify-start.log`): the 2P Skate perf gate hit min 15 pose-fps while your WARP Chrome was using 4.4 cores. That's the flake described above, not a code change.
+- **After-probe on GPU** (`probe-after.json`): Boxing 1P 60 / 29.6 pose (infer 11.4, delegate GPU), 2P 60 / 25.2 (24.8), Skate 1P 60 / 29.7, Skate 2P 60 / 28.9. Same as before within noise.
+- **WARP e2e by hand:** banner shown; stats `delegate CPU`, `gpu ANGLE (Microsoft, Microsoft Basic Render Driver …)`. Screenshot `tmp/perf/warp-banner.png`.
+- `gpu.spec.ts`: the WARP string is the one Chromium actually reported; the RTX string is the real one from this machine.
+
+### Known gaps
+
+- **Your real Chrome is unverified from here:** I saw the GPU process flag and the dev-server connection, not `chrome://gpu`. After enabling acceleration, open `http://localhost:5173/?game=boxing&debug=1` and check that the stats line says `delegate GPU` and `gpu ANGLE (NVIDIA …)`, with pose ≈ 30 (1P) / ≈ 25 (2P).
+- **The real webcam isn't measured:** a dim room can drop a webcam to 15 fps. `camera … fps` in the debug stats shows it.
+- **2P has little headroom** (≈ 5–10 ms). A bigger lever would be a 60 fps-capable camera + a 1-pose "tracker" path, not worth it until 2P is played for real.
+- **Park biome at 586k / 1.17 M triangles** is still open (decimate Quaternius props or cut instance counts).
+- **Lite auto-fallback per PLAN §1.1 is not wired**, on purpose (table above). Your call.
+
+### Item 2 decision needed
+
+`docs/RESEARCH-movement-detection.md`. My recommendation:
+1. Record the drills and tune the thresholds (built, ~2 h each side).
+2. Pilot pose-embedding k-NN only for guard/duck/lean if they stay fragile across people (~1 day, no dependency, < 0.1 ms per frame).
+3. No sequence model for punches now: it would add 100–200 ms of detection latency.
+4. No other MediaPipe task applies.
+
+---
+
+## 2026-09-16 — Perf lock and gate logging onto main (harness only)
+
+Branch `chore/perf-lock`, from `main` (`6708eb4`), built in `tmp/perf-lock-worktree`. Jorge's option B: the lock goes to main so every branch picks it up by merging main, without the feature work around it on `docs/plan-boxing`.
+
+### Why
+
+- The lock and the worktree-aware guard existed only on `docs/plan-boxing` (`0457ca6`). Claude Code runs hooks from the main checkout, so they applied only while that checkout sat on a branch that had them.
+- Merging `0457ca6` into another branch would also have brought 7 unrelated commits: named players and stats, the Boxing glove-latency e2e and `boxer.ts` changes, and PLAN-BOXING D1–D5.
+
+### What changed
+
+- **Cherry-picked `448e4cf`** (perf diagnosis): `src/platform/gpu.ts` (GPU name, software-GL detection), CPU delegate on software GL, `scripts/perf-probe.mjs`, pose-panel redraw only on new frames, research doc. It was based on `main`, so it applied cleanly.
+- **From `852efb0` + `0457ca6`, harness files only:**
+  - `scripts/e2e-lock.mjs` (+ `.d.mts`), `scripts/vitest-perf-lock.mjs`; the probe holds the lock
+  - `tests/e2e/global-setup.ts` (takes the lock for the run; models check), `gates.ts`, `machine-state.ts`
+  - `.claude/hooks/guard-paths.mjs` (paths resolved against the containing checkout), `format-and-typecheck.mjs` (waits ≤ 45 s for the lock, then skips tsc)
+  - `package.json` (`typecheck`/`lint` wait for the lock; `test:smoke` = smoke + perf), `vite.config.ts` / `vitest.tools.config.ts` (lock globalSetup), `eslint.config.js` (`setTimeout` global), `playwright.config.ts` (global setup, `PLAYWRIGHT_PORT`, serial `perf` project)
+  - `tests/unit/perf-lock.spec.ts`, `guard-paths.spec.ts`
+  - Specs: `@perf` / `@realtime` tags and `recordGate` calls in `pose`, `gestures`, `render`, `two-players`; `@realtime` on the two Boxing pose replays (hand-applied: `0457ca6`'s `boxing.smoke` also carries player-stats menu clicks that don't exist on main).
+- **Left out on purpose:** `?names=` in AGENTS §5 (player stats isn't on main), `boxing-visual` / `boxing-latency` specs (not on main).
+- AGENTS §4 perf-lock rules; ARCHITECTURE Harness.
+
+### Verified
+
+- **`pnpm verify` → exit 0** (`tmp/verify/verify-perf-lock-1.log`, `PLAYWRIGHT_PORT=5191`): tsc, eslint, vitest 342 passed + 1 skipped (24 files), playwright 22/22. Retries: 0 on every gate.
+- **Gates are PROVISIONAL, not pass/fail.** Each gate's machine line reads `CONTENDED` with the same 2 other heavy `node` processes (pid 32144 from `AppData\Roaming\…`, pid 51144 from `…\web-games\…`; both had exited by the time I looked, so only the truncated command lines are known). GPU on every gate: `ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Laptop GPU … D3D11)`, pose delegate GPU.
+
+  | Gate | Measured | Limit | Machine |
+  |---|---|---|---|
+  | pose-1p-5s | pose-fps 29.5, with-pose 1.0 | ≥ 20, > 0.9 | cpu 21 %, gpu 68 %, lock held, CONTENDED (2) |
+  | skate-1p-1080p-bot | fps min 59, calls 57 | ≥ 55, < 150 | cpu 16 %, gpu 38 %, CONTENDED (2) |
+  | skate-1p-1080p-pose | fps min 60, pose-fps min 29, calls 57 | ≥ 55, ≥ 20 | cpu 24 %, gpu 39 %, CONTENDED (2) |
+  | skate-2p-1080p | fps min 60, pose-fps min 26 (mean 28.3), calls 110–114, tris 1.13–1.26 M | ≥ 55, ≥ 20, < 150 | cpu 46 %, gpu 40 %, CONTENDED (2) |
+
+- **Rule recorded (Jorge, 2026-09-16):** a gate whose machine state shows contention is reported as provisional, whether it passed or failed. A green gate on a busy machine is as misleading as a red one.
+
+### Known gaps
+
+- **Scope is still branch-dependent until every active branch merges main.** Hook commands come from the main checkout's `.claude/settings.json` and resolve scripts relative to it; a branch without this commit runs the old hooks, and a worktree on such a branch runs vitest/Playwright without the lock. Proposal for Jorge in the session report (settings are human-owned).
+- **Quiet-window agreements between sessions** should now be enforced by the lock, not by message (Jorge's note).
+- **No `.gitattributes`:** Git warns LF→CRLF on files written by sessions. Task raised after this lands.

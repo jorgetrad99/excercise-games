@@ -9,7 +9,8 @@ export interface WorkerInit {
 }
 export type WorkerIn = WorkerInit | { type: 'frame'; bitmap: ImageBitmap; t: number };
 export type WorkerOut =
-  | { type: 'ready'; delegate: 'GPU' | 'CPU' }
+  /** gpu: the worker's WebGL renderer string (software rasterizers show up here). */
+  | { type: 'ready'; delegate: 'GPU' | 'CPU'; gpu?: string }
   | { type: 'pose'; frame: PoseFrame; inferMs: number }
   | { type: 'fatal'; message: string };
 
@@ -23,7 +24,7 @@ export interface WorkerLike {
 
 export type BridgeStatus =
   | { state: 'loading' }
-  | { state: 'ready'; delegate: 'GPU' | 'CPU' }
+  | { state: 'ready'; delegate: 'GPU' | 'CPU'; gpu?: string | undefined }
   | { state: 'restarting'; reason: string; restarts: number };
 
 export interface PoseBridgeOptions {
@@ -67,7 +68,7 @@ export function createPoseBridge(opts: PoseBridgeOptions): PoseBridge {
       if (data.type === 'ready') {
         clearTimeout(timer);
         ready = true;
-        opts.onStatus?.({ state: 'ready', delegate: data.delegate });
+        opts.onStatus?.({ state: 'ready', delegate: data.delegate, gpu: data.gpu });
       } else if (data.type === 'pose') {
         clearTimeout(timer);
         inFlight = false;
