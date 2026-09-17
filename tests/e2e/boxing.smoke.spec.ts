@@ -203,7 +203,7 @@ test.describe('boxing renderer', () => {
     await boot(page, 'input=bot&seed=42&clock=manual');
     await seek(page, 8.2);
     await expect(page).toHaveScreenshot('boxing-seed42-t8.png', { maxDiffPixelRatio: 0.01 });
-    await seek(page, 52.5); // boxer 1 is down, count running (seed 42: down 51.3–58.5 s under collision scoring)
+    await seek(page, 55.8); // boxer 1 is down, count running (seed 42: down 54.6–60.2 s since dizzy gloves stopped blocking)
     expect((await state(page)).phase).toBe('down');
     await expect(page).toHaveScreenshot('boxing-seed42-down.png', { maxDiffPixelRatio: 0.01 });
     const stats = await page.evaluate(() => window.__game.getRenderStats()!);

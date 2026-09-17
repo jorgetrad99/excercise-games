@@ -3,7 +3,7 @@
 // swept over the tick using the motion RELATIVE to the target (a head moving into a glove counts, a head
 // dodging out of its path doesn't). The sim (sim.ts) turns outcomes into rules: stamina, dizzy, knockdowns.
 import { boxingConfig as C } from './boxing.config';
-import { dot, fromRing, len, sub, sweep, toRing, v3 } from './body';
+import { dot, fromRing, len, pointVelocity, sub, sweep, toRing, v3 } from './body';
 import type { BoxerId, BoxingState, HitTaken, V3 } from './types';
 
 const B = C.body;
@@ -18,6 +18,8 @@ interface Target {
   part: 'head' | 'body' | 'glove';
   from: V3;
   to: V3;
+  /** Defender-local velocity, m/s (body.ts pointVelocity). */
+  vel: V3;
   r: number;
 }
 
@@ -28,14 +30,28 @@ const torsoAt = (head: RV3): V3 => [
   B.torso[2] + (head[2] - B.head[2]) * 0.5,
 ];
 
-function targets(s: BoxingState, def: BoxerId): Target[] {
-  const { prev, now } = s.boxers[def].body;
+function targets(s: BoxingState, def: BoxerId, dt: number): Target[] {
+  const d = s.boxers[def];
+  const { prev, now } = d.body;
   const g = B.gloveRadiusM;
+  const vel = (i: 0 | 1 | 2) => pointVelocity(d.body, i, dt);
+  const head = vel(0);
+  const body: Target[] = [
+    { part: 'head', from: v3(prev.head), to: v3(now.head), vel: head, r: B.headRadiusM + g },
+    {
+      part: 'body',
+      from: torsoAt(prev.head),
+      to: torsoAt(now.head),
+      vel: [head[0] * 0.5, head[1] * 0.5, head[2] * 0.5], // torsoAt follows the head halfway
+      r: B.torsoRadiusM + g,
+    },
+  ];
+  // A dizzy boxer's gloves touch without effect in both directions: they don't block (PLAN-BOXING §2).
+  if (d.dizzy) return body;
   return [
-    { part: 'glove', from: v3(prev.gloves[0]), to: v3(now.gloves[0]), r: 2 * g },
-    { part: 'glove', from: v3(prev.gloves[1]), to: v3(now.gloves[1]), r: 2 * g },
-    { part: 'head', from: v3(prev.head), to: v3(now.head), r: B.headRadiusM + g },
-    { part: 'body', from: torsoAt(prev.head), to: torsoAt(now.head), r: B.torsoRadiusM + g },
+    { part: 'glove', from: v3(prev.gloves[0]), to: v3(now.gloves[0]), vel: vel(1), r: 2 * g },
+    { part: 'glove', from: v3(prev.gloves[1]), to: v3(now.gloves[1]), vel: vel(2), r: 2 * g },
+    ...body,
   ];
 }
 
@@ -47,8 +63,9 @@ function zoneOf(n: RV3, rise: number, hand: 0 | 1): HitTaken['zone'] {
   return hand === 0 ? 1 : 0; // straight on: a left hand lands on the defender's right side
 }
 
-/** Earliest target entered by the glove moving g0 → g1 (defender-local), with its closing speed. */
-function firstContact(ts: Target[], g0: V3, g1: V3, dt: number) {
+/** Earliest target entered by the glove moving g0 → g1 at velocity `gv` (all defender-local), with its
+ *  closing speed: velocities, not this tick's displacement (a held pose sample moves a frame in one tick). */
+function firstContact(ts: Target[], g0: V3, g1: V3, gv: V3) {
   let best: { target: Target; t: number; speed: number; n: V3; rise: number } | null = null;
   for (const target of ts) {
     const a = sub(g0, target.from);
@@ -64,8 +81,8 @@ function firstContact(ts: Target[], g0: V3, g1: V3, dt: number) {
     // Split the closing speed into the glove's own motion and the target's. Only the side that did
     // most of the closing strikes: a guard met by a punch doesn't also "punch" the attacker's glove,
     // and leaning into a resting glove isn't that glove's hit.
-    const byGlove = -dot(sub(g1, g0), n) / dt;
-    const byTarget = dot(sub(target.to, target.from), n) / dt;
+    const byGlove = -dot(gv, n);
+    const byTarget = dot(target.vel, n);
     const move = sub(g1, g0);
     const rise = move[1] / (len(move) || 1);
     if (byGlove > byTarget && byGlove > 0) best = { target, t, speed: byGlove + byTarget, n, rise };
@@ -87,9 +104,11 @@ export function collideGlove(
   const local1 = a.body.now.gloves[hand];
   const g0 = fromRing(def, toRing(att, local0));
   const g1 = fromRing(def, toRing(att, local1));
-  contact.closingT = (local1[2] - local0[2]) / dt > C.bot.seeSpeedMps ? contact.closingT + dt : 0;
+  const vel = pointVelocity(a.body, hand === 0 ? 1 : 2, dt);
+  const gv = sub(fromRing(def, toRing(att, vel)), fromRing(def, toRing(att, [0, 0, 0])));
+  contact.closingT = vel[2] > C.bot.seeSpeedMps ? contact.closingT + dt : 0;
   if (local1[2] < B.recoverZ) Object.assign(contact, { struck: false, spent: false });
-  const ts = targets(s, def);
+  const ts = targets(s, def, dt);
   if (contact.touching) {
     // One hit per contact: the glove must leave every target (with margin) before it can hit again.
     contact.touching = ts.some((t) => len(sub(g1, t.to)) <= t.r + B.releaseM);
@@ -98,7 +117,7 @@ export function collideGlove(
   // One outcome per extension: a glove stopped by a guard doesn't slide on into the face as a second
   // punch. Pulling it back behind recoverZ (above) re-arms it.
   if (contact.struck || contact.spent) return null;
-  const hit = firstContact(ts, g0, g1, dt);
+  const hit = firstContact(ts, g0, g1, gv);
   if (hit) {
     Object.assign(contact, { touching: true, struck: true });
     if (hit.target.part === 'glove') return { kind: 'block', speed: hit.speed };

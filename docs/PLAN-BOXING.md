@@ -181,6 +181,12 @@ A constraint only clamps where a player-driven value lands. It never produces mo
       - The lead direction is unchanged when capped.
       - BX-CL-2 still passes: prediction never scores.
 - **Bot perception:** the bot reacts to a glove closing on it faster than `bot.seeSpeedMps`. That's the bot's own perception, not a gate on the player.
+  - **Known limit of this model (Jorge, 2026-09-17, Phase 0), recorded so it isn't rediscovered:**
+    - Pure reaction can't defend a punch that is shorter than the reaction time. On synthetic pose straights the bot's guard starts 83–92 ms into a 150 ms straight, but contact happens at 33–50 ms. On 300 ms straights the guard starts at 183–283 ms and contact is at 100–108 ms. The bot blocked zero pose punches with its guard.
+    - This is the wrong model for fast punches, not a threshold to tune. Lowering `reactS` or `seeSpeedMps` can't make a response arrive before a contact that precedes it.
+    - Synthetic straights start close to contact, and a real straight has travel, so the playtest decides first.
+    - **If real punches also beat the bot's guard, the answer is anticipation:** the bot guards or moves on a predicted threat (range, the opponent's stance, a glove leaving guard), with its own spec section before code. Tuning is not the answer.
+    - Playtest check: does the bot ever block one of Jorge's punches? If it never does, go straight to anticipation.
 - **§7 reach rule (M7.18):** with positions in the sim, "out of reach" is geometric (gloves can't get there). `move.reachM` becomes the bot's approach distance, not a whiff rule.
 
 | ID | Testable behavior (`core/boxing/collide.spec.ts`) |
@@ -509,6 +515,14 @@ The player stands in front of a fixed camera with about ±0.5 m of usable floor.
 - whether the effort needed feels fair
 - whether the first-person fall is disorienting
 - whether walking in place is comfortable for 3 rounds
+- **Phase 0 bugs (2026-09-17):**
+  - the correct hand registers
+  - damage sticks
+  - dodging left works
+  - dizzy feels dangerous rather than annoying
+  - **the bot ever blocks one of Jorge's punches** (never → bot anticipation, §2.5 "Known limit")
+  - **no blocks credited to Jorge while his hands are down** (seen → resting-glove attribution; decision parked until real jitter is known)
+  - **how long a fight takes:** 20 synthetic straights don't make the bot dizzy. This is the first evidence the provisional damage curve may be too flat. Jorge judges from play which way to move it; nobody tunes it before that.
 
 ## 11. Fixtures Jorge needs to record (human-owned `fixtures/pose/boxing/`)
 
@@ -522,6 +536,77 @@ Each is 10–15 s, `?record=1`, full body with knees visible, after calibration:
 Until these exist, BX-RG-1…5, BX-MV-2/5 and BX-TR-8 run on synthetic poses and are marked **provisional** in `features.json`, the same as M7.10. **No threshold is tuned on synthetic poses.**
 
 These are sustained-posture and gesture classifiers (march, hop, arm pump, side step), so they survive the inversion. The punch thresholds are the ones the inversion removes from the rig path.
+
+### 11.1 Capture wizard (`?record=1&capture=<script>`, Jorge 2026-09-17, Phase 0)
+
+**Why.** With one plain 30 s take, the file doesn't say where one step ends and the next begins. For B1 that boundary is the whole question: does `DODGE_LEFT` fire in step 5 (natural right straights) and not in step 4 (square ones)? Today the answer rests on Jorge's memory and his transcription of the debug list. The wizard puts step boundaries and the events that fired into the file, so the fixture is the evidence and Jorge's observation is a cross-check.
+
+**Value, in order (Jorge):**
+1. labelled step boundaries in the file
+2. redo one step without redoing the take
+3. prompts and countdown
+4. the events fired during each step, recorded live
+
+(4) is cheap: every non-`BODY` input event already passes through `record()` in `main.ts` with a `t` on the same clock as `PoseFrame.t`, so it's included.
+
+**Scripts are data.** A script is a list of steps: `{ id, prompt, durationS }`. `?capture=b1` loads it by name. The guard-reach diagnosis and the gesture drills become new step lists, not new code. The first script is `b1`:
+1. left hand overhead, 3 s
+2. still, 3 s
+3. guard, 2 s
+4. 3 square right straights
+5. 3 natural right straights
+6. 1 left straight
+
+Durations for steps 4–6 are set generously; the margin rule below covers slack.
+
+**Flow.**
+- The screen shows the step prompt and a 3 s countdown, then records the step.
+- After each step: **Keep** or **Redo**. Redo discards only that step's take.
+- After the last step, one file downloads. It works with the existing button or R key, not a new recorder.
+
+**Clean windows: margins, not a detector (decision, Jorge's lean (a), recommended).**
+- Each take records a lead-in of 1.0 s before the prompted window and a trailing margin of 1.0 s after it.
+- Metadata marks the intended window (`windowMs: [start, end]`, relative to the take's own `t = 0`).
+- Recording never waits on pose stability. A stability detector is exactly the kind of component that can itself be wrong (the mirror lesson), and a wizard blocked on it produces no fixture at all.
+- Whoever reads the file decides what "settled" means, from the frames, and can change that decision later without re-recording.
+- ponytail: no stability detector. Add one only as a **non-blocking annotation** if margins prove too short in practice.
+
+**File format.** A capture bundle; each take is an ordinary v1 `PoseFixture`, so replay and tests read a take unchanged:
+
+```ts
+interface CaptureBundle {
+  kind: 'capture';
+  script: string;
+  recordedAt: string;
+  takes: (PoseFixture & {
+    step: string;              // step id from the script
+    prompt: string;
+    windowMs: [number, number]; // intended window within this take
+    events: InputEvent[];       // non-BODY events fired during the take (all players), t rebased like the frames
+  })[];
+}
+```
+
+- Filename: `capture-<script>-<stamp>.json`.
+- `fixtures/` is human-owned: the browser downloads the file and Jorge moves it.
+- Events are recorded live, as the build that ran printed them. Replaying the frames through the current gesture engine is a separate, later cross-check. The two can differ when code changes, and that difference is information.
+
+**Tests (`src/pose/capture.spec.ts`, pure, no DOM):**
+- **BX-CAP-1:** a scripted sequence of synthetic frames and events → one take per step. Each take's frames and events lie inside [start − lead, end + trail] and are rebased to the take's `t = 0`. `windowMs` equals [lead, lead + duration].
+- **BX-CAP-2:** Redo on step k replaces only take k; every other take is byte-identical.
+- **BX-CAP-3:** an event whose `t` falls between two takes (during a countdown or the Keep/Redo prompt) belongs to no take.
+- **BX-CAP-4:** each take, stripped of the capture fields, is a valid v1 `PoseFixture`. Loading a bundle take directly via `?input=replay:` is out of scope: extract the take first.
+
+**Files and limits:**
+- Logic goes in `src/pose/capture.ts`, scripts in `src/pose/capture-scripts.ts`, UI in `pose-panel.ts`.
+- `main.ts` is already at 401 lines: its event tap must not grow it. Move something out if needed.
+- Human-only in use, like `?record=1`. No gates change.
+
+**Out of scope:**
+- audio cues
+- auto-detecting mirroring
+- the guard-reach and drill scripts themselves (each is a later step list)
+- a stability detector
 
 ## 12. Decisions
 

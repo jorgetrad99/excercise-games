@@ -150,6 +150,17 @@ export function applySample(track: BodyTrack, body: BodyPose, t: number): void {
 }
 
 /**
+ * Velocity of one point, boxer-local m/s (`i`: 0 head, 1/2 gloves). A pose boxer's is the observed sample
+ * velocity (PLAN-BOXING §2.5 Damage): its points are held between pose frames, so a per-tick displacement
+ * would be a whole frame's travel in one tick. A puppet's is its path velocity over the tick.
+ */
+export function pointVelocity(track: BodyTrack, i: 0 | 1 | 2, dt: number): V3 {
+  if (track.source === 'pose' && track.sample) return v3(i === 0 ? track.vel.head : track.vel.gloves[i - 1]!);
+  const [a, b] = [track.prev, track.now].map((p) => (i === 0 ? p.head : p.gloves[i - 1]!));
+  return [(b![0] - a![0]) / dt, (b![1] - a![1]) / dt, (b![2] - a![2]) / dt];
+}
+
+/**
  * Advance one tick: prev ← now, now ← the newest observed sample, or the puppet. Collisions use only
  * observed positions: extrapolating a fast glove past its last frame would score hits the player never
  * made (a jab stopped 2 cm short read as a hit in collide.spec). Prediction is for drawing: predictPose.

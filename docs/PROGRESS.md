@@ -2189,3 +2189,102 @@ Branch `fix/boxing-phase0` (off `feat/player-authority` 6d7dd46, main `7c6771e` 
 ### Next
 
 B2 (hits don't damage) and B3 (remove mid-round regen, decided by Jorge; PLAN-BOXING §7 "retreats and regenerates" text fixed with it) are with `bug-triage`. B4 + the DODGE mapping removal after. B5 last.
+
+## 2026-09-17 — Boxing Phase 0, B2 + B3: damage sticks; closing speed is a velocity; dizzy gloves don't block
+
+Branch `fix/boxing-phase0`. Orchestrator session; code by the `bug-triage` subagent. **All evidence is synthetic poses** (no recordings exist).
+
+### Defects found
+
+1. **Closing speed scaled with pose rate** (root cause of "hits don't damage" and of a blind bot).
+   - `collide.ts` read speed from per-tick displacement. A pose sample is held for several 120 Hz ticks, so a whole frame's travel landed in one tick: scored speed = true speed × 120 ÷ pose-fps.
+   - A 2 m/s straight scored 7.96 m/s at 30 fps, and every hit hit the 1.05 cap.
+2. **The bot never saw a pose punch.** Its `closingT` reset on the held ticks: a peak of 0.008 s against `reactS` 0.08 s.
+3. **A dizzy player's gloves still blocked** while their hits were ignored (most likely the "hits don't damage" Jorge felt).
+4. **Mid-round regen** (B3): it refilled the pie between rule events.
+5. **Resting guard z up to 0.85 vs `recoverZ` 0.9 — flagged, not fixed, blocked on real data.** Symptom to watch in play: **only ever scoring one hit per glove** (a glove that never retracts behind `recoverZ` never re-arms).
+6. **Blocks credited to a resting pose glove.** A bot glove passing a still guard glove is scored as the player's block, because synthetic sample-velocity jitter (1–3 m/s) beats the bot glove's speed along the normal. This happened 3–15 times per synthetic run, the largest BLOCK class. **Parked (Jorge, decision 2(a))** until real jitter is known. Symptom to watch: **blocks credited to Jorge while his hands are down.**
+7. **The bot can't defend a pose straight by reaction, ever.**
+   - Its guard starts 83–92 ms into a 150 ms straight, but contact is at 33–50 ms. For a 300 ms straight: 183–283 ms against 100–108 ms. It blocked 0 pose punches with its guard.
+   - This is the wrong model, not a threshold. Recorded in PLAN-BOXING §2.5 "Known limit". **If real punches also beat the guard, the answer is anticipation, not tuning (Jorge, decision 1(a)).**
+
+### Defects fixed
+
+- **1 and 2 (decision 1(a)).**
+  - Pose boxers' closing speed is `track.vel` (0 past 150 ms); puppets use path velocity. Bot perception uses the same velocity (`body.ts pointVelocity`, `collide.ts`).
+  - BX-CL-8: damage is the same ±5 % at 30/20/15 fps, and 4.4 m/s → 0.62. BX-CL-9: the bot sees the straight at all three rates.
+- **3 (decision 2).** A dizzy boxer's gloves don't block (BX-CL-10).
+- **4 (decision, B3).** Regen was removed outright: config, rule and `Boxer.idleT`. The regression test fails with regen restored.
+
+### Two failure classes worth remembering
+
+- **Spec lie vs code drift (B3).** PLAN-BOXING §7 said the bot "retreats and regenerates": a retreat that was never built. That's not code that drifted from its spec; the spec described something nobody built. Fixed in the same change; the text now records it.
+- **An outcome assertion can pass on wrong inputs when a cap hides them (BX-CL-8).** The first BX-CL-8 checked damage only, and passed on the old code: every inflated speed hit `maxMult` and scored exactly 1.05, the same as a correct fast punch. It needed a second assertion on scored speed (within 5 % of true) to fail. **Assert the input to a clamp, not only its output.**
+
+### B2 test changed, deliberately
+
+`pose-match.spec` used to require the bot to reach `DIZZY`. That only happened because every hit did capped damage against a blind bot; pinning it would have frozen defect 1 as a requirement. Now:
+- ≥ 8 `HIT:1`
+- the pie refills only on a rule event
+- the bot's lowest stamina ≤ 5
+- the bot reacts at least once, at 30/20/15 fps
+
+Measured lowest stamina: 1.20 / 1.30 / 3.95.
+
+**Play implication, flagged, not tuned:** 20 synthetic straights don't make the bot dizzy (~16 clean straights per pie). This is the first evidence the provisional damage curve may be too flat. Jorge judges which way from play.
+
+### Pose vs bot re-measure (synthetic; 20 alternating straights, seeds 1 and 7, 30/20 fps)
+
+- **Player HIT 15–18 per run.**
+- **Player BLOCK:**
+  - resting glove (defect 6): 1–15
+  - clash with a bot glove already out: 0–3
+  - clash with a bot glove thrown after the player's: 0–3
+  - bot guard: **0**
+- **Damage per hit:** 150 ms straights mostly 3.5–5.2 m/s → 0.49–0.73 seg; 300 ms straights ~2.2 m/s → 0.30.
+- **Bot vs bot:** seeds 1 and 2 changed from TKO to KO; 42, 43 and 3 kept their result. No outcome is pinned by tests (Jorge).
+
+### Latency headline, replaced (A = 3157d58, the M7.15 inversion; B = 014b3b4 on this branch, before decisions 1–2; the pipeline code is identical)
+
+**Latency figures are always labelled `pipeline` (fake camera → landmarks) or `total` (pipeline p50 + rig response ~16.7 ms), never unlabelled.** Tonight Jorge compared a pipeline figure against the 37.8 total. That's the second near-miss of this class, after the 0.75 m overshoot figure.
+
+Quiet runs only (`lock held · other heavy: none`), p50, ms, median [range]:
+
+| Side | Quiet runs | 1P pipeline | 1P total | 2P pipeline | 2P total |
+|---|---|---|---|---|---|
+| A 3157d58 | 11 | 22.0 [20.2–25.7] | 38.6 [36.9–42.1] | 29.4 [26.9–35.0] | 46.1 [43.3–51.7] |
+| B 014b3b4 | 8 | 22.0 [20.3–25.2] | 38.6 [36.9–41.9] | 29.7 [25.5–30.9] | 46.5 [42.2–47.4] |
+
+- **Latency is unchanged** between the two commits.
+- The old headline (1P total 37.8 / 2P total 45.8) came from **one** quiet run. Contended verifies read about 0.6 ms higher (38.4).
+- **The "B scatters less in 2P" claim is dropped:** it didn't hold over 8 runs.
+- **The 1P pipeline 27.4 ms outlier** (B1 verify) is filed as a **one-off anomaly**. It didn't recur in the B2/B3 verify (23.7, contended) or in any of 20 A/B runs (quiet max 25.7). GPU telemetry covered every run: throttle reasons only "idle", temperature ≤ 53 °C, dwm ≤ 21 % GPU, util ≤ 56 %. Files: `tmp/probe-b-worktree/tmp/verify/{verify-b23-telemetry,ab-telemetry-1,ab-telemetry}.csv`.
+- 7 of the first 10 A/B runs read `CONTENDED` (the triage agent's probes) and aren't used.
+
+### Technical debt
+
+**`src/main.ts` is at 401 lines, over the 400 limit before any new code.** It grew past its budget unnoticed. Not refactored now (Jorge). The capture wizard's event tap goes in a separate file. If main.ts keeps blocking features, it gets a dedicated pass, not a series of workarounds.
+
+### Also in this change
+
+- PLAN-BOXING §2.5 "Known limit" of reaction-only bot defence
+- §10 Phase 0 playtest list:
+  - the bot ever blocks a punch
+  - no blocks credited while hands are down
+  - fight length
+- §11.1 capture wizard spec (approved)
+- `boxing.smoke` seed-42 knockdown seek moved from 52.5 to 55.8 s. Decision 2 moved that knockdown from 51.3–58.5 s to 54.6–60.2 s (headless sim, old and new). The screenshot baseline still matches; no image changed.
+
+### Verified
+
+- **`PLAYWRIGHT_PORT=5196 pnpm verify` exit 0** (`tmp/verify/verify-d12c.log`): vitest 437 passed + 1 skipped (39 files), e2e 33 passed.
+- **Gates: 6 measured, all `lock held · other heavy: none`.** Latency pipeline 1P p50 22.0 ms, total 1P p50 38.7 ms, total 2P p50 46.2 ms. boxing-1p-face fps 60, pose-fps min 28. skate-2p pose-fps min 25.
+- **The run before it (`verify-d12b.log`) failed one perf gate and isn't used.** skate-1p-1080p-bot fps min 45 (mean 59.3). Every gate in that run read `lock NOT HELD` with no other heavy process. That's a lock-bookkeeping anomaly, also seen once in the A/B set (run 1 B). It isn't a code effect: this branch doesn't touch Skate rendering, and the rerun reads 60/60. Not chased (capped).
+- The earlier attempt (`verify-d12.log`) failed only the seed-42 knockdown seek, fixed above.
+
+### Next
+
+1. Capture wizard (§11.1), to a subagent.
+2. B4 (lean-left dodge), with removal of lean → `DODGE_*` for pose players.
+3. B5 (1P CPU face).
+4. Merge the architecture session's handover commit before Jorge plays. It still isn't committed on `feat/player-authority`.

@@ -161,4 +161,78 @@ describe('glove collision (player authority)', () => {
     for (let i = 0; i < Math.round(B.staleS / C.fixedDt); i++) tickBoxing(s, []);
     expect(s.boxers[0].body.source).toBe('puppet'); // tracking gone: keyboard/bot takes over
   });
+
+  /** Boxer 0's right glove at face height moving at a constant `mps` from z 0.4, sampled at `hz` from
+   *  `phaseMs`, stopping at FULL_Z. Returns the damage boxer 1 took and glove 1's longest closingT before it. */
+  function constantStraight(mps: number, hz: number, phaseMs = 0) {
+    const s = initBoxing({ seed: 1, skipIntro: true });
+    let next = phaseMs;
+    let seen = 0;
+    for (let tick = 0; tick < Math.round(1 / C.fixedDt) && s.boxers[1].hits.length === 0; tick++) {
+      const nowMs = tick * C.fixedDt * 1000;
+      const input: BoxingInput[] = [];
+      for (; next <= nowMs; next += 1000 / hz) {
+        const z = Math.min(FULL_Z, 0.4 + (mps * next) / 1000);
+        input.push({ type: 'BODY', player: 0, t: next, body: body([0, 1.62, z]) });
+      }
+      tickBoxing(s, input);
+      if (s.boxers[1].hits.length === 0) seen = Math.max(seen, s.boxers[0].gloves[1].closingT);
+    }
+    return { damage: C.stamina.segments - s.boxers[1].stamina, hits: s.boxers[1].hits, seen };
+  }
+
+  // BX-CL-8: closing speed is the observed sample velocity, not a whole frame's travel landing in one tick.
+  it('damage does not depend on pose rate: a constant-speed straight scores the same at 30, 20, 15 pose-fps', () => {
+    for (const mps of [2, 4.4]) {
+      const at30 = constantStraight(mps, 30).damage;
+      for (const hz of [30, 20, 15])
+        for (let phase = 0; phase < 4; phase++) {
+          const { damage, hits } = constantStraight(mps, hz, (phase * 1000) / hz / 4);
+          const label = `${mps} m/s @${hz} phase ${phase}`;
+          expect(hits, label).toHaveLength(1);
+          // The speed itself, not only the damage: under the maxMult cap, inflated speeds all score 1.05.
+          expect(Math.abs(hits[0]!.speed - mps) / mps, label).toBeLessThan(0.05);
+          expect(Math.abs(damage - at30) / at30, label).toBeLessThan(0.05);
+        }
+    }
+    // Under the current constants (clean 0.7, refSpeedMps 5): 0.14 seg per m/s.
+    expect(Math.abs(constantStraight(4.4, 30).damage - 0.62)).toBeLessThan(0.03);
+  });
+
+  // BX-CL-9: the bot perceives a pose punch through the same velocity.
+  it.each([30, 20, 15])('the bot can see a 3 m/s pose straight before it lands at %i pose-fps', (hz) => {
+    const { seen, hits } = constantStraight(3, hz);
+    expect(hits).toHaveLength(1);
+    expect(seen).toBeGreaterThanOrEqual(C.bot.reactS);
+  });
+
+  // BX-CL-10: a dizzy boxer's gloves touch without effect in both directions.
+  it("a dizzy defender's raised guard does not block: the straight lands behind it", () => {
+    const outcome = (dizzy: boolean) => {
+      const s = initBoxing({ seed: 1, skipIntro: true });
+      if (dizzy) Object.assign(s.boxers[1], { stamina: 0, dizzy: true });
+      const guard: NonNullable<BoxingInput['body']> = {
+        head: [...B.head] as V3,
+        gloves: [
+          [0.08, 1.62, 0.5],
+          [-0.08, 1.62, 0.5],
+        ],
+      };
+      const events: string[] = [];
+      for (let i = 0; i < 12; i++) {
+        const z = GUARD_Z + ((FULL_Z - GUARD_Z) * i) / 11;
+        tickBoxing(s, [
+          { type: 'BODY', player: 1, t: i * 33, body: guard },
+          { type: 'BODY', player: 0, t: i * 33, body: body([0, 1.62, z]) },
+        ]);
+        for (let k = 0; k < 3; k++) {
+          events.push(...s.events.map((e) => e.type));
+          tickBoxing(s, []);
+        }
+      }
+      return events;
+    };
+    expect(outcome(false)).toEqual(['BLOCK']);
+    expect(outcome(true)).toEqual(['KNOCKDOWN']); // a clean hit on a dizzy boxer, never a BLOCK
+  });
 });
