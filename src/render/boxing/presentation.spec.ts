@@ -24,7 +24,9 @@ describe('boxing presentation', () => {
   it('hit zones come from where the glove touched, in defender coordinates', () => {
     const zone = (type: BoxingInput['type'], aim: { x: number; y: number }) => {
       const s = initBoxing({ seed: 42, skipIntro: true });
-      tickBoxing(s, [{ type, aim }]);
+      // Guard up: straights and hooks go around it, an uppercut rises under it (the low ready gloves
+      // would block an uppercut, as real gloves do).
+      tickBoxing(s, [{ type: 'GUARD_START', player: 1 }, { type, aim }]);
       for (let i = 0; i < ticks(0.3); i++) tickBoxing(s, []);
       return s.boxers[1].hits.at(-1)?.zone;
     };
@@ -99,14 +101,14 @@ describe('boxing presentation', () => {
       read = createPresentation();
     read(s, 1);
     Object.assign(s, { phase: 'down', phaseT: 0, down: { boxer: 1, getUpAt: 10 } });
-    run(s, read, 60);
+    run(s, read, ticks(1));
     expect(read(s, 1).floor).toBe(1);
-    for (let i = 0; i < 600 && s.phase === 'down'; i++) {
+    for (let i = 0; i < ticks(10) && s.phase === 'down'; i++) {
       run(s, read, 1);
       expect(read(s, 1).floor).toBe(1);
     }
     expect([s.phase, s.result]).toEqual(['over', 'KO']);
-    run(s, read, 30);
+    run(s, read, ticks(0.5));
     expect(read(s, 1)).toMatchObject({ stage: 'down', floor: 1 });
 
     const t = initBoxing({ seed: 42, skipIntro: true }),
@@ -117,7 +119,7 @@ describe('boxing presentation', () => {
     for (let i = 0; i < ticks(1) && t.phase === 'fight'; i++) run(t, tko, 1);
     expect([t.phase, t.result]).toEqual(['over', 'TKO']);
     expect(tko(t, 1).floor).toBeLessThan(0.2);
-    run(t, tko, 60);
+    run(t, tko, ticks(1));
     expect(tko(t, 1).floor).toBe(1);
 
     const u = initBoxing({ seed: 42, skipIntro: true }),

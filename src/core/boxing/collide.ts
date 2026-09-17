@@ -39,16 +39,17 @@ function targets(s: BoxingState, def: BoxerId): Target[] {
   ];
 }
 
-/** 0 = the defender's left, 1 = right, 2 = chin; `n` = defender-local unit normal toward the glove. */
-function zoneOf(n: RV3, hand: 0 | 1): HitTaken['zone'] {
-  if (n[1] < -0.45) return 2;
+/** 0 = the defender's left, 1 = right, 2 = chin. `n`: defender-local unit normal toward the glove;
+ *  `rise`: the glove's upward share of its own motion (relative direction, not just contact point). */
+function zoneOf(n: RV3, rise: number, hand: 0 | 1): HitTaken['zone'] {
+  if (n[1] < -0.45 || (n[1] < -0.15 && rise > 0.35)) return 2;
   if (Math.abs(n[0]) > 0.2) return n[0] > 0 ? 0 : 1;
   return hand === 0 ? 1 : 0; // straight on: a left hand lands on the defender's right side
 }
 
 /** Earliest target entered by the glove moving g0 → g1 (defender-local), with its closing speed. */
 function firstContact(ts: Target[], g0: V3, g1: V3, dt: number) {
-  let best: { target: Target; t: number; speed: number; n: V3 } | null = null;
+  let best: { target: Target; t: number; speed: number; n: V3; rise: number } | null = null;
   for (const target of ts) {
     const a = sub(g0, target.from);
     const b = sub(g1, target.to);
@@ -62,7 +63,9 @@ function firstContact(ts: Target[], g0: V3, g1: V3, dt: number) {
     // and leaning into a resting glove isn't that glove's hit.
     const byGlove = -dot(sub(g1, g0), n) / dt;
     const byTarget = dot(sub(target.to, target.from), n) / dt;
-    if (byGlove > byTarget && byGlove > 0) best = { target, t, speed: byGlove + byTarget, n };
+    const move = sub(g1, g0);
+    const rise = move[1] / (len(move) || 1);
+    if (byGlove > byTarget && byGlove > 0) best = { target, t, speed: byGlove + byTarget, n, rise };
   }
   return best;
 }
@@ -96,7 +99,7 @@ export function collideGlove(
   if (hit) {
     Object.assign(contact, { touching: true, struck: true });
     if (hit.target.part === 'glove') return { kind: 'block', speed: hit.speed };
-    return { kind: 'hit', part: hit.target.part, zone: zoneOf(hit.n, hand), speed: hit.speed };
+    return { kind: 'hit', part: hit.target.part, zone: zoneOf(hit.n, hit.rise, hand), speed: hit.speed };
   }
   // A miss: the glove went out past the front of the defender's head and turned back without touching
   // anything (judged on the way back, so a hook still sweeping in isn't called early).
