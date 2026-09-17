@@ -8,6 +8,10 @@ export const BRUISE_SPOTS = [
   [0.5, 0.79],
 ] as const;
 
+/** Head skin, sRGB: the shell's colour and the face texture's background, so the two meet seamlessly. */
+export const SKIN = '#edb98d';
+const SKIN_RGB = '237,185,141';
+
 /** Blend cartoon bruises onto a private copy, never onto the shared camera crop. */
 export function paintFace(
   ctx: CanvasRenderingContext2D,
@@ -15,15 +19,16 @@ export function paintFace(
   damage: FaceDamage,
 ): void {
   const size = ctx.canvas.width;
-  ctx.clearRect(0, 0, size, size);
+  // Opaque everywhere: transparent texels outside the oval filtered into a dark fringe on the head.
+  ctx.fillStyle = SKIN;
+  ctx.fillRect(0, 0, size, size);
   ctx.save();
   ctx.beginPath();
   ctx.ellipse(size / 2, size / 2, size * 0.4, size * 0.48, 0, 0, Math.PI * 2);
   ctx.clip();
-  ctx.fillStyle = '#edb98d';
-  ctx.fillRect(0, 0, size, size);
   if (source) ctx.drawImage(source, 0, 0, size, size);
   else drawFallback(ctx, size);
+  featherEdge(ctx, size);
   BRUISE_SPOTS.forEach(([x, y], i) => {
     const strength = damage[i]!;
     if (!strength) return;
@@ -44,6 +49,21 @@ export function paintFace(
     ctx.stroke();
     ctx.restore();
   });
+  ctx.restore();
+}
+
+/** Skin fades in over the oval's outer rim, so the camera crop blends into the head instead of ending
+ * on a hard line. */
+function featherEdge(ctx: CanvasRenderingContext2D, size: number): void {
+  ctx.save();
+  ctx.translate(size / 2, size / 2);
+  ctx.scale(1, 1.2); // the oval is 0.4 × 0.48 of the canvas
+  const r = size * 0.4;
+  const rim = ctx.createRadialGradient(0, 0, r * 0.8, 0, 0, r);
+  rim.addColorStop(0, `rgba(${SKIN_RGB},0)`);
+  rim.addColorStop(1, `rgba(${SKIN_RGB},1)`);
+  ctx.fillStyle = rim;
+  ctx.fillRect(-r, -r, 2 * r, 2 * r);
   ctx.restore();
 }
 

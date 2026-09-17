@@ -4,9 +4,10 @@ import {
   Color,
   HemisphereLight,
   Mesh,
-  MeshBasicMaterial,
+  MeshStandardMaterial,
   PerspectiveCamera,
   Scene,
+  SphereGeometry,
   Vector3,
 } from 'three';
 import { createBoxer } from '../../src/render/boxing/boxer';
@@ -29,7 +30,8 @@ export async function createVisualHarness() {
   const renderer = createRenderer(canvas),
     scene = new Scene();
   scene.background = new Color('#1b1f3b');
-  scene.add(new HemisphereLight('#fff', '#667', 3));
+  const hemi = new HemisphereLight('#fff', '#667', 3);
+  scene.add(hemi);
   const camera = new PerspectiveCamera(48, 960 / 720, 0.05, 30);
   camera.position.set(1.9, 1.6, 3.2);
   camera.lookAt(0, 0.9, 0);
@@ -63,8 +65,34 @@ export async function createVisualHarness() {
     }
   };
   render();
+  /** Rendered RGB where head-local direction `yaw` (rad from the face centre toward +x) meets the
+   * head's surface at the equator. Read straight after drawing, in the same task. */
+  const surface = (yaw: number): number[] => {
+    render();
+    const head = boxer.object.getObjectByName('ReplacementHead')!;
+    const shell = head.children[0] as Mesh;
+    const r = (shell.geometry as SphereGeometry).parameters.radius * 1.02;
+    const at = new Vector3(Math.sin(yaw) * r, 0, Math.cos(yaw) * r).multiply(shell.scale);
+    const ndc = head.localToWorld(at).project(camera);
+    const gl = renderer.getContext();
+    const px = new Uint8Array(4);
+    const [x, y] = [Math.round(((ndc.x + 1) / 2) * 960), Math.round(((ndc.y + 1) / 2) * 720)];
+    gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    return Array.from(px.subarray(0, 3));
+  };
   return {
     state: () => state,
+    /** A sweep across the painted face's edge (≈ 0.84 rad) onto the bare shell (the cap ends at 1.05). */
+    seam: () => Array.from({ length: 36 }, (_, i) => surface(0.6 + i * 0.02)),
+    /** The face centre under full and dimmed sky light. */
+    lighting() {
+      const bright = surface(0.3);
+      hemi.intensity = 1;
+      const dim = surface(0.3);
+      hemi.intensity = 3;
+      render();
+      return { bright, dim };
+    },
     step,
     render,
     /** Settle the smoother on `pose` (10 s of easing), then draw. */
@@ -79,7 +107,7 @@ export async function createVisualHarness() {
     inspect() {
       const head = boxer.object.getObjectByName('ReplacementHead')!;
       const face = boxer.object.getObjectByName('LiveFace') as Mesh;
-      const image = (face.material as MeshBasicMaterial).map!.image as HTMLCanvasElement;
+      const image = (face.material as MeshStandardMaterial).map!.image as HTMLCanvasElement;
       return {
         originalVisible: boxer.object.getObjectByName('Casual_Head')!.visible,
         center: head.getWorldPosition(new Vector3()).toArray(),

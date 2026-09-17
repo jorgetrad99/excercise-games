@@ -1309,3 +1309,38 @@ Item 3: real swelling.
 ### Next
 
 Item 2: light the face like the shell (the seam).
+
+### Lit face, no seam (step 3e)
+
+- **The three causes of the sticker look, all fixed:**
+  1. The face cap was an unlit `MeshBasicMaterial` over a lit shell. It's now `MeshStandardMaterial` with the shell's roughness.
+  2. The face texture was transparent outside the oval, and filtering pulled transparent-black texels into a **dark fringe** (measured 141 vs 192 skin). The canvas is now opaque skin (`SKIN`, shared with the shell colour), the crop is clipped to the oval, and skin feathers in over the oval's outer 20 %.
+  3. The cap floated 1.5 % above the shell. It's now at 0.3 % with a polygon offset.
+- **Baselines regenerated** (all 3 Boxing screenshots, `--update-snapshots=all`), after reviewing the diff:
+  - `boxing-seed42-t8` changed only inside the face oval (2 % of pixels: key-light shading on the lower face, rim line gone); ring, gloves, body and HUD are unchanged.
+  - The knockdown shot had passed within tolerance but still showed the old rim line, so it was refreshed too.
+  - A re-run against the new baselines passes.
+
+### Verified
+
+- New e2e "the face is lit like the head" reads real WebGL pixels in the harness (sky light only, so shading along the equator depends on nothing but normal.y):
+  - **Seam sweep:** 36 samples from the face (0.6 rad) across the oval edge onto the bare shell (1.3 rad); every channel stays within 24 of the shell. Before the fix it failed with a jump of 54 (unlit face 227 vs shell 192, fringe 141).
+  - **Light response:** dimming the sky light darkens the face centre by > 60 (RGB sum). Before the fix it failed with 0.
+- **Swelling is now visible under light:** `tmp/visual-expressiveness/count-recovered-damage.png` shows the left-cheek bulge on the silhouette.
+- **`pnpm verify` → exit 0** (`tmp/verify-ve-lit.log`): vitest 338 + 1 skipped, playwright 28/28.
+
+### Known gaps
+
+- **Everything above is verified on the harness and fake camera only.** Playtest with a real camera: `/?game=boxing&input=pose&seed=42&debug=1` and `/?game=boxing&players=2&input=pose&seed=42`. Check:
+  - your face on the big head under ring lighting (no seam)
+  - bruises and swelling where you get hit
+  - dizzy wobble (no fall)
+  - fall → count → get-up
+  - head turning away from hooks
+  - small live lean and glove motion that never looks like a dodge or punch the sim didn't score
+- Branch `feat/visual-expressiveness` is rebased and **not pushed**. `origin` still has the pre-rebase rescue commits, and updating it needs a force-push, which AGENTS forbids agents to run. Your call: push with lease, or push under a new branch name.
+- UAL body-hit clips: none (the sim has no body hits).
+
+### Next
+
+M7.11 is complete on the agent side and waits on the playtest above. The branch is ready to merge into `main` after the playtest.

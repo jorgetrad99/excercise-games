@@ -123,6 +123,22 @@ test('head snaps away from the blow: left cheek turns right, right cheek left, c
   expect(Math.abs(chin[0]! - neutral.faceDir[0]!)).toBeLessThan(0.1);
 });
 
+test('the face is lit like the head: no seam at the cap edge, and it darkens with the light', async ({
+  page,
+}) => {
+  await harness(page);
+  // With sky light only, shading depends on normal.y alone: along the equator, skin should read the
+  // same from the face onto the shell. An unlit face or a dark fringe at the oval both break that.
+  const sweep = await page.evaluate(() => window.__boxingVisual.seam());
+  const shell = sweep.at(-1)!;
+  const jump = Math.max(...sweep.flatMap((c) => c.map((v, i) => Math.abs(v - shell[i]!))));
+  expect(jump).toBeLessThan(24);
+  const { bright, dim } = await page.evaluate(() => window.__boxingVisual.lighting());
+  const sum = (c: number[]) => c.reduce((a, b) => a + b, 0);
+  expect(sum(bright) - sum(dim)).toBeGreaterThan(60);
+  await page.screenshot({ path: `${ROOT}/head-lit.png` });
+});
+
 test('same-tick redraws are stable; live head rotation composes and clears', async ({ page }) => {
   await harness(page);
   await page.evaluate(() => window.__boxingVisual.step(0.3, [{ type: 'PUNCH_RIGHT' }]));

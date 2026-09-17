@@ -2,7 +2,6 @@ import {
   CanvasTexture,
   Group,
   Mesh,
-  MeshBasicMaterial,
   MeshStandardMaterial,
   Quaternion,
   SphereGeometry,
@@ -10,7 +9,7 @@ import {
   Vector3,
   type Object3D,
 } from 'three';
-import { paintFace } from './boxing/face-damage';
+import { paintFace, SKIN } from './boxing/face-damage';
 import { createSwelling } from './boxing/swelling';
 import type { FaceDamage } from './boxing/presentation';
 import { boxingVisual as V } from './boxing/visual.config';
@@ -28,7 +27,7 @@ function headMeshes() {
   object.name = 'ReplacementHead';
   const shell = new Mesh(
     new SphereGeometry(radius, 32, 24),
-    new MeshStandardMaterial({ color: '#edb98d', roughness: 0.85 }),
+    new MeshStandardMaterial({ color: SKIN, roughness: 0.85 }),
   );
   shell.scale.set(1, 1.12, 0.85);
   shell.castShadow = true;
@@ -37,8 +36,15 @@ function headMeshes() {
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
   const face = new Mesh(
-    new SphereGeometry(radius * 1.015, 32, 24, Math.PI / 2 - 1.05, 2.1, Math.PI / 2 - 1.1, 2.2),
-    new MeshBasicMaterial({ map: texture, alphaTest: 0.05 }),
+    // Lit exactly like the shell and sitting on it (0.3 % out, polygon offset against z-fighting), so the
+    // face reads as the head's skin rather than a sticker floating above it.
+    new SphereGeometry(radius * 1.003, 32, 24, Math.PI / 2 - 1.05, 2.1, Math.PI / 2 - 1.1, 2.2),
+    new MeshStandardMaterial({
+      map: texture,
+      roughness: 0.85,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+    }),
   );
   face.name = 'LiveFace';
   face.scale.copy(shell.scale);
