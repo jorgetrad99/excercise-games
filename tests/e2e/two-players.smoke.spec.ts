@@ -3,6 +3,7 @@
 // composited two-person placeholder clip, until Jorge records two-players.json and a real 2-person clip.
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { recordGate } from './gates';
 import type { SimState } from '../../src/core/types';
 import { CALIBRATE, JUMP, fixture, scriptTwo, type Key } from '../../src/pose/testdata/synthetic';
 
@@ -26,67 +27,76 @@ function watchErrors(page: Page): string[] {
 
 const stand = (ms: number): Key => ({ ms, to: {} });
 
-test('replay: two bodies are tracked independently, each driving only its own run', async ({
-  page,
-}) => {
-  test.setTimeout(60_000);
-  // Timeline (ms): both calibrate by ~2 s → shared countdown. P2 steps out 2.5–4.0 s (< 2 s: only P2
-  // pauses). At ~9 s P1 leans left + jumps, P2 leans right. Realtime replay: where on the track an
-  // event lands depends on frame timing, so this test asserts inputs and lanes, not collisions or
-  // scores (the manual-clock test below does those deterministically).
-  const fx = fixture(
-    scriptTwo(
-      [CALIBRATE, stand(6500), { ms: 300, to: { lean: -0.06 } }, stand(600), ...JUMP, stand(1500)],
-      [
-        CALIBRATE,
-        { ms: 1500, to: { visible: false } },
-        stand(5000),
-        { ms: 300, to: { lean: 0.06 } },
-        stand(2850),
-      ],
-    ),
-  );
-  await page.route('**/fixtures/pose/synthetic-two-players.json', (r) => r.fulfill({ json: fx }));
-  const errors = watchErrors(page);
-  await page.goto(
-    '/?game=skate-run&players=2&input=replay:synthetic-two-players.json&seed=42&tokens=0',
-  );
-  expect(await page.evaluate(() => window.__game.getPlayerCount())).toBe(2);
+test(
+  'replay: two bodies are tracked independently, each driving only its own run',
+  { tag: '@realtime' },
+  async ({ page }) => {
+    test.setTimeout(60_000);
+    // Timeline (ms): both calibrate by ~2 s → shared countdown. P2 steps out 2.5–4.0 s (< 2 s: only P2
+    // pauses). At ~9 s P1 leans left + jumps, P2 leans right. Realtime replay: where on the track an
+    // event lands depends on frame timing, so this test asserts inputs and lanes, not collisions or
+    // scores (the manual-clock test below does those deterministically).
+    const fx = fixture(
+      scriptTwo(
+        [
+          CALIBRATE,
+          stand(6500),
+          { ms: 300, to: { lean: -0.06 } },
+          stand(600),
+          ...JUMP,
+          stand(1500),
+        ],
+        [
+          CALIBRATE,
+          { ms: 1500, to: { visible: false } },
+          stand(5000),
+          { ms: 300, to: { lean: 0.06 } },
+          stand(2850),
+        ],
+      ),
+    );
+    await page.route('**/fixtures/pose/synthetic-two-players.json', (r) => r.fulfill({ json: fx }));
+    const errors = watchErrors(page);
+    await page.goto(
+      '/?game=skate-run&players=2&input=replay:synthetic-two-players.json&seed=42&tokens=0',
+    );
+    expect(await page.evaluate(() => window.__game.getPlayerCount())).toBe(2);
 
-  const byPlayer = () =>
-    page.evaluate(() => {
-      const out: string[][] = [[], []];
-      for (const e of window.__game.getEvents() as { type: string; player?: number }[])
-        out[e.player ?? 0]!.push(e.type);
-      return out;
-    });
-  await expect.poll(byPlayer, { timeout: 30_000 }).toEqual([
-    ['LANE_LEFT', 'JUMP'],
-    ['PAUSE', 'RESUME', 'LANE_RIGHT'],
-  ]);
-  await page.waitForTimeout(300); // let both sims apply the last events
+    const byPlayer = () =>
+      page.evaluate(() => {
+        const out: string[][] = [[], []];
+        for (const e of window.__game.getEvents() as { type: string; player?: number }[])
+          out[e.player ?? 0]!.push(e.type);
+        return out;
+      });
+    await expect.poll(byPlayer, { timeout: 30_000 }).toEqual([
+      ['LANE_LEFT', 'JUMP'],
+      ['PAUSE', 'RESUME', 'LANE_RIGHT'],
+    ]);
+    await page.waitForTimeout(300); // let both sims apply the last events
 
-  const [p1, p2] = await page.evaluate(() =>
-    [0, 1].map((i) => {
-      const s = window.__game.getState<SimState>(i);
-      return {
-        seed: s.seed,
-        lane: s.targetLane,
-        distance: s.distance,
-        jumps: s.stats.jumps,
-        calibrated: window.__game.getSignals(i)?.calibration.state,
-      };
-    }),
-  );
-  console.info('two-player replay', { p1, p2 });
-  expect([p1!.seed, p2!.seed]).toEqual([42, 42]);
-  expect([p1!.calibrated, p2!.calibrated]).toEqual(['calibrated', 'calibrated']);
-  expect([p1!.lane, p2!.lane]).toEqual([-1, 1]);
-  expect([p1!.jumps, p2!.jumps]).toEqual([1, 0]);
-  await expect(page.locator('.player-hud .hud')).toHaveCount(2);
-  await page.screenshot({ path: 'tmp/two-players/replay.png' });
-  expect(errors).toEqual([]);
-});
+    const [p1, p2] = await page.evaluate(() =>
+      [0, 1].map((i) => {
+        const s = window.__game.getState<SimState>(i);
+        return {
+          seed: s.seed,
+          lane: s.targetLane,
+          distance: s.distance,
+          jumps: s.stats.jumps,
+          calibrated: window.__game.getSignals(i)?.calibration.state,
+        };
+      }),
+    );
+    console.info('two-player replay', { p1, p2 });
+    expect([p1!.seed, p2!.seed]).toEqual([42, 42]);
+    expect([p1!.calibrated, p2!.calibrated]).toEqual(['calibrated', 'calibrated']);
+    expect([p1!.lane, p2!.lane]).toEqual([-1, 1]);
+    expect([p1!.jumps, p2!.jumps]).toEqual([1, 0]);
+    await expect(page.locator('.player-hud .hud')).toHaveCount(2);
+    await page.screenshot({ path: 'tmp/two-players/replay.png' });
+    expect(errors).toEqual([]);
+  },
+);
 
 test('manual clock: same seed, different inputs → independent collisions and scores', async ({
   page,
@@ -149,7 +159,7 @@ test.describe('split screen', () => {
   });
 });
 
-test.describe('perf', () => {
+test.describe('perf', { tag: '@perf' }, () => {
   test.use({ viewport: { width: 1920, height: 1080 } });
 
   test('2 players at 1080p: >= 55 fps, >= 20 pose-fps with two bodies tracked, draw calls < 150', async ({
@@ -190,6 +200,17 @@ test.describe('perf', () => {
       [0, 1].map((i) => window.__game.getState<SimState>(i).phase),
     );
     console.info('perf 2 players', JSON.stringify(samples), { phases });
+    await recordGate(
+      page,
+      'skate-2p-1080p',
+      {
+        fps: samples.map((s) => s.fps),
+        poseFps: samples.map((s) => s.poseFps),
+        poses: samples.map((s) => s.poses),
+        calls: samples.map((s) => s.calls),
+      },
+      { fps: '>= 55 min', poseFps: '>= 20 min', poses: '2 in >= 12 of 15', calls: '< 150 max' },
+    );
     expect(phases).toEqual(['running', 'running']);
     expect(Math.min(...samples.map((s) => s.fps))).toBeGreaterThanOrEqual(55);
     expect(Math.min(...samples.map((s) => s.poseFps))).toBeGreaterThanOrEqual(20);

@@ -92,83 +92,89 @@ test('2P: one shared match state; each player drives their own boxer; no bot', a
   expect(problems).toEqual([]);
 });
 
-test('pose replay: punches and guard go through the gesture engine into the sim', async ({
-  page,
-}) => {
-  test.setTimeout(60_000);
-  const READY = { fists: 'ready' } as const;
-  const keys: Key[] = [
-    CALIBRATE,
-    { ms: 3500, to: {} }, // intro
-    { ms: 120, to: { punchR: 1 } },
-    { ms: 80, to: { punchR: 1 } },
-    { ms: 250, to: {} },
-    { ms: 600, to: {} },
-    { ms: 120, to: { hookR: 1 } },
-    { ms: 250, to: {} },
-    { ms: 600, to: {} },
-    { ms: 300, to: { fists: 'guard' } },
-    { ms: 800, to: { fists: 'guard' } },
-    { ms: 300, to: {} },
-    { ms: 800, to: {} },
-  ];
-  const fx = fixture(script(keys, { base: READY }));
-  await page.route('**/fixtures/pose/synthetic-boxing.json', (r) => r.fulfill({ json: fx }));
-  const problems = watchConsole(page);
-  await page.goto('/?game=boxing&input=replay:synthetic-boxing.json&seed=42');
-  const punches = () =>
-    page.evaluate(() =>
-      (window.__game.getEvents() as { type: string; aim?: { x: number; y: number } }[]).filter(
-        (e) => e.type !== 'JUMP',
-      ),
-    );
-  await expect
-    .poll(async () => (await punches()).map((e) => e.type), { timeout: 30_000 })
-    .toEqual(['PUNCH_RIGHT', 'PUNCH_RIGHT', 'GUARD_START', 'GUARD_END']);
-  const [straight, hook] = await punches();
-  expect(Math.abs(straight!.aim!.x)).toBeLessThan(0.5);
-  expect(hook!.aim!.x).toBeLessThan(-0.5);
-  const s = await state(page);
-  expect(s.tick).toBeGreaterThan(0); // calibration opened the gate
-  expect(s.boxers[0].fists[1].phase).toBe('ready');
-  // The continuous mirroring pose rides along with the discrete events.
-  const pose = await page.evaluate(() => window.__game.getSignals()?.pose ?? null);
-  expect(pose?.arms[0]?.upperRot).toHaveLength(4);
-  expect(pose?.arms[1]?.reach).toBeGreaterThanOrEqual(0);
-  expect(problems).toEqual([]);
-});
+test(
+  'pose replay: punches and guard go through the gesture engine into the sim',
+  { tag: '@realtime' },
+  async ({ page }) => {
+    test.setTimeout(60_000);
+    const READY = { fists: 'ready' } as const;
+    const keys: Key[] = [
+      CALIBRATE,
+      { ms: 3500, to: {} }, // intro
+      { ms: 120, to: { punchR: 1 } },
+      { ms: 80, to: { punchR: 1 } },
+      { ms: 250, to: {} },
+      { ms: 600, to: {} },
+      { ms: 120, to: { hookR: 1 } },
+      { ms: 250, to: {} },
+      { ms: 600, to: {} },
+      { ms: 300, to: { fists: 'guard' } },
+      { ms: 800, to: { fists: 'guard' } },
+      { ms: 300, to: {} },
+      { ms: 800, to: {} },
+    ];
+    const fx = fixture(script(keys, { base: READY }));
+    await page.route('**/fixtures/pose/synthetic-boxing.json', (r) => r.fulfill({ json: fx }));
+    const problems = watchConsole(page);
+    await page.goto('/?game=boxing&input=replay:synthetic-boxing.json&seed=42');
+    const punches = () =>
+      page.evaluate(() =>
+        (window.__game.getEvents() as { type: string; aim?: { x: number; y: number } }[]).filter(
+          (e) => e.type !== 'JUMP',
+        ),
+      );
+    await expect
+      .poll(async () => (await punches()).map((e) => e.type), { timeout: 30_000 })
+      .toEqual(['PUNCH_RIGHT', 'PUNCH_RIGHT', 'GUARD_START', 'GUARD_END']);
+    const [straight, hook] = await punches();
+    expect(Math.abs(straight!.aim!.x)).toBeLessThan(0.5);
+    expect(hook!.aim!.x).toBeLessThan(-0.5);
+    const s = await state(page);
+    expect(s.tick).toBeGreaterThan(0); // calibration opened the gate
+    expect(s.boxers[0].fists[1].phase).toBe('ready');
+    // The continuous mirroring pose rides along with the discrete events.
+    const pose = await page.evaluate(() => window.__game.getSignals()?.pose ?? null);
+    expect(pose?.arms[0]?.upperRot).toHaveLength(4);
+    expect(pose?.arms[1]?.reach).toBeGreaterThanOrEqual(0);
+    expect(problems).toEqual([]);
+  },
+);
 
-test('2P pose replay: one body missing > 2 s pauses the shared match; both back resumes it', async ({
-  page,
-}) => {
-  test.setTimeout(60_000);
-  // Timeline (ms): both calibrate → intro. P2 leaves 5.5–9.5 s (> PAUSE_BOTH_MS), then stands back.
-  const stand = (ms: number): Key => ({ ms, to: {} });
-  const fx = fixture(
-    scriptTwo(
-      [CALIBRATE, stand(12_000)],
-      [CALIBRATE, stand(3000), { ms: 4000, to: { visible: false } }, stand(5000)],
-    ),
-  );
-  await page.route('**/fixtures/pose/synthetic-boxing-2p.json', (r) => r.fulfill({ json: fx }));
-  const problems = watchConsole(page);
-  await page.goto('/?game=boxing&players=2&input=replay:synthetic-boxing-2p.json&seed=42');
-  const phase = () => page.evaluate(() => window.__game.getState<BoxingState>().phase);
-  const byPlayer = () =>
-    page.evaluate(() =>
-      (window.__game.getEvents() as { type: string; player?: number }[]).map(
-        (e) => `${e.player}:${e.type}`,
+test(
+  '2P pose replay: one body missing > 2 s pauses the shared match; both back resumes it',
+  { tag: '@realtime' },
+  async ({ page }) => {
+    test.setTimeout(60_000);
+    // Timeline (ms): both calibrate → intro. P2 leaves 5.5–9.5 s (> PAUSE_BOTH_MS), then stands back.
+    const stand = (ms: number): Key => ({ ms, to: {} });
+    const fx = fixture(
+      scriptTwo(
+        [CALIBRATE, stand(12_000)],
+        [CALIBRATE, stand(3000), { ms: 4000, to: { visible: false } }, stand(5000)],
       ),
     );
-  // P2's own tracking loss pauses the match at once (0.7 s); after 2 s the pause-both rule holds
-  // both players, so P2's return alone (its TRACKING_RESTORED) can't resume it: only both-back does.
-  const bothPaused = ['1:PAUSE', '0:PAUSE', '1:PAUSE'];
-  await expect.poll(byPlayer, { timeout: 20_000 }).toEqual(bothPaused);
-  expect(await phase()).toBe('paused');
-  await expect.poll(byPlayer, { timeout: 20_000 }).toEqual([...bothPaused, '0:RESUME', '1:RESUME']);
-  await expect.poll(phase).not.toBe('paused');
-  expect(problems).toEqual([]);
-});
+    await page.route('**/fixtures/pose/synthetic-boxing-2p.json', (r) => r.fulfill({ json: fx }));
+    const problems = watchConsole(page);
+    await page.goto('/?game=boxing&players=2&input=replay:synthetic-boxing-2p.json&seed=42');
+    const phase = () => page.evaluate(() => window.__game.getState<BoxingState>().phase);
+    const byPlayer = () =>
+      page.evaluate(() =>
+        (window.__game.getEvents() as { type: string; player?: number }[]).map(
+          (e) => `${e.player}:${e.type}`,
+        ),
+      );
+    // P2's own tracking loss pauses the match at once (0.7 s); after 2 s the pause-both rule holds
+    // both players, so P2's return alone (its TRACKING_RESTORED) can't resume it: only both-back does.
+    const bothPaused = ['1:PAUSE', '0:PAUSE', '1:PAUSE'];
+    await expect.poll(byPlayer, { timeout: 20_000 }).toEqual(bothPaused);
+    expect(await phase()).toBe('paused');
+    await expect
+      .poll(byPlayer, { timeout: 20_000 })
+      .toEqual([...bothPaused, '0:RESUME', '1:RESUME']);
+    await expect.poll(phase).not.toBe('paused');
+    expect(problems).toEqual([]);
+  },
+);
 
 test.describe('boxing renderer', () => {
   test.use({ viewport: { width: 1280, height: 720 } });

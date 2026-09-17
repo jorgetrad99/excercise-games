@@ -1346,3 +1346,47 @@ Pose inference runs in the worker: 25 ms per frame in 2P. It's the only big item
 2. Pilot pose-embedding k-NN only for guard/duck/lean if they stay fragile across people (~1 day, no dependency, < 0.1 ms per frame).
 3. No sequence model for punches now: it would add 100–200 ms of detection latency.
 4. No other MediaPipe task applies.
+
+---
+
+## 2026-09-16 — Perf lock and gate logging onto main (harness only)
+
+Branch `chore/perf-lock`, from `main` (`6708eb4`), built in `tmp/perf-lock-worktree`. Jorge's option B: the lock goes to main so every branch picks it up by merging main, without the feature work around it on `docs/plan-boxing`.
+
+### Why
+
+- The lock and the worktree-aware guard existed only on `docs/plan-boxing` (`0457ca6`). Claude Code runs hooks from the main checkout, so they applied only while that checkout sat on a branch that had them.
+- Merging `0457ca6` into another branch would also have brought 7 unrelated commits: named players and stats, the Boxing glove-latency e2e and `boxer.ts` changes, and PLAN-BOXING D1–D5.
+
+### What changed
+
+- **Cherry-picked `448e4cf`** (perf diagnosis): `src/platform/gpu.ts` (GPU name, software-GL detection), CPU delegate on software GL, `scripts/perf-probe.mjs`, pose-panel redraw only on new frames, research doc. It was based on `main`, so it applied cleanly.
+- **From `852efb0` + `0457ca6`, harness files only:**
+  - `scripts/e2e-lock.mjs` (+ `.d.mts`), `scripts/vitest-perf-lock.mjs`; the probe holds the lock
+  - `tests/e2e/global-setup.ts` (takes the lock for the run; models check), `gates.ts`, `machine-state.ts`
+  - `.claude/hooks/guard-paths.mjs` (paths resolved against the containing checkout), `format-and-typecheck.mjs` (waits ≤ 45 s for the lock, then skips tsc)
+  - `package.json` (`typecheck`/`lint` wait for the lock; `test:smoke` = smoke + perf), `vite.config.ts` / `vitest.tools.config.ts` (lock globalSetup), `eslint.config.js` (`setTimeout` global), `playwright.config.ts` (global setup, `PLAYWRIGHT_PORT`, serial `perf` project)
+  - `tests/unit/perf-lock.spec.ts`, `guard-paths.spec.ts`
+  - Specs: `@perf` / `@realtime` tags and `recordGate` calls in `pose`, `gestures`, `render`, `two-players`; `@realtime` on the two Boxing pose replays (hand-applied: `0457ca6`'s `boxing.smoke` also carries player-stats menu clicks that don't exist on main).
+- **Left out on purpose:** `?names=` in AGENTS §5 (player stats isn't on main), `boxing-visual` / `boxing-latency` specs (not on main).
+- AGENTS §4 perf-lock rules; ARCHITECTURE Harness.
+
+### Verified
+
+- **`pnpm verify` → exit 0** (`tmp/verify/verify-perf-lock-1.log`, `PLAYWRIGHT_PORT=5191`): tsc, eslint, vitest 342 passed + 1 skipped (24 files), playwright 22/22. Retries: 0 on every gate.
+- **Gates are PROVISIONAL, not pass/fail.** Each gate's machine line reads `CONTENDED` with the same 2 other heavy `node` processes (pid 32144 from `AppData\Roaming\…`, pid 51144 from `…\web-games\…`; both had exited by the time I looked, so only the truncated command lines are known). GPU on every gate: `ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Laptop GPU … D3D11)`, pose delegate GPU.
+
+  | Gate | Measured | Limit | Machine |
+  |---|---|---|---|
+  | pose-1p-5s | pose-fps 29.5, with-pose 1.0 | ≥ 20, > 0.9 | cpu 21 %, gpu 68 %, lock held, CONTENDED (2) |
+  | skate-1p-1080p-bot | fps min 59, calls 57 | ≥ 55, < 150 | cpu 16 %, gpu 38 %, CONTENDED (2) |
+  | skate-1p-1080p-pose | fps min 60, pose-fps min 29, calls 57 | ≥ 55, ≥ 20 | cpu 24 %, gpu 39 %, CONTENDED (2) |
+  | skate-2p-1080p | fps min 60, pose-fps min 26 (mean 28.3), calls 110–114, tris 1.13–1.26 M | ≥ 55, ≥ 20, < 150 | cpu 46 %, gpu 40 %, CONTENDED (2) |
+
+- **Rule recorded (Jorge, 2026-09-16):** a gate whose machine state shows contention is reported as provisional, whether it passed or failed. A green gate on a busy machine is as misleading as a red one.
+
+### Known gaps
+
+- **Scope is still branch-dependent until every active branch merges main.** Hook commands come from the main checkout's `.claude/settings.json` and resolve scripts relative to it; a branch without this commit runs the old hooks, and a worktree on such a branch runs vitest/Playwright without the lock. Proposal for Jorge in the session report (settings are human-owned).
+- **Quiet-window agreements between sessions** should now be enforced by the lock, not by message (Jorge's note).
+- **No `.gitattributes`:** Git warns LF→CRLF on files written by sessions. Task raised after this lands.

@@ -236,6 +236,7 @@ camera 720p30 → worker (640x360, PoseLandmarker) → PoseFrame
 
 ## Harness
 
-- Hooks (`.claude/settings.json`, scripts in `.claude/hooks/`): guard human-owned paths (PreToolUse), prettier + `tsc --incremental` on `.ts` edits (PostToolUse), PROGRESS.md reminder (Stop).
+- Hooks (`.claude/settings.json`, scripts in `.claude/hooks/`): guard human-owned paths, resolved against the checkout that contains the file (PreToolUse); prettier + `tsc --incremental` on `.ts` edits, waiting for the perf lock (PostToolUse); PROGRESS.md reminder (Stop).
 - Commands: `/verify`, `/playtest <seed> <input>`, `/milestone-check <M>`. Subagents: `reviewer`, `perf`.
-- `pnpm verify` = `tsc --noEmit` → `eslint .` → `vitest run` → `playwright test --project=smoke`.
+- `pnpm verify` = `tsc --noEmit` → `eslint .` → `vitest run` → `playwright test --project=smoke --project=perf` (`@perf` gates and `@realtime` replays after smoke, one worker).
+- **Perf lock** (`scripts/e2e-lock.mjs`, lockfile in the git common dir, shared by every worktree): the Playwright run and `scripts/perf-probe.mjs` hold it; typecheck, lint, vitest and the tsc hook wait for it. Every perf gate logs its GPU and the machine state it observed to `tmp/verify/gates.jsonl` (`tests/e2e/gates.ts`, `machine-state.ts`). AGENTS §4.

@@ -28,10 +28,16 @@ export default defineConfig(
   js.configs.recommended,
   tseslint.configs.recommended,
   {
-    // Node scripts/hooks; listed by hand rather than adding the `globals` package for four names.
+    // Node scripts/hooks; listed by hand rather than adding the `globals` package for a handful of names.
     files: ['**/*.{js,mjs}'],
     languageOptions: {
-      globals: { process: 'readonly', console: 'readonly', fetch: 'readonly', Buffer: 'readonly' },
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        Buffer: 'readonly',
+        setTimeout: 'readonly',
+      },
     },
   },
   {

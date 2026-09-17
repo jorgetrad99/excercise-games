@@ -4,10 +4,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc --noEmit -p .",
-    "lint": "eslint .",
+    "typecheck": "node scripts/e2e-lock.mjs wait tsc && tsc --noEmit -p .",
+    "lint": "node scripts/e2e-lock.mjs wait eslint && eslint .",
     "test": "vitest run",
-    "test:smoke": "playwright test --project=smoke",
+    "test:smoke": "playwright test --project=smoke --project=perf",
     "vendor:models": "node scripts/vendor-models.mjs",
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:smoke",
     "latency:gestures": "vitest run --config vitest.tools.config.ts gesture-latency",
