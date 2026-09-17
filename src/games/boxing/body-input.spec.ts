@@ -10,7 +10,12 @@ import { gestureConfig } from '../../pose/gestures.config';
 import type { PoseState } from '../../pose/pose-state';
 import { CALIBRATE, script, type Key, type Stance } from '../../pose/testdata/synthetic';
 import type { PoseFrame } from '../../pose/types';
+import { mirrorFrame } from '../../pose/handedness';
+import { BRUISE_SPOTS } from '../../render/boxing/face-damage';
+import { createPresentation } from '../../render/boxing/presentation';
+import { hitOffset } from '../../render/boxing/rig';
 import { bodyEvent, bodyFromPose, DEFAULT_ARMS } from './body-input';
+import { BOXING_GESTURES } from './gestures';
 
 const B = C.body;
 /** Boxer-local z where a glove at face height first touches the neutral opponent head. */
@@ -149,5 +154,69 @@ describe('player body → BODY input (PLAN-BOXING §2.5)', () => {
       expect(events, `phase ${phase}`).toEqual(['HIT']);
     }
     expect(reached).toBeGreaterThan(0);
+  });
+
+  // B1 (playtest: "threw a right, the debug showed the left"). Both ends of the chain on synthetic poses.
+  const rightStraight = (): PoseFrame[] =>
+    script(
+      [
+        CALIBRATE,
+        { ms: 400, to: {} },
+        { ms: 150, to: { punchR: 1 } },
+        { ms: 200, to: {} },
+        { ms: 300, to: {} },
+      ],
+      { base: { fists: 'guard' }, jitter: 0 },
+    );
+  /** Peak forward travel of each glove over the take, m. */
+  const gloveTravel = (frames: PoseFrame[]): [number, number] => {
+    const ps = poses(frames).filter((p) => p !== null);
+    const z = (h: 0 | 1) => ps.map((p) => bodyFromPose(p).gloves[h][2]);
+    return [0, 1].map((h) => Math.max(...z(h as 0 | 1)) - z(h as 0 | 1)[0]!) as [number, number];
+  };
+
+  it("B1a: the player's right wrist (landmarks 12/14/16) drives glove 1; only a mirrored stream swaps it", () => {
+    const frames = rightStraight();
+    const lm = (i: number) => frames.map((f) => f.poses[0]![i]!);
+    const z0 = lm(16)[0]!.z;
+    expect(Math.min(...lm(16).map((l) => l.z))).toBeLessThan(z0 - 0.05); // the take moves the RIGHT wrist …
+    expect(lm(15).every((l) => l.x === lm(15)[0]!.x && l.z === lm(15)[0]!.z)).toBe(true); // … not the left
+    const [left, right] = gloveTravel(frames);
+    expect(right).toBeGreaterThan(0.4); // glove 1 = GloveR in render/boxing/boxer.ts
+    expect(left).toBeLessThan(0.01);
+    // The same body seen through a mirrored camera stream: MediaPipe labels it a left, glove 0 moves.
+    const [mLeft, mRight] = gloveTravel(frames.map(mirrorFrame));
+    expect(mLeft).toBeGreaterThan(0.4);
+    expect(mRight).toBeLessThan(0.01);
+  });
+
+  it('B1b: a right-glove hit is attributed to the right all the way to what the player sees', () => {
+    const frames = rightStraight();
+    const engine = createGestureEngine({ video });
+    const s = initBoxing({ seed: 1, skipIntro: true });
+    const hits: string[] = [];
+    const logged: string[] = []; // what ?debug=1's signal HUD lists (main.ts record → signalHud.event)
+    let i = 0;
+    for (let tick = 0; tick * C.fixedDt * 1000 <= frames.at(-1)!.t + 100; tick++) {
+      const input = [];
+      for (; i < frames.length && frames[i]!.t <= tick * C.fixedDt * 1000; i++) {
+        const { signals, events } = engine.push(frames[i]!);
+        for (const e of events) logged.push(BOXING_GESTURES[e.type] ?? '');
+        if (signals.pose) input.push(bodyEvent(signals.pose, 0, null));
+      }
+      tickBoxing(s, input);
+      hits.push(...s.events.map((e) => `${e.type}:${e.boxer}`));
+    }
+    expect(hits).toEqual(['HIT:1']);
+    expect(s.boxers[1].hits.map((h) => h.zone)).toEqual([0]); // the defender's LEFT side
+    const seen = createPresentation()(s, 1);
+    expect(seen.hitSide).toBe(1); // O1 input: +1 = the boxer's left cheek
+    expect(seen.damage).toEqual([expect.any(Number), 0, 0]);
+    expect(seen.damage[0]).toBeGreaterThan(0);
+    expect(BRUISE_SPOTS[0][0]).toBeGreaterThan(0.5); // left-cheek bruise on image-right = the head's +x
+    const snap = hitOffset(0.1, seen.hitSide);
+    expect(snap.head[1]).toBeLessThan(0); // yaw − : the face turns to the defender's right, away from it
+    expect(snap.root[0]).toBeLessThan(0); // and the stagger goes the same way
+    expect(logged.filter((t) => /LEFT|RIGHT/.test(t))).toEqual([]); // the debug list names no side
   });
 });
