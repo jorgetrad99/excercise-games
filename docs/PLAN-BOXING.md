@@ -135,6 +135,7 @@ A constraint only clamps where a player-driven value lands. It never produces mo
     | Head damage (seg) | 0.21 | 0.42 | **0.62** | 0.84 | 1.05 |
 
     A 4.4 m/s straight does 0.62 seg: ~16 of them empty a full pie, where 10 capped hits did before. Accepted: the game gets harder, and a bot that defends is the game.
+    **PROVISIONAL (Jorge):** 16 straights per pie is a guess about pacing. Retune `clean` / `refSpeedMps` / `maxMult` from playtest, not from this table; the requirement that stays fixed is BX-CL-8 (damage independent of pose rate).
   - **The same speed feeds bot perception** (below). Before the fix, `closingT` reset on the held ticks between pose samples (peak 0.008 s vs `reactS` 0.08 s), so the bot never saw a single pose punch.
 - **Zone** (bruises, O1 head snap): from the contact normal and the glove's own direction. A rising glove below the head's centre is the chin.
   - **Puppet paths:** a key straight reaches face height in the first half of its depth, so from low ready hands it travels level into a cheek, not up into the chin. Uppercuts keep the slow rise: they dip under a raised guard, and low ready hands block them.
@@ -192,7 +193,7 @@ A constraint only clamps where a player-driven value lands. It never produces mo
 | BX-CL-7 | No smoothing clips a punch: the pipeline's peak glove depth for a jab equals the unfiltered pipeline's on every sampling phase at 30 and 15 pose-fps (±2 mm), and BX-CL-1 end to end judges "reached the head" on unfiltered frames. Both fail on the old arm filter. |
 | BX-CL-6 | Keyboard rules still hold through geometry: straight hits, guard blocks, uppercut splits a guard, sway beats a straight (whiff + counter), a hook catches a sway into it, an uppercut catches a duck. A key right lands on the idle defender's left cheek and a left on the right cheek (zones 0 / 1, not the chin). A guard raised on tick 10, 11 or 12 of a straight's travel blocks it (`BLOCK`, no `HIT`); before the fix, a guard raised on tick 11 let the glove through. |
 | BX-CL-8 | Damage doesn't depend on pose rate: the same synthetic straight at a constant true glove speed (2 and 4.4 m/s) scores the same damage (±5 %) at 30, 20 and 15 pose-fps; 4.4 m/s to the head scores 0.62 seg (±0.03). Fails on per-tick displacement. |
-| BX-CL-9 | The bot sees a pose punch: a pose straight at ≥ 3 m/s holds `closingT` ≥ `bot.reactS` before contact at 30 and 20 pose-fps, and over a seeded pose match the bot guards or dodges at least one pose punch. Fails on per-tick displacement. |
+| BX-CL-9 | The bot sees a pose punch: a pose straight at ≥ 3 m/s holds `closingT` ≥ `bot.reactS` before contact at 30, 20 and 15 pose-fps, and over a seeded pose match at each of those rates the bot guards or dodges at least one pose punch (defect 2 was rate-dependent: a single-rate test could pass with the bot blind at low fps). Fails on per-tick displacement. |
 | BX-CL-10 | A dizzy boxer's gloves don't block: a straight into a dizzy defender's raised guard is a `HIT` (the torso/head behind it), never a `BLOCK`; the same guard not dizzy blocks it. |
 
 ### 2.4 Boxers without a body (puppets)
