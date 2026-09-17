@@ -1,7 +1,7 @@
 import { Quaternion, Vector3, type Bone, type Object3D } from 'three';
 import type { BoxingState, BoxerId } from '../../core/boxing/types';
 import type { Rig } from '../skater';
-import type { BoxerPoseState, PoseJoint } from './pose-state';
+import type { LiveExpression } from './live-pose';
 import type { Presentation } from './presentation';
 
 export interface HeadReaction {
@@ -9,17 +9,7 @@ export interface HeadReaction {
   times: number[];
   values: number[];
 }
-const JOINTS: Record<PoseJoint, string> = {
-  torso: 'Torso',
-  head: 'Head',
-  hips: 'Hips',
-  shoulderL: 'UpperArmL',
-  shoulderR: 'UpperArmR',
-  elbowL: 'LowerArmL',
-  elbowR: 'LowerArmR',
-  wristL: 'WristL',
-  wristR: 'WristR',
-};
+const JOINTS = { torso: 'Torso', head: 'Head', hips: 'Hips' } as const;
 
 /** Apply character-space rotations after the base pose. Reactions compose with live pose input. */
 function rotate(root: Object3D, bone: Object3D, delta: Quaternion): void {
@@ -61,7 +51,7 @@ export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
     who: BoxerId,
     v: Presentation,
     figure: Object3D,
-    live?: BoxerPoseState | null,
+    live?: LiveExpression | null,
   ): void => {
     bones.forEach((b, i) => {
       const c = clean[i]!;
@@ -77,7 +67,7 @@ export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
         winner ? 'Wave' : 'Idle_Neutral',
         v.time % r.duration(winner ? 'Wave' : 'Idle_Neutral'),
       );
-      const duck = !live?.position && s.boxers[who].dodge === 'duck' ? 1 : 0;
+      const duck = s.boxers[who].dodge === 'duck' ? 1 : 0;
       r.bend(0.35 + duck * 0.9, 0.7 + duck * 1.3, 0.2 + duck * 0.4);
       figure.position.y = -0.06 + Math.sin(v.time * 7) * 0.012 - duck * 0.15;
     }
@@ -87,7 +77,7 @@ export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
       c.p.copy(b.position);
       c.s.copy(b.scale);
     });
-    if (live && v.floor === 0) applyLive(r.body, live);
+    if (live && live.weight > 1e-3 && v.floor === 0) applyLive(r.body, live);
     if (head && v.floor === 0) {
       rotate(r.body, head, reactionAt(reaction, v.hitAge));
       const kick = Math.sin(Math.min(1, v.hitAge / 0.44) * Math.PI) * Math.exp(-v.hitAge * 3);
@@ -103,36 +93,28 @@ export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
   };
 }
 
-function applyLive(body: Object3D, live: BoxerPoseState): void {
+/** Live torso/hips/head turns in character axes, each absolute from the animated pose: `base` is read
+ * before any joint moves, so the head doesn't inherit the torso turn (PoseState head is camera-relative).
+ * Arms stay collapsed (armless gloves), so arm swings drive glove offsets in boxer.ts instead of bones. */
+const TURNED = ['hips', 'torso', 'head'] as const;
+const frame = new Quaternion();
+const parentQ = new Quaternion();
+const bases = TURNED.map(() => new Quaternion());
+function applyLive(body: Object3D, live: LiveExpression): void {
   body.updateWorldMatrix(true, true);
-  const frame = body.getWorldQuaternion(new Quaternion());
-  const targets = (
-    [
-      'hips',
-      'torso',
-      'head',
-      'shoulderL',
-      'shoulderR',
-      'elbowL',
-      'elbowR',
-      'wristL',
-      'wristR',
-    ] as PoseJoint[]
-  )
-    .map((joint) => ({ bone: body.getObjectByName(JOINTS[joint]), q: live.rotations[joint] }))
-    .map(({ bone, q }) => ({ bone, q, base: bone?.getWorldQuaternion(new Quaternion()) }));
-  for (const { bone, q, base } of targets) {
-    if (!bone || !q || !base) continue;
-    bone.parent!.updateWorldMatrix(true, false);
-    const desired = frame
-      .clone()
-      .multiply(new Quaternion().fromArray(q))
-      .multiply(frame.clone().invert())
-      .multiply(base);
-    bone.quaternion.copy(
-      bone.parent!.getWorldQuaternion(new Quaternion()).invert().multiply(desired),
-    );
-  }
+  body.getWorldQuaternion(frame);
+  const bones = TURNED.map((joint) => body.getObjectByName(JOINTS[joint]));
+  bones.forEach((bone, i) => bone?.getWorldQuaternion(bases[i]!));
+  bones.forEach((bone, i) => {
+    if (!bone?.parent) return;
+    const turn = live[TURNED[i]!];
+    // world = frame · turn · frame⁻¹ · base; local = parentWorld⁻¹ · world
+    const world = bases[i]!.premultiply(parentQ.copy(frame).invert())
+      .premultiply(turn)
+      .premultiply(frame);
+    bone.parent.updateWorldMatrix(true, false);
+    bone.quaternion.copy(bone.parent.getWorldQuaternion(parentQ).invert().multiply(world));
+  });
 }
 
 /** Authored recovery: fallen pose → planted crouch → standing. UAL Standard has no get-up clip. */

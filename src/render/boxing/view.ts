@@ -23,7 +23,7 @@ import { createRenderer } from '../renderer';
 import { useSlot, type RenderStats } from '../view';
 import { createBoxer } from './boxer';
 import type { HeadReaction } from './animation';
-import { adaptBoxerPose, type BoxingPoseFeed } from './pose-state';
+import { createLiveFeed, type LivePose } from './live-pose';
 
 /** Half the distance between the boxers, m. */
 const GAP = 0.78;
@@ -91,35 +91,39 @@ async function loadBoxers() {
   ] as const;
 }
 
+/** Boxer 0 stands at +z facing −z (toward boxer 1); boxer 1 at −z facing +z. */
+function place(scene: Scene, boxer: Object3D, i: number): Group {
+  const holder = new Group(); // the boxer's spot and facing
+  holder.position.set(0, 0, i === 0 ? GAP : -GAP);
+  holder.rotation.y = i === 0 ? Math.PI : 0;
+  holder.add(boxer);
+  scene.add(holder);
+  return holder;
+}
+
 /** 2P: each boxer wears its player's face; 1P: both wear P1's face. */
-export async function createBoxingView(
-  canvas: HTMLCanvasElement,
-  faces?: FaceFeed,
-  poses?: BoxingPoseFeed,
-) {
+export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFeed) {
   const renderer = createRenderer(canvas);
   renderer.info.autoReset = false;
   const scene = boxingScene();
   const boxers = await loadBoxers();
-  // Boxer 0 stands at +z facing −z (toward boxer 1); boxer 1 at −z facing +z.
-  const bases = [new Vector3(0, 0, GAP), new Vector3(0, 0, -GAP)];
-  const holders = boxers.map((b, i) => {
-    const holder = new Group(); // the boxer's spot and facing
-    holder.position.copy(bases[i]!);
-    holder.rotation.y = i === 0 ? Math.PI : 0;
-    holder.add(b.object);
-    scene.add(holder);
-    return holder;
-  });
+  const holders = boxers.map((b, i) => place(scene, b.object, i));
   const camera = new PerspectiveCamera(70, 16 / 9, 0.05, 60);
   const eye = new Vector3();
   const face = new Vector3();
   let frames = 0;
+  const liveFeed = createLiveFeed();
 
   return {
-    render(sims: readonly BoxingSim[]): null {
+    /** `poses[i]`: player i's live body. 2P: player i is boxer i; 1P: player 0 is boxer 0, 1 is the bot. */
+    render(
+      sims: readonly BoxingSim[],
+      _interpolate: boolean,
+      poses: readonly (LivePose | null)[],
+    ): null {
       frames++;
       renderer.info.reset();
+      const live = liveFeed(poses);
       sims.forEach((sim, index) => {
         const s = sim.getState();
         const me = (index === 1 ? 1 : 0) as BoxerId;
@@ -130,7 +134,7 @@ export async function createBoxingView(
             who as BoxerId,
             who === me,
             faces && { feed: faces, player: sims.length === 2 ? who : 0 },
-            adaptBoxerPose(poses?.pose(who)),
+            live[who],
           ),
         );
         holders.forEach((h) => h.updateMatrixWorld(true));

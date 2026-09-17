@@ -185,13 +185,24 @@ interface ArmState {
 - `render/boxing/animation.ts` samples the existing CC0 Casual_Hoodie Death clip over the fall, holds the floor pose, and blends through a crouch during the final part of a recoverable count. KO/TKO stays down; a decision loser stays standing. Head snap uses a locally vendored UAL `Hit_Head` quaternion track, with a directional stagger. Animation clocks pause with the match.
 - `render/big-head.ts` hides the complete `Casual_Head` mesh group. A rounded replacement is 2.6 times the proportional radius, follows the Head bone position AND orientation, and carries a private copy of the existing `FaceFeed` crop. `render/boxing/face-damage.ts` composites redness, bruises and swelling highlights on that copy. No camera capture, inference or pose-layer dependency is added. With no camera, a procedural face provides the same large-head silhouette and damage feedback.
 - `render/boxing/visual.config.ts` holds visual tuning. `public/assets/quaternius/boxing/hit-head.json` is baked by `scripts/vendor-boxing-reaction.mjs` from Quaternius UAL Standard's `Hit_Head`; provenance and the unchanged CC0 license are in CREDITS.
-- Tests: `presentation.spec.ts`, `pose-state.spec.ts`, and `tests/e2e/boxing-visual.smoke.spec.ts`. The browser harness loads the shipping GLB and renderer, steps the real boxing sim, and inspects head transforms and texture pixels. Screenshots and fake-camera performance samples are under `tmp/visual-expressiveness/`.
+- Tests: `presentation.spec.ts`, `live-pose.spec.ts`, and `tests/e2e/boxing-visual.smoke.spec.ts`. The browser harness loads the shipping GLB and renderer, steps the real boxing sim, and inspects head transforms and texture pixels. Screenshots and fake-camera performance samples are under `tmp/visual-expressiveness/`.
 
-### Pose-mirroring render adapter
+### Live pose in Boxing (render/boxing/live-pose.ts)
 
-The parallel producer's `PoseState` is consumed structurally, without a render→pose import. `createBoxingView(canvas, faces?, poses?)` accepts an optional `BoxingPoseFeed` whose `pose(player)` returns a `TrackedBoxerPose` or null. The game shell can supply each player's current signal pose after the branches merge; this branch does not change the shell or input pipeline.
+The shell's per-frame `GameView.render(sims, interpolate, poses)` feeds it. The Boxing view maps `poses[i]` to boxer i (in 1P, boxer 1 is the bot and gets null). `LivePose` is a structural subset of `PoseState` because render may not import pose/. `tsc` checks the view's `render` against `GameView<BoxingSim>`, so a contract change that breaks it fails to compile.
 
-`TrackedBoxerPose` matches the producer fields: `body {sway, duck, rise, forward}`, `torso.rot`, `hips.rot`, `head.rot`, and `arms [left, right]` with `upperRot`, `foreRot`, and shoulder-relative `wrist {x,y,z}`. Quaternions are `[x,y,z,w]`, in character axes (+x anatomical left, +y up, +z forward). Lengths are torso units. Null arms use the existing glove animation. `adaptBoxerPose` converts lengths to metres; the animation layer treats head/torso/hips rotations as absolute character-frame deltas so the head does not inherit the torso turn twice. Fall/get-up takes precedence over live pose; hit reactions compose afterward. Passing null on tracking loss restores animation defaults.
+**The sim is authoritative for anything scored.** Live pose only adds expression within what the sim shows:
+
+| Channel | Live effect | Sim precedence |
+| --- | --- | --- |
+| `body.sway/duck/rise` (torso units × 0.5 m), `body.forward` (fraction of camera distance × 2.5 m) | whole-boxer lean, clamped to ±6 cm | scaled by 1 − the sim dodge amount; a sim dodge replaces it, and no live-only dodge can show (a dodge is 35 cm) |
+| `torso/hips/head.rot` | absolute character-frame turns on top of the animation, clamped 0.35 / 0.2 / 0.5 rad | off while falling, down or rising |
+| `arms[i].upperRot/foreRot` (swings from a hanging arm) | wrist = swing·(0,−1,0)·upper arm + swing·(0,−1,0)·forearm; offset from the sim's rest glove, clamped ±12 cm | only for a fist at rest; a thrown or retracting punch is placed by the sim |
+
+- **Smoothing:** exponential easing (τ 0.08 s) on the render clock, since poses arrive at 20–30 Hz.
+- **Tracking loss:** null eases back to neutral, and below weight 0.001 no live math runs.
+- **Arm bones:** stay collapsed (armless gloves); arm swings move the gloves only.
+- **Tests:** `live-pose.spec.ts` covers units, the arm read, clamps and smoothing. The `boxing-visual` e2e covers live lean < 8 cm, a sim dodge replacing it, and live reach ≤ 12 cm on real transforms.
 
 ## Core sim (M3)
 

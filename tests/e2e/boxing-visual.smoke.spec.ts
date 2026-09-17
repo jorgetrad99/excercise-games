@@ -13,6 +13,13 @@ async function harness(page: Page) {
   });
 }
 test.use({ viewport: { width: 960, height: 720 } });
+const STILL = {
+  body: { sway: 0, duck: 0, rise: 0, forward: 0 },
+  torso: { rot: [0, 0, 0, 1] },
+  hips: { rot: [0, 0, 0, 1] },
+  head: { rot: [0, 0, 0, 1] },
+  arms: [null, null],
+} as const;
 
 test('replacement head, rig following, clean-hit damage, fall and count recovery', async ({
   page,
@@ -94,8 +101,9 @@ test('same-tick redraws are stable; live head rotation composes and clears', asy
   for (const key of ['center', 'rotation', 'size'] as const)
     stable[key].forEach((n, i) => expect(n).toBeCloseTo(first[key][i]!, 10));
   expect(stable.facePixels).toEqual(first.facePixels);
-  await page.evaluate(() =>
-    window.__boxingVisual.live({ rotations: { head: [0, 0.258819, 0, 0.965926] } }),
+  await page.evaluate(
+    (still) => window.__boxingVisual.live({ ...still, head: { rot: [0, 0.258819, 0, 0.965926] } }),
+    STILL,
   );
   expect((await page.evaluate(() => window.__boxingVisual.inspect())).rotation).not.toEqual(
     first.rotation,
@@ -103,6 +111,47 @@ test('same-tick redraws are stable; live head rotation composes and clears', asy
   await page.evaluate(() => window.__boxingVisual.live(null));
   const cleared = await page.evaluate(() => window.__boxingVisual.inspect());
   cleared.rotation.forEach((n, i) => expect(n).toBeCloseTo(first.rotation[i]!, 10));
+});
+
+test('the sim stays authoritative: a live sway or reach never shows a dodge or punch', async ({
+  page,
+}) => {
+  await harness(page);
+  const neutral = await page.evaluate(() => window.__boxingVisual.inspect());
+  // A full-body sway and a step toward the camera the sim never heard about: only a small lean shows.
+  await page.evaluate(
+    (still) =>
+      window.__boxingVisual.live({ ...still, body: { sway: 1, duck: 0, rise: 0, forward: 0.3 } }),
+    STILL,
+  );
+  const leaned = await page.evaluate(() => window.__boxingVisual.inspect());
+  expect(Math.abs(leaned.center[0]! - neutral.center[0]!)).toBeGreaterThan(0.03);
+  expect(Math.abs(leaned.center[0]! - neutral.center[0]!)).toBeLessThan(0.08);
+  // A sim dodge replaces the live lean instead of adding to it: same spot as with no live pose at all.
+  await page.evaluate(() => window.__boxingVisual.step(0.2, [{ type: 'DODGE_RIGHT', player: 1 }]));
+  const dodgedLive = await page.evaluate(() => window.__boxingVisual.inspect());
+  await page.evaluate(() => {
+    const h = window.__boxingVisual;
+    h.restart();
+    h.live(null);
+    h.step(0.2, [{ type: 'DODGE_RIGHT', player: 1 }]);
+  });
+  const dodgedSim = await page.evaluate(() => window.__boxingVisual.inspect());
+  expect(Math.abs(dodgedSim.center[0]! - neutral.center[0]!)).toBeGreaterThan(0.2);
+  dodgedLive.center.forEach((n, i) => expect(n).toBeCloseTo(dodgedSim.center[i]!, 3));
+  // Both arms punched straight at the camera: gloves at rest creep forward, never reach a punch.
+  await page.evaluate((still) => {
+    window.__boxingVisual.step(1);
+    const forward = [-0.7071068, 0, 0, 0.7071068] as const; // swings (0,-1,0) onto (0,0,1)
+    const arm = { upperRot: forward, foreRot: forward };
+    window.__boxingVisual.live({ ...still, arms: [arm, arm] });
+  }, STILL);
+  const reached = await page.evaluate(() => window.__boxingVisual.inspect());
+  for (const hand of [0, 1]) {
+    const dz = reached.gloves[hand]![2]! - neutral.gloves[hand]![2]!;
+    expect(dz).toBeGreaterThan(0.05);
+    expect(dz).toBeLessThanOrEqual(0.12 + 1e-6);
+  }
 });
 
 test(

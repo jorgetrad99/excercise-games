@@ -1219,3 +1219,39 @@ Jorge records the 14 drills → `pnpm tune:boxing` + `GRID=1` → set `fists` (a
   - One red run on 53 fps / 17 pose-fps while the other session was active.
   - `tmp/verify-ve-3b.log` (load 30 %): **exit 0**, together with the live-pose change below.
 - **The 2P pose-fps gate is marginal under background load.** It was already noted in the pose-mirroring entry (one sample of 19). It isn't loosened.
+
+### Live pose in Boxing (step 3b): rewrite, not a patch
+
+- **Removed** Codex's `render/boxing/pose-state.ts`: it used a view-construction feed, `forward` as torso units, arm swings as deltas on the idle pose, and no smoothing.
+- **New `render/boxing/live-pose.ts`:**
+  - `LivePose` is a structural subset of `PoseState`. `tsc` checks the Boxing view against `GameView<BoxingSim>`, so contract drift fails to compile.
+  - `createLiveSmoother`: exponential easing, τ 0.08 s.
+  - `createLiveFeed`: wall-clock dt, capped at 0.1 s.
+- **`view.ts`:** `render(sims, interpolate, poses)` maps `poses[i]` to boxer i.
+- **Sim authority (your decision):**
+  - Live lean is clamped to ±6 cm and scaled by 1 − the sim dodge amount, so a sim dodge replaces it.
+  - Live arms nudge only a glove at rest, clamped to ±12 cm; a punch is always the sim's.
+  - Torso/hips/head turns are clamped (0.35/0.2/0.5 rad) and off while floored.
+  - The sim's duck no longer yields to live pose.
+- **Arm read:** wrist = upperRot·(0,−1,0)·0.28 m + foreRot·(0,−1,0)·0.27 m. Arm bones stay collapsed.
+- **Bug caught by the new unit test:** `slerpQuaternions(IDENTITY, out, t)` with `out` as its own target always returned identity. Fixed with a temp.
+
+### Verified
+
+- `pnpm exec vitest run src/render/boxing` → 10 passed. `live-pose.spec.ts` covers:
+  - null/still has no influence
+  - forward = fraction × 2.5 m, not × 0.5
+  - clamps (lean, head angle)
+  - hanging/forward/sideways arm read
+  - full reach capped at 12 cm
+  - easing (1 − e⁻¹ after τ), fade on null, no jump at dt 0
+- `boxing-visual` e2e, new test "the sim stays authoritative", on the shipping GLB:
+  - live sway + forward moves the head 3–8 cm
+  - a sim dodge with a live sway lands at the same head position (3 dp) as the same dodge without live pose
+  - a both-arms reach moves resting gloves forward 5–12 cm
+- **`pnpm verify` → exit 0** (`tmp/verify-ve-3b.log`): tsc, eslint, vitest 332 + 1 skipped, playwright 26/26 (smoke + perf).
+- **Not verified:** how live expression feels with a real body. Playtest: `/?game=boxing&input=pose&seed=42&debug=1`: turn your head, lean slightly, raise your guard, sway fully. The lean should stay small; a full sway only shows when the sim registers a dodge.
+
+### Next
+
+Item 1: map the sim state to fall/get-up (dizzy ≠ down).

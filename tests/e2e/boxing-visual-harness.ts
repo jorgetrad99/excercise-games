@@ -14,7 +14,11 @@ import type { HeadReaction } from '../../src/render/boxing/animation';
 import { loadModel } from '../../src/render/models';
 import { createRenderer } from '../../src/render/renderer';
 import { initBoxing, tickBoxing, type BoxingInput } from '../../src/core/boxing/sim';
-import type { BoxerPoseState } from '../../src/render/boxing/pose-state';
+import {
+  createLiveSmoother,
+  type LiveExpression,
+  type LivePose,
+} from '../../src/render/boxing/live-pose';
 
 export async function createVisualHarness() {
   const canvas = document.createElement('canvas');
@@ -46,7 +50,8 @@ export async function createVisualHarness() {
   ctx.fillRect(80, 132, 35, 8);
   const feed = { canvas: () => crop, version: () => 1 };
   let state = initBoxing({ seed: 42, skipIntro: true });
-  let live: BoxerPoseState | null = null;
+  const smoother = createLiveSmoother();
+  let live: LiveExpression = smoother(null, 0);
   const render = () => {
     boxer.update(state, 1, false, { feed, player: 0 }, live);
     renderer.render(scene, camera);
@@ -62,8 +67,9 @@ export async function createVisualHarness() {
     state: () => state,
     step,
     render,
-    live(value: BoxerPoseState | null) {
-      live = value;
+    /** Settle the smoother on `pose` (10 s of easing), then draw. */
+    live(pose: LivePose | null) {
+      live = smoother(pose, 10);
       render();
     },
     restart() {
@@ -78,6 +84,9 @@ export async function createVisualHarness() {
         originalVisible: boxer.object.getObjectByName('Casual_Head')!.visible,
         center: head.getWorldPosition(new Vector3()).toArray(),
         rotation: head.quaternion.toArray(),
+        gloves: ['GloveL', 'GloveR'].map((n) =>
+          boxer.object.getObjectByName(n)!.position.toArray(),
+        ),
         size: new Box3().setFromObject(head).getSize(new Vector3()).toArray(),
         facePixels: Array.from(image.getContext('2d')!.getImageData(124, 103, 8, 8).data),
         sourcePixels: Array.from(ctx.getImageData(124, 103, 8, 8).data),

@@ -1,7 +1,7 @@
 // A boxer: the Casual_Hoodie rig (CC0, shared with the skater) with its arms collapsed and two floating
 // gloves. Clip times follow the sim; presentation history keeps per-boxer bruises and fall timing.
 // Repeated draws at one tick are stable. Local frame: the boxer faces +z, its left is +x.
-import { Group, Mesh, MeshStandardMaterial, SphereGeometry, Vector3 } from 'three';
+import { Group, Mesh, MeshStandardMaterial, SphereGeometry, type Vector3 } from 'three';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { boxingConfig as C } from '../../core/boxing/boxing.config';
 import type { Boxer, BoxerId, BoxingState, Fist } from '../../core/boxing/types';
@@ -10,7 +10,7 @@ import type { LoadedModel } from '../models';
 import { rig } from '../skater';
 import { createBoxerAnimation, type HeadReaction } from './animation';
 import { createPresentation } from './presentation';
-import type { BoxerPoseState } from './pose-state';
+import type { LiveExpression } from './live-pose';
 
 const HEIGHT = 1.75;
 type V3 = readonly [number, number, number];
@@ -35,7 +35,7 @@ export interface BoxerView {
     who: BoxerId,
     self: boolean,
     face?: { feed: FaceFeed; player: number },
-    live?: BoxerPoseState | null,
+    live?: LiveExpression | null,
   ): void;
   /** Eye position behind this boxer's head, world space (the player's camera). */
   eye(out: Vector3): Vector3;
@@ -76,8 +76,9 @@ function stars(): Group {
 
 function createGloves(color: string): Mesh[] {
   const gloveMat = new MeshStandardMaterial({ color, roughness: 0.45 });
-  return [0, 1].map(() => {
+  return [0, 1].map((hand) => {
     const m = new Mesh(new SphereGeometry(0.12, 16, 12), gloveMat);
+    m.name = ['GloveL', 'GloveR'][hand]!;
     m.castShadow = true;
     return m;
   });
@@ -109,15 +110,12 @@ export function createBoxer(model: LoadedModel, color: string, reaction: HeadRea
       figure.visible = !self;
       animate(s, who, visual, figure, live);
       // Sway and duck move the whole boxer (gloves too).
-      const dodgeK = live?.position || floor > 0 ? 0 : dodgeAmount(b);
+      // The sim decides dodges; live lean only fills in while the sim shows none.
+      const dodgeK = floor > 0 ? 0 : dodgeAmount(b);
       const side = b.dodge === 'left' ? 1 : b.dodge === 'right' ? -1 : 0;
       const floored = visual.floor > 0;
-      placeGloves(gloves, b, self, floored);
-      if (live?.wrists && !floored)
-        gloves.forEach((g, i) => {
-          const wrist = live.wrists![i];
-          if (wrist) g.position.fromArray(wrist);
-        });
+      const liveK = floored || !live ? 0 : 1 - dodgeK;
+      placeGloves(gloves, b, self, floored, liveK > 0 ? live!.gloves : null);
       const recoil = floored ? 0 : Math.max(0, 1 - visual.hitAge / 0.44);
       object.position.set(
         side * 0.35 * dodgeK - visual.hitSide * 0.12 * recoil,
@@ -129,7 +127,7 @@ export function createBoxer(model: LoadedModel, color: string, reaction: HeadRea
         0,
         -side * 0.25 * dodgeK + visual.hitSide * 0.12 * recoil,
       );
-      if (live?.position && !floored) object.position.add(new Vector3().fromArray(live.position));
+      if (liveK > 0) object.position.addScaledVector(live!.lean, liveK);
       if (b.dodge === 'duck') for (const g of gloves) g.position.y -= 0.1 * dodgeK;
       bigHead.update(face?.feed ?? null, face?.player ?? 0, !self, visual.damage);
       dizzy.visible = b.dizzy && !floored;
@@ -145,10 +143,18 @@ export function createBoxer(model: LoadedModel, color: string, reaction: HeadRea
 }
 
 /** Both gloves, boxer-local. `self`: the player's own view, where they sit low and wide. */
-function placeGloves(gloves: readonly Mesh[], b: Boxer, self: boolean, floored: boolean): void {
+function placeGloves(
+  gloves: readonly Mesh[],
+  b: Boxer,
+  self: boolean,
+  floored: boolean,
+  live: readonly [Vector3, Vector3] | null,
+): void {
   gloves.forEach((g, hand) => {
     g.visible = !floored;
     glovePos(b, b.fists[hand]!, hand as 0 | 1, g.position);
+    // Live arms move a glove at rest only: a thrown or retracting punch is the sim's.
+    if (live && b.fists[hand]!.phase === 'ready') g.position.add(live[hand]!);
     // Own gloves sit low and wide (Wii's over-the-gloves view) so they never hide the opponent;
     // the offset fades out as the glove extends, so a punch still reaches the opponent's face.
     if (!self) return;
