@@ -59,7 +59,7 @@ Already captured by Piece 4 (research notes in PROGRESS "Phase 2, Piece 4"):
   - position constraints (§2.3)
 - **The sim never moves a player-owned channel,** except in the rows of §4 that name it and via the overlays of §2.2.
 - **Rig and scoring read the same gloves (D5).** The sim scores the player's glove positions, so a glove drawn in the opponent's face was scored there. The remaining, intended mismatches:
-  - A dizzy boxer's gloves touch without effect (existing rule: can't punch while dizzy).
+  - A dizzy boxer's gloves touch without effect, **in both directions** (Jorge, 2026-09-17, Phase 0): they don't score and they don't block. A dizzy boxer can't cover up; that's the danger of being dizzy.
   - One extension scores once: a glove held in the face, or one that slides from a guard into the face, scores nothing more until pulled back behind `body.recoverZ`.
   - The drawn glove is predicted up to `body.extrapolateS` ahead of the newest pose frame; hits use observed positions only (§2.1).
 
@@ -124,6 +124,18 @@ A constraint only clamps where a player-driven value lands. It never produces mo
 - **Block:** the glove enters one of the defender's gloves first. A guard raised onto a glove already on its way in also blocks: a glove that starts a tick inside a defender's glove and keeps pushing deeper is met at t = 0 (gloves only; a head leaning onto a resting glove still isn't that glove's hit).
 - **Whiff:** the glove passes the front of the defender's head and turns back having touched nothing. It costs the attacker and opens the defender's counter window (existing rule).
 - **Damage:** `clean × clamp(closing speed / impact.refSpeedMps, 0, impact.maxMult)`, × `impact.bodyMult` on the torso, × `counterMult` in the counter window. No minimum speed.
+  - **Closing speed is a velocity, not a per-tick displacement (Jorge, 2026-09-17, Phase 0 decision 1).** It's the glove's velocity relative to the target, projected on the contact normal.
+    - **Pose boxers:** use the observed sample velocity (`track.vel`: displacement between the last two pose samples ÷ their interval, as `predictPose` already uses; 0 when the interval is > 150 ms).
+    - **Puppets:** use their path velocity per tick, which is already true.
+  - **Why (defect found in Phase 0 B2):** the sim holds each pose sample until the next one arrives, so a whole frame's travel lands in one 1/120 s tick. Scored speed was true speed × 120 ÷ pose-fps: ×4 at 30 fps, ×6 at 20. Every glove over ~1.9 m/s did the capped 1.05 segments, so damage was set by the frame rate, not the fist.
+  - **The damage curve this gives (spec, not emergent):** with `clean` 0.7, `refSpeedMps` 5, `maxMult` 1.5, a head hit does `0.14 × speed` segments, capped at 1.05 from 7.5 m/s.
+
+    | Closing speed (m/s) | 1.5 | 3 | 4.4 | 6 | ≥ 7.5 |
+    |---|---|---|---|---|---|
+    | Head damage (seg) | 0.21 | 0.42 | **0.62** | 0.84 | 1.05 |
+
+    A 4.4 m/s straight does 0.62 seg: ~16 of them empty a full pie, where 10 capped hits did before. Accepted: the game gets harder, and a bot that defends is the game.
+  - **The same speed feeds bot perception** (below). Before the fix, `closingT` reset on the held ticks between pose samples (peak 0.008 s vs `reactS` 0.08 s), so the bot never saw a single pose punch.
 - **Zone** (bruises, O1 head snap): from the contact normal and the glove's own direction. A rising glove below the head's centre is the chin.
   - **Puppet paths:** a key straight reaches face height in the first half of its depth, so from low ready hands it travels level into a cheek, not up into the chin. Uppercuts keep the slow rise: they dip under a raised guard, and low ready hands block them.
 - **No punch detector:** `fists.ts` keeps only the guard posture classifier and the wrist-speed signal. `PUNCH_*` come from keyboard and bot only.
@@ -179,6 +191,9 @@ A constraint only clamps where a player-driven value lands. It never produces mo
 | BX-CL-5 | A pose guard (gloves in front of the face) turns a straight into exactly one `BLOCK`. |
 | BX-CL-7 | No smoothing clips a punch: the pipeline's peak glove depth for a jab equals the unfiltered pipeline's on every sampling phase at 30 and 15 pose-fps (±2 mm), and BX-CL-1 end to end judges "reached the head" on unfiltered frames. Both fail on the old arm filter. |
 | BX-CL-6 | Keyboard rules still hold through geometry: straight hits, guard blocks, uppercut splits a guard, sway beats a straight (whiff + counter), a hook catches a sway into it, an uppercut catches a duck. A key right lands on the idle defender's left cheek and a left on the right cheek (zones 0 / 1, not the chin). A guard raised on tick 10, 11 or 12 of a straight's travel blocks it (`BLOCK`, no `HIT`); before the fix, a guard raised on tick 11 let the glove through. |
+| BX-CL-8 | Damage doesn't depend on pose rate: the same synthetic straight at a constant true glove speed (2 and 4.4 m/s) scores the same damage (±5 %) at 30, 20 and 15 pose-fps; 4.4 m/s to the head scores 0.62 seg (±0.03). Fails on per-tick displacement. |
+| BX-CL-9 | The bot sees a pose punch: a pose straight at ≥ 3 m/s holds `closingT` ≥ `bot.reactS` before contact at 30 and 20 pose-fps, and over a seeded pose match the bot guards or dodges at least one pose punch. Fails on per-tick displacement. |
+| BX-CL-10 | A dizzy boxer's gloves don't block: a straight into a dizzy defender's raised guard is a `HIT` (the torso/head behind it), never a `BLOCK`; the same guard not dizzy blocks it. |
 
 ### 2.4 Boxers without a body (puppets)
 
