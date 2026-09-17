@@ -1,12 +1,20 @@
 # PLAN-BOXING — Boxing spec (control model, authority, knockdown, recovery, movement, trainer)
 
-Status: **D1–D4 decided by Jorge (2026-09-16); spec text awaiting final sign-off before M7.15.** Nothing below is implemented yet.
+Status: **D1–D5 decided by Jorge (2026-09-16); spec text awaiting final sign-off before M7.15.** Nothing below is implemented yet.
+
+**D5 (Jorge, 2026-09-16, the original inversion brief) amends this spec in four places:**
+1. **Punches score by glove collision** (§2.5), not by punch events and a speed gate.
+2. **The rig predicts instead of easing** (§2.1).
+3. **Calibration adds a body scan** in the menu, persisted per player name (§3, BX-CAL-6).
+4. **The sim ticks at 1/120 s** (PLAN §3), not 1/60 s (§4).
+
+Where older text in this file says otherwise, D5 wins.
 
 ## 0. Scope and precedence
 
 - **This file is the source of truth for Boxing.** Until now, Boxing's rules lived only in the Phase 2 Piece 4 chat brief and in after-the-fact PROGRESS notes. `docs/PLAN.md` doesn't mention Boxing.
 - **What it supersedes:** where this file conflicts with those notes or with `features.json` M7.6 / M7.11, this file wins. The rules it doesn't touch stay as built and documented in `docs/ARCHITECTURE.md` "Boxing":
-  - punches and aim
+  - ~~punches and aim~~: replaced by glove collision (D5, §2.5)
   - guard and dodge
   - stamina and dizzy
   - TKO at 3 knockdowns
@@ -45,12 +53,15 @@ Already captured by Piece 4 (research notes in PROGRESS "Phase 2, Piece 4"):
 
 - **Rig:** the rendered boxer of a player whose input is a live `PoseState` (`src/pose/pose-state.ts`). By default, every rig channel is a function of that player's body.
 - **Sim:** the deterministic core (`src/core/boxing/`). It decides only outcomes:
-  - whether a punch event lands, is blocked or whiffs
+  - what a glove touched: hit, block or whiff (§2.5)
   - stamina, dizzy, knockdown, the count, getting up, KO/TKO
   - rounds, winner
   - position constraints (§2.3)
 - **The sim never moves a player-owned channel,** except in the rows of §4 that name it and via the overlays of §2.2.
-- **A rig/sim mismatch is expected, not a bug.** The rig can show a full straight that the sim didn't score (the fist was still recovering, or the motion missed the speed gate). The rig shows the body; sim events show the consequences (impact flash, pie, HUD, sound when there is audio).
+- **Rig and scoring read the same gloves (D5).** The sim scores the player's glove positions, so a glove drawn in the opponent's face was scored there. The remaining, intended mismatches:
+  - A dizzy boxer's gloves touch without effect (existing rule: can't punch while dizzy).
+  - One extension scores once: a glove held in the face, or one that slides from a guard into the face, scores nothing more until pulled back behind `body.recoverZ`.
+  - The drawn glove is predicted up to `body.extrapolateS` ahead of the newest pose frame; hits use observed positions only (§2.1).
 
 ### 2.1 Rig channels
 
@@ -65,8 +76,13 @@ Already captured by Piece 4 (research notes in PROGRESS "Phase 2, Piece 4"):
 | `armL`, `armR` | `arms[i].upperRot/foreRot`, `wrist` IK | direct, **no ±12 cm clamp, no sim punch clip** |
 | `camera` (own slot) | follows `root` + `head` | §5 for knockdown |
 
-- **Smoothing:** each channel eases toward its target with today's live-smoother τ (0.08 s, `render/boxing/live-pose.ts`), except where §4 says otherwise.
-- **Anatomical and ring limits** are the only clamps.
+- **No smoothing delay (D5).** The τ 0.08 s live smoother is removed. Measured on `12c1ddf`, it took the rig 200 ms to cover 90 % of a pose step (`boxing-latency.smoke`).
+  - **Prediction instead:** each channel is drawn at the newest pose sample moved along its velocity by the time since that sample arrived, at most `body.extrapolateS` = 0.05 s, then held.
+  - **Scoring doesn't predict:** extrapolating a fast glove past its last frame scored a jab that stopped 2 cm short.
+  - **Jitter:** the landmark One Euro filter (M2) stays the only smoothing.
+  - **Stun sluggishness** (O2's `slow(live)`) is an additive, bounded offset under §4.1, not channel easing.
+- **Anatomical and ring limits** are the only clamps. Player → rig gains are fixed per axis (`body.armGainM`, `body.leanGainM`), normalised by the player's calibrated arm length (BX-CAL-6). They scale, but never clamp or gate.
+- **Latency (BX-LAT-1):** camera frame → rendered glove is reported on every verify run, 1P and 2P (pipeline p50/p95 plus rig response to 90 % of a step). Report-only until Jorge sets the budget from the measured values.
 
 ### 2.2 Authorized sim overlays (closed list, D1 decided)
 
@@ -89,6 +105,29 @@ Authorized by Jorge (D1, 2026-09-16) under the §4.1 rule: each overlay is an **
 
 A constraint only clamps where a player-driven value lands. It never produces motion on its own.
 
+### 2.5 Scoring by collision (D5)
+
+- **Bodies in the sim:** each boxer has a head, torso and two gloves as spheres in its own frame (m).
+  - **Pose boxers:** a `BODY` event per pose frame places them from the player's `PoseState` (arms via wrist IK × `armGainM`, head via sway/duck/forward × `leanGainM`).
+  - **Puppets (§2.4):** key/bot punches, guard and dodges move the same spheres along authored paths.
+- **Hit:** a glove sphere entering the defender's head or torso sphere, swept over the tick using motion relative to the target, so a fast glove can't pass through between ticks or pose frames. Only the side whose own motion did most of the closing strikes.
+- **Block:** the glove enters one of the defender's gloves first.
+- **Whiff:** the glove passes the front of the defender's head and turns back having touched nothing. It costs the attacker and opens the defender's counter window (existing rule).
+- **Damage:** `clean × clamp(closing speed / impact.refSpeedMps, 0, impact.maxMult)`, × `impact.bodyMult` on the torso, × `counterMult` in the counter window. No minimum speed.
+- **Zone** (bruises, O1 head snap): from the contact normal and the glove's own direction. A rising glove below the head's centre is the chin.
+- **No punch detector:** `fists.ts` keeps only the guard posture classifier and the wrist-speed signal. `PUNCH_*` come from keyboard and bot only.
+- **Bot perception:** the bot reacts to a glove closing on it faster than `bot.seeSpeedMps`. That's the bot's own perception, not a gate on the player.
+- **§7 reach rule (M7.18):** with positions in the sim, "out of reach" is geometric (gloves can't get there). `move.reachM` becomes the bot's approach distance, not a whiff rule.
+
+| ID | Testable behavior (`core/boxing/collide.spec.ts`) |
+|---|---|
+| BX-CL-1 | A short punch (half the guard → full extension travel) whose glove reaches the head volume is a `HIT` at 30, 25, 20, 15 and 10 pose-fps, for every sampling phase in which a pose frame observed the glove at the head. |
+| BX-CL-2 | A glove stopping 2 cm short of the head: no event, at any rate (prediction never scores). |
+| BX-CL-3 | Swept: a hook crossing the face between two pose frames 100 ms apart, with no frame inside the head, is a `HIT`. |
+| BX-CL-4 | One hit per contact: a glove held in the face scores once; pulled back behind `recoverZ`, it can score again. |
+| BX-CL-5 | A pose guard (gloves in front of the face) turns a straight into exactly one `BLOCK`. |
+| BX-CL-6 | Keyboard rules still hold through geometry: straight hits, guard blocks, uppercut splits a guard, sway beats a straight (whiff + counter), a hook catches a sway into it, an uppercut catches a duck. |
+
 ### 2.4 Boxers without a body (puppets)
 
 - **Which ones:** the 1P bot, `input=keyboard`, and `input=replay:` fixtures without pose frames.
@@ -109,11 +148,12 @@ Additions:
 | BX-CAL-3 | **Rig scale:** player torso length ↦ rig torso length, so wrist IK and `rootY` are in rig metres. Already implied by `PoseState.wrist`; now also used for `root`. |
 | BX-CAL-4 | **Recalibration** (`RECALIBRATE`) is accepted in `intro`, `fight`, `break` and `over`. It's **ignored while the boxer is down**: holding still would fight the recovery rule. |
 | BX-CAL-5 | **Per player:** in 2P each player has their own calibration (existing). Tracking loss during a count pauses the match and freezes the count (existing PAUSE rule). |
+| BX-CAL-6 | **Body scan (D5):** a menu option before a match. Stand still (existing calibration), then T-pose for 2 s.<br>• **Measures:** upper arm and forearm lengths (left/right) and shoulder width, in torso lengths; arms held side-on to the camera, so 2D lengths are true lengths.<br>• **Stored:** in `ProfileStore` under the player name (schema v1 → v2 migration; v1 profiles load with no scan).<br>• **Used for:** the bone lengths in `PoseState` depth reconstruction, and the arm length that normalises `armGainM`. So the scan changes effective reach: the same wrist image reads a different glove depth.<br>• **Default when skipped:** today's `gestureConfig.pose` bone lengths.<br>• **Tests:** a scan from synthetic T-pose frames measures the synthetic lengths (±3 %); the migration test; an e2e where a long-arm scan and the default map the same half-extension frames to a miss and a hit respectively. |
 
 ## 4. Authority split (the contract)
 
 - **Owner values:** `PLAYER` (§2.1 mapping), `SIM` (sim-driven clip/curve), `SCRIPT` (authored timeline, not a sim decision).
-- **Handover instants:** every instant is a **sim tick** (fixed dt 1/60 s), so tests assert exact ticks.
+- **Handover instants:** every instant is a **sim tick** (fixed dt 1/120 s, D5), so tests assert exact ticks.
 - **The render never decides a handover.** It reads them from sim state through one pure function: `boxingAuthority(state, boxer) → { root, rootY, legs, hips, torso, head, arms, camera }`, each `'player' | 'sim' | 'script' | { blend }`. It lives in `src/games/boxing/authority.ts`, with no three.js.
 
 | # | State (sim condition) | root / legs | torso / head / arms | camera (own slot) | Enters at (tick) | Test |
@@ -300,6 +340,7 @@ The player stands in front of a fixed camera with about ±0.5 m of usable floor.
 - **Render:** the root eases toward the sim position (τ 0.08 s). Added latency ≈ ≤ 100 ms sampling + one tick, measured by the existing camera→glove latency e2e.
 - **Reach rule:**
   - A punch landing (`travelS` after it's thrown) when attacker–defender distance > `move.reachM` = 1.1 m is a `WHIFF`.
+  - **Superseded by D5 (§2.5):** with collision scoring, reach is geometric: a glove that can't get to the head doesn't touch it. `move.reachM` is kept only as the bot's approach distance. BX-MV-6 becomes "at 1.2 m the same punch touches nothing; at 1.0 m it hits".
   - No stamina change for either boxer, and no counter window: the defender didn't dodge.
 - **Keyboard puppet:** `I`/`K` walk toward/away, `J`/`L` strafe (the arrows stay dodges).
 
@@ -390,6 +431,7 @@ The player stands in front of a fixed camera with about ±0.5 m of usable floor.
 
 ## 10. Acceptance mapping (Jorge's four criteria)
 
+0. **Jorge's inversion brief (D5):** a short punch that reaches the head hits (BX-CL-1); the body moves the rig continuously (BX-A-1, BX-A-4); no sim override outside authorized states (BX-A-1, BX-A-6); end-to-end latency measured every run (BX-LAT-1); calibration in the menu changes effective reach (BX-CAL-6).
 1. **A test per authority transition at the exact handover tick:** BX-H-01 … BX-H-12 (`src/games/boxing/authority.spec.ts`), BX-TR-1, BX-GS-3.
 2. **No state outside Falling where the sim owns the full rig:** BX-A-1.
 3. **Recovery doesn't progress while still:** BX-RC-1, BX-RC-5, BX-RG-1, BX-RG-5, and the §6.4 posture screenshot after decay.
@@ -421,11 +463,12 @@ These are sustained-posture and gesture classifiers (march, hop, arm pump, side 
 | D2 | Movement positions in the sim with a reach rule (A), or render-only (B)? | **A.** Accept the balance, bot and test cost; bot changes are listed in §7. |
 | D3 | Break length 11 s (+14 s per match) acceptable? | **Keep 11 s, but interruptible:** the player ends the corner early by walking out (§9). |
 | D4 | Arms free during S8–S10 (spec above) or scripted? | **Free.** Any frozen player state is a regression toward sim ownership (§4.1). |
+| D5 | Where the inversion brief and this draft disagree: punch scoring, smoothing, calibration, tick rate | **The brief:** glove collision (§2.5), prediction with no easing (§2.1), body scan in the menu persisted per name (BX-CAL-6), 1/120 s ticks. |
 
 ## 13. Work items (`features.json`)
 
 M7.11 stays **done**: it delivered what it specified. IDs follow the renumbering on `feat/player-authority` (mapping in PROGRESS). New items:
-- **M7.15** Control-model inversion: player owns the rig (§2–§4). BX-A-*, BX-CAL-*, BX-H-01…03, 11, 12.
+- **M7.15** Control-model inversion: player owns the rig (§2–§4). BX-A-*, BX-CAL-*, BX-CL-*, BX-LAT-1, BX-H-01…03, 11, 12.
 
   Note: BX-H-04…07 at M7.15 test today's count get-up; M7.17 re-points them at `RISE_START` / `GET_UP`.
 - **M7.16** Player-perspective knockdown (§5). BX-KD-*, BX-H-04…07.
