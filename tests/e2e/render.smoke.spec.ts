@@ -88,7 +88,7 @@ test.describe('renderer', () => {
   });
 });
 
-test.describe('perf', () => {
+test.describe('perf', { tag: '@perf' }, () => {
   test.use({ viewport: { width: 1920, height: 1080 } });
 
   test('holds >= 55 fps over 20 s at 1080p (bot autoplay + keyboard source live)', async ({

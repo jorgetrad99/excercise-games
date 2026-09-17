@@ -14,8 +14,6 @@ const fakeCamera = [
 ];
 
 export default defineConfig({
-  // The suite measures GPU/pose FPS and wall-clock replays; concurrent games compete for the GPU.
-  workers: 1,
   testDir: 'tests/e2e',
   outputDir: 'tmp/test-results',
   reporter: 'list',
@@ -29,7 +27,23 @@ export default defineConfig({
     {
       name: 'smoke',
       testMatch: /.*\.smoke\.spec\.ts/,
+      grepInvert: /@perf|@realtime/,
       // channel 'chromium' = new headless: uses the real GPU (headless-shell falls back to SwiftShader).
+      use: {
+        ...devices['Desktop Chrome'],
+        channel: 'chromium',
+        launchOptions: { args: fakeCamera },
+      },
+    },
+    {
+      // Timing-sensitive tests run after smoke, one at a time: fps / pose-fps gates (@perf) share one GPU,
+      // and wall-clock pose replays (@realtime) drop gestures when the CPU is contended. In parallel on
+      // the dev machine (2026-09-16) they read 14 pose-fps / 44 fps and missed replay lane changes.
+      name: 'perf',
+      testMatch: /.*\.smoke\.spec\.ts/,
+      grep: /@perf|@realtime/,
+      dependencies: ['smoke'],
+      workers: 1,
       use: {
         ...devices['Desktop Chrome'],
         channel: 'chromium',

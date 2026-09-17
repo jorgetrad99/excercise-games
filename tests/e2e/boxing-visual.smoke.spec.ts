@@ -105,67 +105,69 @@ test('same-tick redraws are stable; live head rotation composes and clears', asy
   cleared.rotation.forEach((n, i) => expect(n).toBeCloseTo(first.rotation[i]!, 10));
 });
 
-test('live fake-camera face reaches Boxing at 1080p with pose and render performance intact', async ({
-  page,
-}) => {
-  test.setTimeout(60_000);
-  await page.setViewportSize({ width: 1920, height: 1080 });
-  const errors: string[] = [];
-  let crops = 0;
-  page.on('console', (m) => {
-    if (m.text().startsWith('FACEDBG')) crops++;
-    if (m.type() === 'error' || (m.type() === 'warning' && /THREE/.test(m.text())))
-      errors.push(m.text());
-  });
-  page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto('/?game=boxing&input=pose&seed=42&clock=manual');
-  await expect.poll(() => crops, { timeout: 30_000 }).toBeGreaterThan(0);
-  await page.keyboard.press('Space');
-  await page.evaluate(() => window.__game.advance(3.1));
-  await expect
-    .poll(() => page.evaluate(() => window.__game.getFps()), { timeout: 15_000 })
-    .toBeGreaterThanOrEqual(55);
-  const samples = [];
-  for (let i = 0; i < 5; i++) {
-    await page.waitForTimeout(1000);
-    samples.push(
-      await page.evaluate(() => ({
-        fps: window.__game.getFps(),
-        pose: window.__game.getPoseStats(),
-        render: window.__game.getRenderStats(),
-      })),
-    );
-  }
-  await mkdir(ROOT, { recursive: true });
-  await writeFile(`${ROOT}/live-face-performance.json`, JSON.stringify(samples, null, 2));
-  for (const sample of samples) {
-    expect(sample.fps).toBeGreaterThanOrEqual(55);
-    expect(sample.pose!.poseFps).toBeGreaterThanOrEqual(20);
-    expect(sample.pose!.lastPoseCount).toBeGreaterThan(0);
-    expect(sample.render!.calls).toBeLessThan(150);
-  }
-  await page.screenshot({ path: `${ROOT}/live-webcam-face.png` });
-  await page.evaluate(() => {
-    window.__game.advance(3.1);
-    window.__game.inject({ type: 'DODGE_LEFT', player: 1 });
-    window.__game.advance(0.2);
-  });
-  await page.evaluate(
-    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
-  );
-  await page.screenshot({ path: `${ROOT}/live-webcam-sway.png` });
-  for (let i = 0; i < 6; i++) {
-    await page.evaluate((i) => {
-      window.__game.inject({
-        type: i % 2 ? 'PUNCH_LEFT' : 'PUNCH_RIGHT',
-        aim: { x: i % 2 ? -0.8 : 0.8, y: 0 },
-      });
-      window.__game.advance(0.5);
-    }, i);
+test(
+  'live fake-camera face reaches Boxing at 1080p with pose and render performance intact',
+  { tag: '@perf' },
+  async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    const errors: string[] = [];
+    let crops = 0;
+    page.on('console', (m) => {
+      if (m.text().startsWith('FACEDBG')) crops++;
+      if (m.type() === 'error' || (m.type() === 'warning' && /THREE/.test(m.text())))
+        errors.push(m.text());
+    });
+    page.on('pageerror', (e) => errors.push(e.message));
+    await page.goto('/?game=boxing&input=pose&seed=42&clock=manual');
+    await expect.poll(() => crops, { timeout: 30_000 }).toBeGreaterThan(0);
+    await page.keyboard.press('Space');
+    await page.evaluate(() => window.__game.advance(3.1));
+    await expect
+      .poll(() => page.evaluate(() => window.__game.getFps()), { timeout: 15_000 })
+      .toBeGreaterThanOrEqual(55);
+    const samples = [];
+    for (let i = 0; i < 5; i++) {
+      await page.waitForTimeout(1000);
+      samples.push(
+        await page.evaluate(() => ({
+          fps: window.__game.getFps(),
+          pose: window.__game.getPoseStats(),
+          render: window.__game.getRenderStats(),
+        })),
+      );
+    }
+    await mkdir(ROOT, { recursive: true });
+    await writeFile(`${ROOT}/live-face-performance.json`, JSON.stringify(samples, null, 2));
+    for (const sample of samples) {
+      expect(sample.fps).toBeGreaterThanOrEqual(55);
+      expect(sample.pose!.poseFps).toBeGreaterThanOrEqual(20);
+      expect(sample.pose!.lastPoseCount).toBeGreaterThan(0);
+      expect(sample.render!.calls).toBeLessThan(150);
+    }
+    await page.screenshot({ path: `${ROOT}/live-webcam-face.png` });
+    await page.evaluate(() => {
+      window.__game.advance(3.1);
+      window.__game.inject({ type: 'DODGE_LEFT', player: 1 });
+      window.__game.advance(0.2);
+    });
     await page.evaluate(
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
     );
-  }
-  await page.screenshot({ path: `${ROOT}/live-webcam-damage.png` });
-  expect(errors).toEqual([]);
-});
+    await page.screenshot({ path: `${ROOT}/live-webcam-sway.png` });
+    for (let i = 0; i < 6; i++) {
+      await page.evaluate((i) => {
+        window.__game.inject({
+          type: i % 2 ? 'PUNCH_LEFT' : 'PUNCH_RIGHT',
+          aim: { x: i % 2 ? -0.8 : 0.8, y: 0 },
+        });
+        window.__game.advance(0.5);
+      }, i);
+      await page.evaluate(
+        () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+      );
+    }
+    await page.screenshot({ path: `${ROOT}/live-webcam-damage.png` });
+    expect(errors).toEqual([]);
+  },
+);

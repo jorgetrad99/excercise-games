@@ -1192,3 +1192,30 @@ The same axes: +x left, +y up, +z forward. Arm quats are swings from a hanging a
 ### Next
 
 Jorge records the 14 drills → `pnpm tune:boxing` + `GRID=1` → set `fists` (and `reference`), `pose.upperArm/forearm` from the drills. Then rewire the TEMPORARY synthetic fist tests to the drills.
+
+## 2026-09-16 — Visual expressiveness (M7.11): Codex handoff rescued, rebased, verify split
+
+### What changed
+
+- **Rescue:** Codex's uncommitted work in the git-ignored worktree `tmp/visual-expressiveness-worktree` is now `wip(render): unreviewed Codex handoff…`, plus the audit `docs/HANDOFF-visual-expressiveness-audit.md`. The branch is pushed to `origin`.
+- **Rebased onto `main` (6708eb4):**
+  - `ARCHITECTURE.md`: kept both sections.
+  - `features.json`: Codex's duplicate `M7.10` is now **`M7.11`**, and `M7.9` keeps main's note.
+- **Audit correction:** the "face-crop regression on main" was wrong. My temporary worktrees had no `public/models/`, which is git-ignored. With the models present, pure `main` produces live crops (GPU delegate, 30 pose-fps, test green). Retracted in the handoff note.
+- **Playwright concurrency (Codex had set `workers: 1` globally):**
+  - Restored parallel `smoke`.
+  - Added a `perf` project that runs after smoke on one worker, holding the timing-sensitive tests: `@perf` fps/pose-fps gates (5) and `@realtime` wall-clock pose replays (4).
+  - `test:smoke` = `--project=smoke --project=perf`; AGENTS §4 and ARCHITECTURE updated.
+  - This also creates the `--project=perf` that `.claude/agents/perf.md` expects.
+  - `PLAYWRIGHT_PORT` (Codex) is kept: another session's dev server holds 5173.
+
+### Verified
+
+- **Why the split and not plain parallel:**
+  - Parallel runs on this machine failed 3/3 (ambient CPU ~50 % from another session's `tmp/perf-wt` bisect with 5 Vite servers): 14 pose-fps, 44 fps, 1 frame in the menu test, and replay lane changes lost (`two-players` replay `[0,0]` vs `[-1,1]`).
+  - Global `workers: 1` passed 2/2.
+- **Split runs:**
+  - Two red runs, each on a single sample of the 2P gate (18 and 19 pose-fps; the other 14 samples were 22–30). The same gate run alone passed 2/2.
+  - One red run on 53 fps / 17 pose-fps while the other session was active.
+  - `tmp/verify-ve-3b.log` (load 30 %): **exit 0**, together with the live-pose change below.
+- **The 2P pose-fps gate is marginal under background load.** It was already noted in the pose-mirroring entry (one sample of 19). It isn't loosened.

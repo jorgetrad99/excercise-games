@@ -49,7 +49,7 @@ If you are stuck on the same problem for two attempts, stop, write what you trie
 
 ## 4. Verification — what "done" means here
 
-`pnpm verify` = `tsc --noEmit` + `eslint` + `vitest run` + `playwright test --project=smoke`. It must be green before any commit and before you say a task is done.
+`pnpm verify` = `tsc --noEmit` + `eslint` + `vitest run` + `playwright test --project=smoke --project=perf` (`@perf` fps gates and `@realtime` wall-clock replays run after smoke, one worker). It must be green before any commit and before you say a task is done.
 
 Beyond that, verify at the level of the thing you changed:
 

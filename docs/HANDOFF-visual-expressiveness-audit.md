@@ -2,13 +2,15 @@
 
 Audit only. I didn't change, fix or commit anything on either branch. Every claim below comes from reading the code or running commands, not from Codex's docs or notes.
 
+> **Correction (same day, follow-up session):** the "face-crop regression on `main`" reported below was wrong. It came from my temporary worktrees missing the git-ignored `public/models/`. With the models present, pure `main` produces live face crops and the test passes. Details in section d.
+
 ## TL;DR
 
 - **Nothing was committed.** `feat/visual-expressiveness` points at `f4a903c`, which is **one commit behind `main`** (it's missing the PoseState commit `6708eb4`). All of Codex's work is **uncommitted** in a git worktree at `tmp/visual-expressiveness-worktree/`. That folder is git-ignored, so cleaning `tmp/` or running `git worktree remove` would delete the work with no trace. **Commit it (even as WIP) before anything else.**
 - **Scope boundary held.** Codex didn't touch `src/pose/`, `src/core/` or `src/input/`.
 - **`pnpm verify` is green on the worktree**: typecheck, lint, 320 unit tests (1 skipped, which predates Codex), 25 smoke tests.
 - **Code merges into `main` without conflicts.** In a trial merge, typecheck, lint and all 328 unit tests pass. Only `docs/ARCHITECTURE.md` and `docs/features.json` conflict, and both branches claim the ID **`M7.10`**.
-- **Main has its own bug, and it's not from Codex.** On pure `main`, the live fake-camera test never produces a face crop in Boxing (FACEDBG count stays 0 for 30 s). The same test passes on `f4a903c`. Repro is below.
+- ~~Main has its own bug~~ **Retracted (see Correction).** There's no face-crop regression on `main`.
 - **Status per item:** 1 = partly done, with one design bug. 2 = mostly done. 3 = partly done (no real swelling).
 - **Recommendation: salvage, don't restart.** The work is tested, small (about 1.4k lines including tests) and follows the codebase's patterns. About **4–5 agent-days** remain, most of it targeted rework rather than new code.
 
@@ -117,12 +119,11 @@ The one thing that looks like pose code without being in `src/pose/`: **`src/ren
 - A trial merge (Codex patch applied onto `main`, plus the untracked files) had conflicts **only in `docs/ARCHITECTURE.md`** (both branches add a section right after the Boxing section) **and `docs/features.json`** (both edit around M7.9, and **both add `M7.10`** with different meanings).
 - In the merged tree:
   - `tsc`, `eslint` and `vitest` (328 tests) pass.
-  - Boxing smoke: 8 of 9 pass. The one failure is the live-face test, and it also fails on pure `main` (next bullet).
-- **The failure is a regression on `main`, not a merge issue.** `tests/e2e/boxing-visual.smoke.spec.ts` › "live fake-camera face…" fails in `/?game=boxing&input=pose&seed=42&clock=manual`: no face crop is ever produced. The results:
-  - Worktree on `f4a903c`: passed 2 of 2 runs.
-  - Trial merge: failed 2 of 2.
-  - Pure `main` with only that spec copied in: failed 1 of 1.
-  - Something in `6708eb4` stops live face crops with the fake camera. The worker now also posts `world`, and body tracking now includes ears and elbows. I didn't find the cause from reading the code and stopped there. Your real Boxing faces may be broken on `main`. **Check this first.**
+  - Boxing smoke: 8 of 9 pass. The one failure was the live-face test; that was a setup artifact (next bullet).
+- **~~Regression on `main`~~ Retracted.** The live-face test failed only in the temporary worktrees I created for the trial merge and the main-only check. `public/models/` is git-ignored, so those worktrees had no MediaPipe wasm or model, and the pose worker looped on `Failed to fetch dynamically imported module …/vision_wasm_module_internal.js`.
+  - With the models linked in, the same test passes on pure `main` (GPU delegate, 30 pose-fps, crops produced).
+  - The earlier results (2/2 green on `f4a903c`, red on both fresh trees) all fit this: the `f4a903c` worktree had its models vendored.
+  - Lesson: in any new worktree, run `boot.smoke` "MediaPipe wasm and pose model are vendored" before trusting pose e2e results.
 
 **Interface compatibility:** Codex clearly read your in-progress PoseState, since the field names match. It built against a **different delivery model and a few different meanings**:
 
@@ -161,6 +162,6 @@ Discard specific pieces rather than the branch. `render/boxing/pose-state.ts` pl
 **Before anything else:**
 
 1. **Commit the worktree.** It's the only copy.
-2. **Look into the live face-crop regression on `main`.** Repro: from a tree containing `tests/e2e/boxing-visual.smoke.spec.ts`, run `PLAYWRIGHT_PORT=5197 pnpm exec playwright test --project=smoke boxing-visual -g "live fake-camera"`, or open `/?game=boxing&input=pose&seed=42` with the fake camera and watch for `FACEDBG`.
+2. ~~Look into the live face-crop regression on `main`.~~ Retracted: no regression (see Correction).
 
 **Can't be automated (playtest for Jorge):** head-snap direction and feel, whether the fall/get-up reads well, whether the face-to-shell seam and lighting look acceptable, and bruise visibility at play distance. After the fixes, use `/?game=boxing&input=pose&seed=42&debug=1` with a real camera.

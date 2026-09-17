@@ -252,4 +252,4 @@ camera 720p30 → worker (640x360, PoseLandmarker) → PoseFrame
 
 - Hooks (`.claude/settings.json`, scripts in `.claude/hooks/`): guard human-owned paths (PreToolUse), prettier + `tsc --incremental` on `.ts` edits (PostToolUse), PROGRESS.md reminder (Stop).
 - Commands: `/verify`, `/playtest <seed> <input>`, `/milestone-check <M>`. Subagents: `reviewer`, `perf`.
-- `pnpm verify` = `tsc --noEmit` → `eslint .` → `vitest run` → `playwright test --project=smoke`.
+- `pnpm verify` = `tsc --noEmit` → `eslint .` → `vitest run` → `playwright test --project=smoke --project=perf` (`@perf` fps gates and `@realtime` replays run after smoke on one worker).
