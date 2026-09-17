@@ -10,6 +10,8 @@ export interface HudExtras {
   best: number;
   /** The run is held until calibration: show that instead of a frozen countdown. */
   waiting: boolean;
+  /** Session player names by slot (P1 first). */
+  names: readonly string[];
 }
 
 const CSS = `

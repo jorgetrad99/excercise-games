@@ -21,6 +21,8 @@ const CSS = `
 .bhud .card h2 { margin: 0 0 12px; font-size: 32px; }
 `;
 
+const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
 /** Conic-gradient pie: filled segments in `color`, lost ones dark, knockdown losses grey. */
 function pie(b: Boxer, color: string): string {
   const seg = 360 / C.stamina.segments;
@@ -62,11 +64,21 @@ export function mountBoxingHud(root: HTMLElement, me: BoxerId) {
     update(s: Readonly<BoxingState>, extras: HudExtras): void {
       write(
         parts.me,
-        side(s.boxers[me], 'You', me === 0 ? '#e63946' : '#2a6fdb', s.phase === 'fight'),
+        side(
+          s.boxers[me],
+          esc(extras.names[me] ?? 'You'),
+          me === 0 ? '#e63946' : '#2a6fdb',
+          s.phase === 'fight',
+        ),
       );
       write(
         parts.them,
-        side(s.boxers[them], 'Opponent', them === 0 ? '#e63946' : '#2a6fdb', s.phase === 'fight'),
+        side(
+          s.boxers[them],
+          esc(extras.names[them] ?? 'CPU'),
+          them === 0 ? '#e63946' : '#2a6fdb',
+          s.phase === 'fight',
+        ),
       );
       const secs = Math.ceil(Math.max(0, s.roundT));
       write(

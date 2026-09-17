@@ -10,6 +10,9 @@ const fakeCamera = [
   `--use-file-for-fake-video-capture=${FAKE_CLIP}`,
 ];
 
+/** The perf describe blocks (`test.describe('perf', …)`); grep also sees the project name, hence the whitespace. */
+const PERF = /\sperf\s/;
+
 export default defineConfig({
   testDir: 'tests/e2e',
   outputDir: 'tmp/test-results',
@@ -24,7 +27,18 @@ export default defineConfig({
     {
       name: 'smoke',
       testMatch: /.*\.smoke\.spec\.ts/,
+      grepInvert: PERF,
       // channel 'chromium' = new headless: uses the real GPU (headless-shell falls back to SwiftShader).
+      use: { ...devices['Desktop Chrome'], channel: 'chromium', launchOptions: { args: fakeCamera } },
+    },
+    {
+      // fps / pose-fps gates measure the GPU the other smoke pages share: run them after smoke, one at
+      // a time. In parallel, 2P pose-fps dipped to 19 from contention alone (PROGRESS 2026-09-16).
+      name: 'smoke-perf',
+      testMatch: /.*\.smoke\.spec\.ts/,
+      grep: PERF,
+      dependencies: ['smoke'],
+      workers: 1,
       use: { ...devices['Desktop Chrome'], channel: 'chromium', launchOptions: { args: fakeCamera } },
     },
     {

@@ -1346,3 +1346,100 @@ Pose inference runs in the worker: 25 ms per frame in 2P. It's the only big item
 2. Pilot pose-embedding k-NN only for guard/duck/lean if they stay fragile across people (~1 day, no dependency, < 0.1 ms per frame).
 3. No sequence model for punches now: it would add 100–200 ms of detection latency.
 4. No other MediaPipe task applies.
+
+---
+
+## 2026-09-16 — Named players, match history and stats charts (item 3)
+
+**Result:** before a match the menu asks "Who's playing?". Each player claims a slot by hovering (or with the mouse) and picks or types a name. Every finished match is saved under that name, and a new **Stats** page in the menu charts each stat across matches. No accounts, no new dependency.
+
+### 3a. Who's playing?
+
+- **Flow:** Menu → players 1|2 → game → **"Who's playing \<game\>?"** → Start.
+- **Slots:**
+  - 1P has one slot, "Player", **preselected with the last P1**, so a rematch is one hover on Start.
+  - 2P has "Left player · P1" and "Right player · P2", and **always claims explicitly**: the same two people may have swapped sides since last time.
+- **Choices per slot:** recent names (up to 6, most recently played first), "Player N", and a text field + Add for new names (keyboard; hands can only pick). A name taken by the other slot is disabled. Start is enabled only when every slot has a name.
+- **Claiming is tied to your side of the screen:** a slot's name buttons only react to the hand cursor from that side, the same screen-half split the 2P games use. So the body on the left can't claim "Right player". Mouse and keyboard work on everything. Back/Start react to either hand.
+- **Identity is still positional during the match.** The name is bound to the side you claimed it from. Swapping sides mid-session swaps the names. Knowing who is who from the body itself would need re-identification; not built, and I don't recommend it for a living-room game.
+- **Direct `?game=` links skip the screen.** Names come from `?names=Ana,Beto`, else the last session, else "Player N".
+- **The Boxing HUD shows the names** instead of You/Opponent (CPU in 1P).
+
+### 3b. Match history (`platform/profile-store.ts`)
+
+- **Format:** `localStorage['move-arcade.profile']` = `{ version: 1, players: { [name]: { matches[] } }, lastNames }`.
+- **Each match:** `{ game, at, players, opponent, result, stats }`. `opponent` is the other name in 2P, `"CPU"` in 1P Boxing, null in 1P Skate Run.
+- **What gets saved:** the new `MiniGame.matchStats(sim, player)` contract, recorded once per player when a match first ends (not for `?input=bot`).
+  - **Boxing:** result win/loss/draw; `cleanHits` (clean hits are what decide the match on points), `hitsTaken`, `knockdownsScored`, `knockdownsTaken`, `rounds`.
+  - **Skate Run:** result null; `score`, `distance`, `coins`.
+- **Schema and migration (PLAN §2.4 / M5 pattern):**
+  - `migrate()` upgrades an unversioned object to v1.
+  - Data from a **newer** version makes the store read-only, so this build never overwrites it.
+  - **Corrupt** JSON is copied to `move-arcade.profile.corrupt-<ms>` before a fresh profile starts. If that backup can't be written, nothing is overwritten either.
+  - Blocked storage works in memory for the page.
+  - Cap: 1000 matches per player (`ponytail:` note).
+- **There was no ProfileStore before this.** M5 hasn't been built. This is the M5.1 store, holding only what item 3 needs. PLAN §2.4's single-player fields (coins total, multiplier, tokens, missions, settings) get added when M5 is built, as a v2 migration.
+
+### 3c. Stats page (`platform/stats-view.ts`, `platform/line-chart.ts`)
+
+- **Layout:** player chips × game chips, then:
+  - **Record:** matches, W – L – D, win rate.
+  - **Last 20 results** as W/L/D chips (letter + colour, never colour alone).
+  - **One small line chart per stat** (small multiples, one axis each, zero-based, whole-number gridlines for counts).
+  - **The latest 10 matches as a table** (the accessible view).
+- **Hover:** a crosshair on the chart; a readout under it shows the value, match number, opponent, result and date. When not hovering, it shows the latest match.
+- **Charts are drawn on a canvas by hand (~140 lines), with no library and so no ADR.**
+  - There is one series per chart, and the only interaction is hover.
+  - A library (Chart.js ≈ 70 KB gz, uPlot ≈ 20 KB) would bring its own theming, a runtime dependency and an ADR, and buy nothing needed here.
+  - The series colour is the dataviz reference palette's dark slot 1 `#3987e5`, validated against the menu surface `#1b1f3b` (lightness band, chroma, ≥ 3:1 contrast: all pass).
+- **Screenshots:** `tmp/e2e/stats-page-14b.png` (14 seeded matches, hover), `tmp/e2e/stats-page.png` (the e2e's real match), `tmp/e2e/who-1p.png`.
+
+### Also changed: perf gates run in their own serial Playwright project
+
+- **Why:** item 3's verify went red 3× on the 2P pose-fps gate, with one or two samples of 19 against ≥ 20. The same gate was already red at session start before any change. It measures a GPU that the other smoke pages use at the same time.
+- **A/B on that gate alone:** item-3 tree 20–27 and 20–26; previous commit 2–30 in the same window. So it's noise, not item 3.
+- **Fix:** `playwright.config.ts` now has a `smoke-perf` project: the three `perf` describe blocks, `dependencies: ['smoke']`, `workers: 1`. `smoke` excludes them. `pnpm test:smoke` runs both.
+- **No threshold changed.** With the gates isolated, 2P pose-fps sampled **26–30**.
+- AGENTS §4 and ARCHITECTURE Harness updated.
+
+### What changed
+
+- **New:** `platform/profile-store.ts` (+ spec, 7 tests), `platform/stats-view.ts`, `platform/line-chart.ts` (+ spec), `tests/e2e/player-stats.smoke.spec.ts`.
+- **`platform/menu.ts`:**
+  - pages: home / who's playing / stats
+  - Stats button
+  - slot-restricted hover
+  - the dwell key covers every `data-*`
+- **`games/types.ts`:** `MiniGame.matchStats`. Boxing and Skate Run implement it.
+- **`main.ts`:** profile store, `names`, `recordMatch`, `?names=`, `launch(g, count, names)`.
+- **`render/hud.ts`:** `HudExtras.names`. **`render/boxing/hud.ts`:** names on the pies (escaped).
+- **e2e:**
+  - `menu-hover.smoke` rewritten with two synthetic bodies: the right hand can't claim the left slot; both claim, hover Start, 2P Boxing launches with the names on both HUDs; plus mouse + typed name.
+  - `boot.smoke` / `boxing.smoke` pick a name before Start.
+- **Harness:** `playwright.config.ts` `smoke-perf`, `package.json` `test:smoke`.
+- **Docs:** ARCHITECTURE "Players & match history", AGENTS `?names=`, features M5.1 (in_progress), M7.13.
+
+### Verified
+
+- **`pnpm verify` → exit 0** (`tmp/perf/verify-stats-4.log`): tsc, eslint, vitest 332 passed + 1 skipped (24 files), playwright 24/24 (21 smoke + 3 smoke-perf). 2P pose-fps 26–30.
+- **`player-stats.smoke`:**
+  - 2P bot-vs-bot Boxing to the end with `names=Ana,Beto`: both records saved; opponents cross-linked; `cleanHits` = the sim's `landed`; Ana's knockdowns taken = Beto's scored; W/L matches `winner`; no duplicate after the results card stays up.
+  - After a reload, Stats shows "Ana · Boxing: 1 match", 5 charts and 1 table row.
+  - 1P: opponent "CPU", HUD shows "Cleo".
+- **The hover e2e caught two bugs while writing it:**
+  - a `<button>` outside any form still reports `type === 'submit'`, so every button was being ignored
+  - my synthetic "left" body was actually on the right: negative `walk` = screen-left
+
+### Known gaps
+
+- **Not played with a real camera:** the two-person hover flow is tested on synthetic poses only. Button spacing within a slot may be tight for a hand cursor at 2.5 m; a playtest will tell.
+- **No rename, delete or merge of players** (a typo creates a new player). Add when needed.
+- **Stats only cover matches that reach the end.** Quitting mid-match (reload) records nothing.
+- **Skate Run 2P** saves each player's run with the other as opponent and no result (independent runs).
+- **On a small window, the compact camera thumbnail (top-left) can cover part of the left slot.**
+
+### Playtest note for Jorge
+
+1. `http://localhost:5173/?debug=1`: raise a hand, hover **2**, hover **Boxing**. Each of you hovers your own column's name, then either hovers **Start**.
+2. Play to the end, then Menu (reload) → **Stats** → your name → Boxing.
+3. To see charts with more data without playing: `?game=boxing&input=keyboard&autoplay=1&names=Ana,Beto` finishes bot matches under those names.

@@ -49,7 +49,7 @@ If you are stuck on the same problem for two attempts, stop, write what you trie
 
 ## 4. Verification — what "done" means here
 
-`pnpm verify` = `tsc --noEmit` + `eslint` + `vitest run` + `playwright test --project=smoke`. It must be green before any commit and before you say a task is done.
+`pnpm verify` = `tsc --noEmit` + `eslint` + `vitest run` + `playwright test --project=smoke --project=smoke-perf` (perf gates run after the rest, one at a time). It must be green before any commit and before you say a task is done.
 
 Beyond that, verify at the level of the thing you changed:
 
@@ -73,6 +73,7 @@ Screenshots and state dumps go to `tmp/` (git-ignored). Reference them by path i
 - `?game=boxing` — Boxing (keys: Z/X punch, ↑ guard, ←/→ sway, ↓ duck). `?players=2` is one shared match, not two runs.
 - `?input=replay:jump.json` — drives the game from a recorded fixture; `?record=1` — records a fixture (human only).
 - `?players=2` — split screen; `?model=lite|full|heavy`; `?camera=<deviceId>`.
+- `?names=Ana,Beto` — player names for a `?game=` link (the menu asks "Who's playing?" instead). Finished matches are saved per name in `localStorage['move-arcade.profile']`; the menu's **Stats** page charts them.
 - The `/playtest <seed> <input>` command wraps the above in headed Playwright and saves artifacts.
 
 ## 6. Code style (short)

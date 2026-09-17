@@ -38,4 +38,20 @@ export default defineGame<BoxingSim>({
     const s = sim.getState();
     return { started: s.tick > 0, over: s.phase === 'over', score: s.boxers[player]?.landed ?? 0 };
   },
+
+  matchStats: (sim, player) => {
+    const s = sim.getState();
+    const me = player === 1 ? 1 : 0;
+    const [mine, theirs] = [s.boxers[me], s.boxers[me === 0 ? 1 : 0]];
+    return {
+      result: s.winner === null ? 'draw' : s.winner === me ? 'win' : 'loss',
+      stats: {
+        cleanHits: mine.landed,
+        hitsTaken: theirs.landed,
+        knockdownsScored: theirs.knockdowns,
+        knockdownsTaken: mine.knockdowns,
+        rounds: s.round,
+      },
+    };
+  },
 });

@@ -59,4 +59,12 @@ export default defineGame<GameSim>({
     const s = sim.getState();
     return { started: s.tick > 0, over: s.phase === 'over', score: s.score };
   },
+
+  matchStats: (sim) => {
+    const s = sim.getState();
+    return {
+      result: null,
+      stats: { score: Math.round(s.score), distance: Math.round(s.distance), coins: s.coins },
+    };
+  },
 });

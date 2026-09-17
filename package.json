@@ -7,7 +7,7 @@
     "typecheck": "tsc --noEmit -p .",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:smoke": "playwright test --project=smoke",
+    "test:smoke": "playwright test --project=smoke --project=smoke-perf",
     "vendor:models": "node scripts/vendor-models.mjs",
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:smoke",
     "latency:gestures": "vitest run --config vitest.tools.config.ts gesture-latency",

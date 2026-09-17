@@ -85,7 +85,7 @@
       "id": "M5",
       "title": "Progression & persistence",
       "tasks": [
-        { "id": "M5.1", "text": "ProfileStore (localStorage, versioned schema + migration)", "status": "todo" },
+        { "id": "M5.1", "text": "ProfileStore (localStorage, versioned schema + migration)", "status": "in_progress", "note": "platform/profile-store.ts exists for named players' match history (M7.13). PLAN 2.4 fields (coins, best, multiplier, tokens, unlocks, missions, settings) not added yet." },
         { "id": "M5.2", "text": "Missions (10 templates), milestones, revive tokens, power-up unlocks, settings", "status": "todo" },
         { "id": "M5.3", "text": "Results card wiring", "status": "todo" }
       ],
@@ -122,7 +122,8 @@
         { "id": "M7.9", "text": "Cabezota faces (Piece 5, Boxing): oversized heads wearing each player's live camera face crop from pose landmarks (no face model)", "status": "done", "note": "Boxing only. Skate Run's rear camera never shows the face: separate work." },
         { "id": "M7.10", "text": "Pose mirroring: per-frame PoseState (bone directions/rotations, arm extension + reach, sway/duck/forward, torso/head angles) for render binding; punch handedness and detection tuning against real boxing recordings", "status": "in_progress", "note": "PoseState contract, plumbing to GameView.render and real-data tests done (ARCHITECTURE Pose mirroring). Tuning blocked on Jorge recording fixtures/pose/boxing/ drills (PROGRESS 2026-09-16 Pose mirroring), then pnpm tune:boxing GRID=1. Rig binding: Codex, feat/visual-expressiveness." },
         { "id": "M7.11", "text": "Perf diagnosis 1P/2P Boxing (per-feature attribution, before/after) + software-WebGL detection (CPU delegate, visible warning)", "status": "done", "note": "Root cause of the slow sessions: Chrome rendering WebGL in software (WARP). Lite auto-fallback (PLAN 1.1) deliberately NOT wired: measured no gain (PROGRESS 2026-09-16 Perf diagnosis)." },
-        { "id": "M7.12", "text": "Research: threshold rules vs learned classifiers for movement detection (docs/RESEARCH-movement-detection.md)", "status": "in_progress", "note": "Waiting for Jorge's decision." }
+        { "id": "M7.12", "text": "Research: threshold rules vs learned classifiers for movement detection (docs/RESEARCH-movement-detection.md)", "status": "in_progress", "note": "Waiting for Jorge's decision." },
+        { "id": "M7.13", "text": "Named players: 'Who's playing?' slot claiming by hand hover (menu), per-player match history in ProfileStore, Stats page with per-stat charts", "status": "done", "note": "Identity = name bound to a screen side for the session. Real two-person hover flow untested with a camera (synthetic poses)." }
       ],
       "dod": []
     }
