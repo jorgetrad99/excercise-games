@@ -1344,3 +1344,61 @@ Item 2: light the face like the shell (the seam).
 ### Next
 
 M7.11 is complete on the agent side and waits on the playtest above. The branch is ready to merge into `main` after the playtest.
+
+## 2026-09-16 — Boxing spec: docs/PLAN-BOXING.md (draft, awaiting sign-off)
+
+Branch `docs/plan-boxing`, from `feat/visual-expressiveness` (`a68568a`). Docs only; no code.
+
+### Why
+
+- **Jorge asked for three things; none was ever specified:**
+  - knockdown from the player's perspective
+  - effort-driven recovery (marching, jumping, running in place)
+  - the trainer between rounds
+- **The Boxing spec only ever existed as chat:**
+  - `docs/PLAN.md` doesn't mention Boxing.
+  - Its rules lived in the Piece 4 chat brief and in PROGRESS notes written after the fact.
+- **So M7.11 is done against its own spec,** while the game still misses the requirement. The gap was the spec, not the execution.
+- **Blocked:** the control-model inversion these requirements depend on isn't built or merged anywhere. The latest rig work (`2c446ae`) is explicitly sim-authoritative.
+
+### What changed
+
+- **New `docs/PLAN-BOXING.md`, the source of truth for Boxing:**
+  - control model (player owns the rig, the sim resolves consequences)
+  - closed list of authorized overlays
+  - body calibration additions
+  - the authority table S1–S13 with exact handover ticks, read through a pure `boxingAuthority()`
+  - R1 player-perspective knockdown, R2 effort recovery, R3 free movement, R4 trainer, all as testable `BX-…` IDs
+  - gesture scoping per game/state
+  - fixtures to record
+  - open decisions D1–D4
+- **Jorge's decisions written in:**
+  1. The random get-up roll is removed. Need = `needBase × n`, with a 2 s floor and an 8 s KO cap.
+  2. Detectors are scoped per game/state, so the Skate jump gate is never active on the canvas.
+  3. Wii shake-to-get-up is the reference behaviour.
+- **`features.json`:** new M7.14 (inversion) through M7.18 (trainer), all `todo`. M7.11 is left `done` on purpose.
+
+### Verified
+
+- **Docs only.** `features.json` parses.
+- **`pnpm verify`: exit 1, twice, each time on a different perf gate.** Every other check passed: tsc, eslint, vitest 338 passed + 1 skipped, and all non-perf e2e.
+  - Run 1 (`tmp/boxing-spec/verify-spec.log`): 2P pose-fps, lowest sample 19 against ≥ 20.
+  - Run 2 (`verify-spec-2.log`): 1080p fps 46 against ≥ 55.
+- **Perf gates run alone:** `playwright test --grep @perf --workers=1` → exit 0, 24 passed (`perf-serial.log`). fps 60, pose-fps 27–31.
+- **Why that points to load, not this change:** the code is byte-identical to `a68568a`, and this branch lacks the serial `smoke-perf` project from `feat/perf-diagnosis-and-player-stats`. No threshold was touched.
+- **Committed with verify red, on Jorge's explicit call (2026-09-16):** docs-only branch, code byte-identical to `a68568a`, and both failures are independent of this change. This is an exception to AGENTS §3, recorded here so the history is honest.
+- **The perf failures are an OPEN issue, not noise.** Two different gates failed on the same code, and 1080p at 46 vs ≥ 55 isn't marginal. GPU state investigation follows in the next entry.
+
+### Known gaps / flags for Jorge
+
+- **PLAN.md §6 needs the wording in PLAN-BOXING §8.3.** PLAN.md is human-owned, so I didn't edit it.
+- **Feature ID collision:**
+  - `feat/visual-expressiveness` has M7.11 = visual expressiveness.
+  - `feat/perf-diagnosis-and-player-stats` has M7.11 = perf diagnosis, plus M7.12 and M7.13.
+  - Merging both needs a renumber. The new items start at M7.14 to avoid both.
+- **Pacing numbers are untuned start values:** needBase 6, the point per gesture, decay, the gains.
+- **Fixtures to record:** PLAN-BOXING §11.
+
+### Next
+
+Jorge signs off on the spec (and D1). Then M7.14, the inversion, runs against it.
