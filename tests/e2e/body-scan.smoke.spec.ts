@@ -1,4 +1,5 @@
-// PLAN-BOXING BX-CAL-6 / acceptance 5: the body scan is in the menu and changes effective reach.
+// PLAN-BOXING BX-CAL-6: the body scan is in the menu and saves per name. Applying it to reach
+// (acceptance 5) is disabled until the guard-scores blocker is resolved.
 // TEMPORARY(synthetic-fixtures): synthetic T-pose and punch, injected / replayed.
 import { expect, test, type Page } from '@playwright/test';
 import { boxingConfig as C } from '../../src/core/boxing/boxing.config';
@@ -73,7 +74,7 @@ test('BX-CAL-6: Body scan in the menu measures and saves arm lengths per name', 
 });
 
 test(
-  'acceptance 5: the scan changes effective reach: the same take reads deeper with the true (scanned) arm lengths',
+  'BX-CAL-6 blocker: a stored scan is NOT applied to reach (same take, same peak depth as no scan)',
   { tag: '@realtime' },
   async ({ page }) => {
     test.setTimeout(60_000);
@@ -96,10 +97,11 @@ test(
     const unscanned = await peakGloveZ(page, 'Nobody Scanned');
     const contact = 2 * C.ring.gapM - C.body.head[2] - (C.body.headRadiusM + C.body.gloveRadiusM);
     console.info('BX-CAL-6 peak glove z', { scanned, unscanned, contact });
-    // The synthetic figure's arms are 0.71 torso lengths (BX-CAL-6 above); the defaults are 0.50 / 0.48.
-    // Depth comes from foreshortening against the bone length, so with the defaults the same 2D arm
-    // reads as nearer the image plane: the scan recovers reach the defaults lose.
-    expect(unscanned).toBeGreaterThan(contact); // even with default proportions, half extension lands
-    expect(scanned).toBeGreaterThan(unscanned + 0.1);
+    // Jorge, 2026-09-17: with an accurate scan (these 0.71 arms are the synthetic figure's true lengths)
+    // a plain guard read z 1.23 m, past head contact: standing in guard scored. Until armGainM is retuned
+    // from the drills, main.ts stores scans but plays everyone with default proportions. When the scan is
+    // re-enabled, this flips back to acceptance 5 (scanned reads deeper: 1.29 vs 1.04 m when last applied).
+    expect(unscanned).toBeGreaterThan(contact); // default proportions: half extension lands
+    expect(Math.abs(scanned - unscanned)).toBeLessThan(0.03);
   },
 );
