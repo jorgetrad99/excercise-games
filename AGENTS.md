@@ -60,7 +60,13 @@ If you are stuck on the same problem for two attempts, stop, write what you trie
   - tools-only Playwright probes (`--project=tools`)
   - the format-and-typecheck hook: waits ≤ 45 s, then skips tsc and says so
 - **Anything else heavy** (an ad-hoc `node` probe, a build): run `node scripts/e2e-lock.mjs wait` first.
-- **Fallback when a process can't check the lock:** every perf gate records the GPU (`GATE <name> gpu:`) **and the machine state it observed** (`GATE <name> machine:`: CPU busy %, GPU util %, whether this run holds the lock, and other tsc/eslint/vitest/playwright/build/probe processes outside this run). Both are also written to `tmp/verify/gates.jsonl`. A gate value reported without its machine line isn't a usable number. A contended gate (other heavy processes, lock not held, or software renderer) is **PROVISIONAL**: recorded, then skipped, so it's neither pass nor fail; re-measure quietly. The list of commands that bypass the lock is in PROGRESS 2026-09-16 "Perf follow-ups".
+- **Fallback when something can't check the lock (a compositor, a browser, an editor):** every perf gate records the GPU (`GATE <name> gpu:`) **and how much of the machine was not this run** (`GATE <name> machine:`).
+  - What it measures: external GPU % on this run's adapter and external CPU cores, both from Windows performance counters, with the top external processes by name; plus nvidia temperature, P-state and throttle reasons, and whether the lock is held.
+  - Everything is also written to `tmp/verify/gates.jsonl`. A gate value reported without its machine line isn't a usable number.
+- **Provisional:** a gate is **PROVISIONAL** when external GPU or CPU exceeds `tests/e2e/contention.config.ts`, the counters are unavailable, the lock isn't held, or the renderer is software. It's recorded, then skipped, so it's neither pass nor fail; re-measure quietly.
+  - The rule is measured load, not process names.
+  - Not yet exercised in a real Playwright run (PROGRESS "Contention check widened").
+- **Bypass list:** the commands that bypass the lock are in PROGRESS 2026-09-16 "Perf follow-ups".
 - **Worktrees:** set `PLAYWRIGHT_PORT`, so a stale Vite from another checkout isn't silently reused.
 
 Beyond that, verify at the level of the thing you changed:

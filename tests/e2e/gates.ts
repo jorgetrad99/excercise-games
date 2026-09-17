@@ -6,8 +6,9 @@ import { contention, machineState } from './machine-state';
 // that went green after it stay comparable. One JSON line per gate in tmp/verify/gates.jsonl.
 // It also records the GPU at measurement time: a red gate on a software rasterizer (or a different
 // adapter) is a machine problem, not a regression, and must be diagnosable from the log alone.
-// A value measured on a contended machine (other heavy processes, lock not held, software renderer) is
-// PROVISIONAL: recorded and printed, then the test is skipped, so it counts as neither pass nor fail.
+// A value measured on a contended machine (external GPU/CPU load above contention.config.ts, lock not
+// held, software renderer) is PROVISIONAL: recorded and printed, then the test is skipped, so it counts
+// as neither pass nor fail.
 
 const SOFTWARE = /swiftshader|warp|basic render|llvmpipe|softpipe|software/i;
 
@@ -72,14 +73,16 @@ export async function recordGate(
     `GATE ${gate} gpu: ${gpu.renderer} · pose ${gpu.poseDelegate ?? '-'} ${gpu.poseGpu ?? ''}` +
       (gpu.software ? ' · SOFTWARE RENDERER: perf numbers are not comparable' : ''),
   );
-  const others = machine.otherHeavy.map((p) => `${p.pid} ${p.cmd.slice(0, 60)}`);
-  const th = machine.gpuThermal;
+  const nv = machine.nvidia;
+  const gpuTop = machine.topExternalGpu.map((p) => `${p.name} ${p.pct}%`).join(', ') || '-';
+  const cpuTop = machine.topExternalCpu.map((p) => `${p.name} ${p.cores}`).join(', ') || '-';
   console.info(
-    `GATE ${gate} machine: cpu ${machine.cpuBusyPct}% · gpu ${machine.gpuUtilPct ?? '-'}%` +
-      (th ? ` ${th.tempC}°C ${th.pstate} throttle ${th.clockEventReasons}` : '') +
-      ` · gpu top ${machine.gpuTop.map((p) => `${p.process} ${p.pct}%`).join(', ') || '-'}` +
-      ` · lock ${machine.lockHeld ? 'held' : 'NOT HELD'}` +
-      ` · other heavy: ${others.length ? `${others.length} CONTENDED [${others.join(' | ')}]` : 'none'}`,
+    `GATE ${gate} machine: external GPU ${machine.externalGpuPct ?? '?'}% (own ${machine.ownGpuPct ?? '?'}%) [${gpuTop}]` +
+      ` · external CPU ${machine.externalCpuCores ?? '?'} cores [${cpuTop}] · cpu total ${machine.cpuBusyPct ?? '?'}%` +
+      (nv
+        ? ` · nvidia ${nv.utilPct}% ${nv.tempC}°C ${nv.pstate} throttle ${nv.clockEventReasons}`
+        : '') +
+      ` · lock ${machine.lockHeld ? 'held' : 'NOT HELD'}`,
   );
   if (provisional.length) {
     const why = `PROVISIONAL (${provisional.join('; ')}): not a pass or fail. Re-measure on a quiet machine.`;

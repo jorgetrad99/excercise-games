@@ -4,37 +4,115 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { acquire, currentHolder, waitForLock } from '../../scripts/e2e-lock.mjs';
-import { contention, isHeavyCommand } from '../e2e/machine-state';
+import { contention, ourPids, summarizeLoad } from '../e2e/machine-state';
 
-describe('provisional gate results', () => {
-  const quiet = { otherHeavy: [], lockHeld: true };
+describe('provisional gate results: measured external load, not process names', () => {
+  const quiet = { externalGpuPct: 3, externalCpuCores: 0.8, lockHeld: true };
+  const cfg = { maxExternalGpuPct: 10, maxExternalCpuCores: 2, samples: 3 };
+
   it('a quiet run with the lock on a hardware GPU is a real measurement', () => {
-    expect(contention(quiet, false)).toEqual([]);
+    expect(contention(quiet, false, cfg)).toEqual([]);
   });
+
   it.each([
-    [{ ...quiet, otherHeavy: [{ pid: 1, cmd: 'tsc' }] }, false, /1 other heavy/],
-    [{ ...quiet, lockHeld: false }, false, /lock not held/],
-    [quiet, true, /software renderer/],
-  ])('contended (%j, software %s) → provisional', (m, sw, why) => {
-    expect(contention(m, sw).join('; ')).toMatch(why);
+    [
+      'the compositor on the dGPU (2026-09-16: 42 %)',
+      { ...quiet, externalGpuPct: 42 },
+      false,
+      /external GPU 42 % > 10 %/,
+    ],
+    [
+      'an extension host plus a browser',
+      { ...quiet, externalCpuCores: 2.4 },
+      false,
+      /external CPU 2.4 cores > 2/,
+    ],
+    ['lock not held', { ...quiet, lockHeld: false }, false, /lock not held/],
+    ['software renderer', quiet, true, /software renderer/],
+    [
+      'counters unavailable',
+      { ...quiet, externalGpuPct: null, externalCpuCores: null },
+      false,
+      /not measurable/,
+    ],
+  ])('%s → provisional', (_name, m, sw, why) => {
+    expect(contention(m, sw, cfg).join('; ')).toMatch(why);
   });
 });
 
-describe('machine state: which other processes count as contention', () => {
-  it.each([
-    ['"C:\\Program Files\\nodejs\\node.exe" node_modules/typescript/bin/tsc --noEmit -p .', true],
-    ['node /repo/node_modules/vitest/vitest.mjs run', true],
-    ['node node_modules/eslint/bin/eslint.js .', true],
-    ['node scripts/perf-probe.mjs --label head', true],
-    ['node .claude/hooks/format-and-typecheck.mjs', true],
-    ['"C:\\Program Files\\Git\\bin\\bash.exe" -c -l "PLAYWRIGHT_PORT=5190 pnpm verify"', false],
-    [
-      '"C:\\Users\\j\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe" c:\\Users\\j\\.vscode\\extensions\\dbaeumer.vscode-eslint-3.0.24\\server\\out\\eslintServer.js',
-      false,
-    ],
-    ['node node_modules/vite/bin/vite.js --port 5190 --strictPort', false],
-  ])('%s → %s', (cmd, heavy) => {
-    expect(isHeavyCommand(cmd)).toBe(heavy);
+describe('summarizeLoad: counter rows → this run vs everything else', () => {
+  const NV = 'luid_0x00000000_0x0001878a_phys_0';
+  const AMD = 'luid_0x00000000_0x00013d0e_phys_0';
+  const rows = [1, 2].flatMap((i) => [
+    { i, path: '\\\\h\\processor(_total)\\% processor time', v: 30 },
+    { i, path: '\\\\h\\process(idle)\\% processor time', v: 900 },
+    { i, path: '\\\\h\\process(idle)\\id process', v: 0 },
+    { i, path: '\\\\h\\process(code#2)\\% processor time', v: 120 }, // extension host: 1.2 cores
+    { i, path: '\\\\h\\process(code#2)\\id process', v: 33000 },
+    { i, path: '\\\\h\\process(chrome#4)\\% processor time', v: 250 }, // our headless browser
+    { i, path: '\\\\h\\process(chrome#4)\\id process', v: 500 },
+    {
+      i,
+      path: `\\\\h\\gpu engine(pid_2412_${NV}_eng_0_engtype_3d)\\utilization percentage`,
+      v: 42,
+    }, // dwm
+    {
+      i,
+      path: `\\\\h\\gpu engine(pid_500_${NV}_eng_0_engtype_3d)\\utilization percentage`,
+      v: 20,
+    }, // ours
+    {
+      i,
+      path: `\\\\h\\gpu engine(pid_500_${NV}_eng_1_engtype_compute)\\utilization percentage`,
+      v: 5,
+    },
+    {
+      i,
+      path: `\\\\h\\gpu engine(pid_9_${AMD}_eng_0_engtype_3d)\\utilization percentage`,
+      v: 60,
+    }, // other adapter
+  ]);
+  const names = new Map([
+    [2412, 'dwm.exe'],
+    [33000, 'Code.exe'],
+    [500, 'chrome.exe'],
+  ]);
+  const load = summarizeLoad(rows, new Set([500]), names);
+
+  it('external GPU is measured on the adapter this run renders on, whatever the process name', () => {
+    expect(load.externalGpuPct).toBe(42);
+    expect(load.ownGpuPct).toBe(25);
+    expect(load.topExternalGpu[0]).toEqual({
+      pid: 2412,
+      name: 'dwm.exe',
+      pct: 42,
+    });
+  });
+
+  it('external CPU counts every non-run process in cores; Idle and our own browser are excluded', () => {
+    expect(load.externalCpuCores).toBe(1.2);
+    expect(load.topExternalCpu).toEqual([{ pid: 33000, name: 'Code.exe', cores: 1.2 }]);
+    expect(load.cpuBusyPct).toBe(30);
+  });
+});
+
+describe('ourPids: what counts as this run', () => {
+  const procs = [
+    { pid: 1, ppid: 0, name: 'bash', cmd: 'bash -c "pnpm verify"' },
+    { pid: 2, ppid: 1, name: 'node', cmd: 'node playwright test' },
+    { pid: 3, ppid: 2, name: 'node', cmd: 'node playwright worker' },
+    { pid: 4, ppid: 3, name: 'chrome', cmd: 'chrome --headless' },
+    { pid: 5, ppid: 2, name: 'node', cmd: 'node vite --port 5190' },
+    // Chrome's GPU process is the browser's child; Windows keeps the creator pid, it doesn't reparent.
+    { pid: 6, ppid: 4, name: 'chrome', cmd: 'chrome --type=gpu-process' },
+    { pid: 9, ppid: 0, name: 'Code', cmd: 'Code.exe extensionHost' },
+  ];
+  it('ancestors of the worker and everything the runner spawned, nothing else', () => {
+    expect([...ourPids(procs, 3)].sort()).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+  it('without a recognisable Playwright runner, everything this process spawned still counts as ours', () => {
+    const plain = procs.map((p) => (p.pid === 2 ? { ...p, cmd: 'node runner.js' } : p));
+    expect([...ourPids(plain, 3)].sort()).toEqual([1, 2, 3, 4, 6]);
   });
 });
 

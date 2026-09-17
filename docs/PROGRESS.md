@@ -1978,3 +1978,68 @@ Before `0457ca6` no measurement recorded machine state. "Unrecorded" therefore m
 **Recorded quiet (usable):** from the e2e-lock retry onward. 2P pose-fps min 28 at 23:00 and 23:17, then 25 ×5 and 24 after the step described in §1, each with its machine line.
 
 **Render budget (still open, not built here):** the park biome's triangle counts stand. Its "no fps effect" conclusion is contended-era and needs a quiet re-measure with the `gpu top` line before the chaser and web-swinging budget is set.
+
+
+## 2026-09-16 — Contention check widened to measured external load; render-budget measurement specified
+
+Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), on `1612791`. No verify, e2e or baseline run: Jorge changes the display routing first. Session move-arcade-32 ports these files onto `chore/perf-lock` (agreed: it dropped its own waiter registry and threshold version, and keeps a gate-coverage reporter).
+
+### Contention check: "how much of the machine is not mine", not "is a dev tool running"
+
+- **Supersedes** the name-based catch described at the end of "Perf follow-ups" §2.
+- **Removed:** process-name matching (`HEAVY`, `WRAPPER`, `otherHeavy`, `isHeavyCommand`) and its unit table. It saw none of the real load (the compositor, a browser, the editor).
+- **`tests/e2e/machine-state.ts` now samples Windows performance counters** for `contentionConfig.samples` = 3 s:
+  - **External GPU %:** `\GPU Engine(*engtype_3D|Compute)\Utilization Percentage`, per process, summed over processes that aren't this run, on **the adapter this run renders on**. The adapter is where this run's own processes are busiest, else the busiest adapter.
+  - **External CPU in logical cores:** `\Process(*)\% Processor Time` joined to `ID Process`, excluding Idle and this run.
+  - **Total CPU %**, **own GPU %**, and the **top 5 external processes by GPU and by CPU**, with names for the report only, never for the decision.
+  - **nvidia-smi:** utilization, temperature, P-state, throttle bitmask.
+- **"This run"** = the worker's ancestors plus everything the Playwright runner spawned (workers, headless Chrome and its GPU process, Vite, the sampler). Without a recognisable runner, everything the worker spawned.
+- **Provisional rule** (`contention()`), thresholds in the new `tests/e2e/contention.config.ts`:
+  - external GPU > `maxExternalGpuPct` = **10 %**
+  - external CPU > `maxExternalCpuCores` = **2 cores**
+  - counters unavailable (never silently "measured")
+  - lock not held
+  - software renderer
+  - **The thresholds are untuned start values,** to be set from Jorge's display-routing before/after. move-arcade-32 presents them to Jorge for sign-off; this file is the only set.
+- **Side effect:** sessions blocked in `waitForLock` poll every 2 s and use about 0 CPU/GPU, so they no longer count as contention. move-arcade-32 found that the name rule counted them and skipped every gate; that's why a registry isn't needed.
+- **Ceiling (`ponytail:`):** counters are read right *after* the gate's sampling window, not during it. A load that ends exactly with the window is missed. The upgrade is a streaming sampler started with the test.
+
+**Bug found while checking the live path:** under vitest, `Get-Counter` exits with status 1 while still printing every valid sample; processes exit mid-sample during test runs. The first version threw that output away and reported "not measurable". It now keeps stdout whenever it parses.
+
+**Live read on this machine (not a gate run; lock not held; 23:5x):**
+- external GPU **29.8 %** (dwm.exe 28.7 %, claude.exe 0.8 %)
+- external CPU **4.76 cores** (Code.exe 1.04, MsMpEng.exe/Defender 0.70, dwm.exe 0.60, two node.exe 0.43 + 0.31)
+- nvidia 38 %, 47 °C, P5, throttle bitmask 0x1 (GPU idle)
+- **Under this rule the machine is contended right now,** as Jorge suspected: the old "quiet" baselines weren't quiet.
+
+**Verified (unit only):**
+- `tests/unit/perf-lock.spec.ts`, 21 passed together with `guard-paths.spec.ts`:
+  - the threshold table: dwm at 42 % → provisional; extension host + browser at 2.4 cores → provisional; lock not held; software; counters unavailable → provisional; quiet → measured
+  - `summarizeLoad` on synthetic counter rows: dwm on our adapter → external 42; our Chrome 20 + 5 → own 25; Code at 1.2 cores; Idle excluded; another adapter's load ignored
+  - `ourPids`: the runner's descendants including Chrome's GPU process, and the no-runner fallback
+- tsc and eslint clean.
+
+### UNTESTED IN ANGER: the provisional rule has never run end-to-end in Playwright
+
+The provisional path (`recordGate` → `contention()` → annotation → `test.skip`) and the load sampler inside a real perf gate have **not** run in a Playwright e2e run. Unit tests and one live vitest read only; no e2e was allowed this pass.
+
+**Don't treat the first provisional (or measured) gate result as verified behaviour.** The first real run must check, from its `GATE <name> machine:` lines:
+1. Own GPU % is non-zero while the game renders, so the adapter pick and the "ours" tree work with real Chrome processes.
+2. Headless Chrome and its GPU process are *not* in the external top lists.
+3. A deliberately contended run (e.g. a video playing on the dGPU display) comes out PROVISIONAL, and a quiet one comes out measured.
+4. move-arcade-32's coverage reporter fails the run when every @perf gate is provisional.
+
+### Render-budget measurement: specified, not run
+
+`docs/RENDER-BUDGET-MEASUREMENT.md`: what the session Jorge assigns measures, after the display change, so the chaser + skyhook get a number instead of the void "no fps effect" conclusion.
+- **Preconditions:** routing recorded, lock held, contention not provisional at the start and end of every scene.
+- **Scenes:** Skate 1P/2P street and park with pose, 2P park without pose, a Boxing 2P control scene for machine drift, and 2P park headed on the real display (the cross-adapter present after routing).
+- **Procedure:** 5 round-robin repetitions, uncapped render, p95s. The set is valid only if the control drifts ≤ 10 %.
+- **Budget arithmetic:**
+  - render headroom = 16.7 − frame p95 − 2.5 ms reserve
+  - pose headroom = 33.3 − 2P inference p95 − 5.0 ms reserve
+  - marginal ms per triangle from street → park
+  - allowance per view = min over the two budgets, halved for 2P
+  - draw calls: ≤ 150 − R4 calls − 10, halved per view
+  - negative headroom means cut park geometry first
+- **Handover sentence:** "≤ T triangles, ≤ D draw calls per view; 2P added frame p95 ≤ Hr; added inference p95 ≤ Hp".
