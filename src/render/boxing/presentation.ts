@@ -1,5 +1,5 @@
 import { boxingConfig as C } from '../../core/boxing/boxing.config';
-import type { BoxerId, BoxingState, Fist } from '../../core/boxing/types';
+import type { BoxerId, BoxingState } from '../../core/boxing/types';
 import { boxingVisual as V } from './visual.config';
 
 /** Anatomical left/right, plus chin. Each boxer owns a separate set, even with a shared face feed. */
@@ -20,13 +20,8 @@ const smooth = (n: number) => {
   return k * k * (3 - 2 * k);
 };
 
-/** Aim is the puncher's frame: +x hits the defender's anatomical left. */
-export function impactZone(fist: Fist, hand: number): 0 | 1 | 2 {
-  if (fist.aim.y > C.aim.upperMin) return 2;
-  return Math.abs(fist.aim.x) > 0.15 ? (fist.aim.x > 0 ? 0 : 1) : hand === 0 ? 1 : 0;
-}
-
-/** Render history observes cumulative hits rather than drainEvents(), which belongs to the HUD.
+/** Render history observes the sim's hit list (where each glove really touched) rather than drainEvents(),
+ * which belongs to the HUD.
  * Same-tick split-screen draws are idempotent; new simulations and rewinds clear every bruise.
  * Floor state follows the sim exactly: a dizzy boxer is still standing (and can dodge or be hit), so
  * dizzy only wobbles. The fall starts with the referee count, or with a TKO. */
@@ -35,10 +30,9 @@ export function createPresentation() {
   let tick = -1,
     clock = 0,
     lastT = 0,
-    landed = 0,
+    seenHitT = -Infinity,
     hitT = -Infinity,
     fallAt = -Infinity;
-  let zone: 0 | 1 | 2 = 0;
   let out = newPresentation(0);
   return (s: Readonly<BoxingState>, who: BoxerId): Presentation => {
     if (source !== s || s.tick < tick) {
@@ -46,7 +40,7 @@ export function createPresentation() {
       tick = -1;
       clock = s.t;
       lastT = s.t;
-      landed = 0;
+      seenHitT = -Infinity;
       hitT = -Infinity;
       fallAt = -Infinity;
       out = newPresentation(s.t);
@@ -57,18 +51,15 @@ export function createPresentation() {
     lastT = s.t;
     tick = s.tick;
     out.time = clock;
-    const b = s.boxers[who],
-      attacker = s.boxers[who === 0 ? 1 : 0];
-    const fists = attacker.fists;
-    const hand = activeHand(fists);
-    if (fists.some((f) => f.phase !== 'ready')) zone = impactZone(fists[hand], hand);
-    const hits = Math.max(0, attacker.landed - landed);
-    if (hits) {
-      addDamage(out.damage, fists, hits, zone);
-      out.hitSide = zone === 0 ? 1 : zone === 1 ? -1 : 0;
-      hitT = clock - Math.max(0, s.t - b.hitT);
+    const b = s.boxers[who];
+    // Hits since the last read, even when frames skip ticks (the sim runs at 120 Hz, frames at 60).
+    const fresh = b.hits.filter((hit) => hit.t > seenHitT); // same-tick hits share a t: all count
+    for (const hit of fresh) {
+      out.damage[hit.zone] = clamp(out.damage[hit.zone] + V.bruisePerHit);
+      out.hitSide = hit.zone === 0 ? 1 : hit.zone === 1 ? -1 : 0;
+      hitT = clock - Math.max(0, s.t - hit.t);
     }
-    landed = attacker.landed;
+    seenHitT = fresh.at(-1)?.t ?? seenHitT;
     out.hitAge = clock - hitT;
     const floored = flooredBy(s, who);
     // A count already running when first observed began phaseT ago. A KO keeps the count's start,
@@ -101,29 +92,6 @@ function newPresentation(time: number): Presentation {
     dizzy: 0,
     time,
   };
-}
-
-function addDamage(
-  damage: FaceDamage,
-  fists: readonly [Fist, Fist],
-  hits: number,
-  zone: 0 | 1 | 2,
-): void {
-  if (
-    hits === 2 &&
-    fists.every((f) => f.phase === 'back') &&
-    Math.abs(fists[0].t - fists[1].t) < C.fixedDt
-  ) {
-    fists.forEach((f, hand) => {
-      const side = impactZone(f, hand);
-      damage[side] = clamp(damage[side] + V.bruisePerHit);
-    });
-  } else damage[zone] = clamp(damage[zone] + hits * V.bruisePerHit);
-}
-
-function activeHand(fists: readonly [Fist, Fist]): 0 | 1 {
-  if (fists[1].phase === 'back' && (fists[0].phase !== 'back' || fists[1].t < fists[0].t)) return 1;
-  return fists[0].phase === 'ready' && fists[1].phase !== 'ready' ? 1 : 0;
 }
 
 /** `fallen`: seconds since the fall began, or < 0 when standing. */

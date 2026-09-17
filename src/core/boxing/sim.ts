@@ -1,12 +1,16 @@
 // Boxing sim (Piece 4): Wii Sports Boxing rules for two boxers in one shared, deterministic state.
-// Events carry `player` (0/1 = boxer) and punches an `aim`; the sim reads the aim vector directly
-// (no punch-type classifier). Same determinism contract as Skate Run: events apply at the next tick.
+// The player is the authority: BODY input places a boxer's head and gloves, and the sim only resolves
+// what they touch (collide.ts): hits, blocks, whiffs, then stamina, dizzy, knockdowns and rounds.
+// Keyboard/bot events (PUNCH_*, GUARD_*, DODGE_*, DUCK) drive a puppet body through the same collisions.
+// Events carry `player` (0/1 = boxer). Same determinism contract as Skate Run: events apply at the next tick.
 import type { Aim, InputEvent } from '../input';
 import { mulberry32 } from '../prng';
+import { applySample, newBodyTrack, stepBody } from './body';
 import { boxingConfig as C } from './boxing.config';
-import type { Boxer, BoxerId, BoxingEventType, BoxingState, Fist } from './types';
+import { collideGlove, type Outcome } from './collide';
+import type { Boxer, BoxerId, BoxingEventType, BoxingState, Fist, GloveContact } from './types';
 
-export type BoxingInput = Pick<InputEvent, 'type' | 'aim' | 'player'>;
+export type BoxingInput = Pick<InputEvent, 'type' | 'aim' | 'player' | 'body'> & { t?: number };
 
 /** Per-tick input source for bot-driven boxers; returns events with `player` set. */
 export type BoxingController = (s: Readonly<BoxingState>) => readonly BoxingInput[];
@@ -30,6 +34,12 @@ export function rngAt(seed: number, tick: number, salt: number): number {
 }
 
 const readyFist = (): Fist => ({ phase: 'ready', t: 0, aim: { x: 0, y: 0 } });
+const freeGlove = (): GloveContact => ({
+  touching: false,
+  spent: false,
+  struck: false,
+  closingT: 0,
+});
 
 function newBoxer(): Boxer {
   const max = C.stamina.segments;
@@ -48,6 +58,9 @@ function newBoxer(): Boxer {
     landed: 0,
     hitT: -1e9,
     blockT: -1e9,
+    body: newBodyTrack(),
+    gloves: [freeGlove(), freeGlove()],
+    hits: [],
   };
 }
 
@@ -94,6 +107,8 @@ export function tickBoxing(s: BoxingState, events: readonly BoxingInput[]): void
   const dt = C.fixedDt;
   s.t += dt;
   s.tick++;
+  // Bodies move in every phase: the player's body is never frozen by the match state.
+  for (const b of s.boxers) stepBody(b, dt);
   switch (s.phase) {
     case 'intro':
     case 'break':
@@ -114,6 +129,7 @@ function applyEvent(s: BoxingState, e: BoxingInput): void {
   const who: BoxerId = e.player === 1 ? 1 : 0;
   if (e.type === 'PAUSE' || e.type === 'RESUME') return pauseOrResume(s, who, e.type === 'PAUSE');
   const b = s.boxers[who];
+  if (e.type === 'BODY') return e.body ? applySample(b.body, e.body, e.t ?? s.t * 1000) : undefined;
   // Guard is a held state: track it in every phase so a release during a count isn't lost.
   if (e.type === 'GUARD_START') b.guard = true;
   if (e.type === 'GUARD_END') b.guard = false;
@@ -158,9 +174,13 @@ function fight(s: BoxingState, dt: number): void {
   // Seeded coin flip for who resolves first, so same-tick punches favour neither boxer (2P
   // fairness). Tick parity isn't enough: punches thrown on the same grid land on the same parity.
   const order = rngAt(s.seed, s.tick, 99) < 0.5 ? ([0, 1] as const) : ([1, 0] as const);
+  for (const who of order) moveBoxer(s, who, dt);
   for (const who of order) {
-    moveBoxer(s, who, dt);
-    if (s.phase !== 'fight') return;
+    for (const hand of [0, 1] as const) {
+      const outcome = collideGlove(s, who, hand, dt);
+      if (outcome) resolve(s, who, outcome);
+      if (s.phase !== 'fight') return;
+    }
   }
   // Both dizzy (whiffs and blocks can empty both pies): neither can punch or recover, so the round
   // would stall until the bell. Break the clinch: both come round with one segment.
@@ -178,29 +198,18 @@ function moveBoxer(s: BoxingState, who: BoxerId, dt: number): void {
     b.dodgeT -= dt;
     if (b.dodgeT <= 0) Object.assign(b, { dodge: 'none', dodgeT: 0, dodgeCd: C.dodge.cooldownS });
   } else b.dodgeCd = Math.max(0, b.dodgeCd - dt);
+  // Puppet fists only animate (body.ts); whether they land is collision.
   for (const fist of b.fists) {
     if (fist.phase === 'ready') continue;
     fist.t += dt;
-    if (fist.phase === 'out' && fist.t >= C.punch.travelS - EPS) {
+    if (fist.phase === 'out' && fist.t >= C.punch.travelS - EPS)
       Object.assign(fist, { phase: 'back', t: 0 });
-      land(s, who, fist.aim);
-      if (s.phase !== 'fight') return;
-    } else if (fist.phase === 'back' && fist.t >= C.punch.retractS - EPS) {
+    else if (fist.phase === 'back' && fist.t >= C.punch.retractS - EPS)
       Object.assign(fist, { phase: 'ready', t: 0 });
-    }
   }
   const resting = !b.dizzy && b.fists.every((f) => f.phase === 'ready');
   if (resting && b.idleT >= C.stamina.regenIdleS)
     b.stamina = Math.min(b.max, b.stamina + C.stamina.regenPerS * dt);
-}
-
-/** Does a punch moving along `aim` reach a boxer who is dodging? Only one sweeping into the dodge. */
-export function catchesDodge(dodge: Boxer['dodge'], aim: Aim): boolean {
-  if (dodge === 'none') return true;
-  if (dodge === 'duck') return aim.y > C.aim.upperMin;
-  // Facing each other, the defender's right is the attacker's left (−x in the attacker's frame).
-  const side = dodge === 'right' ? 1 : -1;
-  return -aim.x * side > C.aim.hookMin;
 }
 
 function drain(s: BoxingState, who: BoxerId, amount: number): void {
@@ -212,29 +221,35 @@ function drain(s: BoxingState, who: BoxerId, amount: number): void {
   }
 }
 
-/** A punch from `who` reaches the other boxer. */
-function land(s: BoxingState, who: BoxerId, aim: Aim): void {
+/** What a glove of `who` touched (collide.ts), as rules. A dizzy boxer's gloves do nothing. */
+function resolve(s: BoxingState, who: BoxerId, o: Outcome): void {
   const a = s.boxers[who];
-  const d = s.boxers[other(who)];
-  if (!catchesDodge(d.dodge, aim)) {
+  const def = other(who);
+  const d = s.boxers[def];
+  if (a.dizzy) return;
+  a.idleT = 0;
+  if (o.kind === 'whiff') {
     d.counterT = C.stamina.counterWindowS;
     emit(s, 'WHIFF', who);
     return drain(s, who, C.stamina.whiff);
   }
   d.idleT = 0;
-  if (d.guard && !d.dizzy && !fistOut(d) && aim.y <= C.aim.upperMin) {
+  if (o.kind === 'block') {
     d.blockT = s.t;
-    emit(s, 'BLOCK', other(who));
-    return drain(s, other(who), C.stamina.blocked);
+    emit(s, 'BLOCK', def);
+    return drain(s, def, C.stamina.blocked);
   }
   a.landed++;
   d.hitT = s.t;
-  if (d.dizzy) return knockdown(s, other(who));
+  d.hits = [...d.hits.slice(-3), { t: s.t, zone: o.zone, part: o.part, speed: o.speed }];
+  if (d.dizzy) return knockdown(s, def);
   const counter = a.counterT > 0;
   a.counterT = 0;
   a.stamina = Math.min(a.max, a.stamina + C.stamina.landedGain);
-  emit(s, counter ? 'COUNTER' : 'HIT', other(who));
-  drain(s, other(who), C.stamina.clean * (counter ? C.stamina.counterMult : 1));
+  emit(s, counter ? 'COUNTER' : 'HIT', def);
+  const force = Math.min(C.impact.maxMult, o.speed / C.impact.refSpeedMps);
+  const part = o.part === 'body' ? C.impact.bodyMult : 1;
+  drain(s, def, C.stamina.clean * force * part * (counter ? C.stamina.counterMult : 1));
 }
 
 function knockdown(s: BoxingState, who: BoxerId): void {

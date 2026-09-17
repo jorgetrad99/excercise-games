@@ -4,7 +4,7 @@ import type { Aim } from '../input';
 export type BoxerId = 0 | 1;
 
 export interface Fist {
-  /** ready → out (travelling, lands at punch.travelS) → back (retracting) → ready. */
+  /** Keyboard/bot puppet only: ready → out (travelS) → back (retractS) → ready. Collision decides hits. */
   phase: 'ready' | 'out' | 'back';
   /** Time in the current phase, s. */
   t: number;
@@ -12,6 +12,53 @@ export interface Fist {
 }
 
 export type Dodge = 'none' | 'left' | 'right' | 'duck';
+
+export type V3 = [number, number, number];
+
+/** Collision points, boxer-local m (+x = the boxer's left, +y up, +z toward the opponent). */
+export interface BodyPose {
+  head: V3;
+  gloves: [V3, V3];
+}
+
+/**
+ * Where a boxer's body is. `source` 'pose': the player's own body (BODY input), extrapolated at most
+ * body.extrapolateS past the newest sample; 'puppet': keyboard/bot moves (fists, guard, dodge).
+ */
+export interface BodyTrack {
+  source: 'pose' | 'puppet';
+  /** This tick's and the previous tick's points: collisions sweep between them. */
+  now: BodyPose;
+  prev: BodyPose;
+  /** Newest pose sample, its velocity (m/s per point) and its input time (ms). */
+  sample: BodyPose | null;
+  vel: BodyPose;
+  sampleT: number;
+  /** Seconds since the newest sample was applied. */
+  age: number;
+}
+
+/** Per glove, what it is touching and how its current punch went. */
+export interface GloveContact {
+  /** Inside some target's touching distance (a new hit needs it to leave first). */
+  touching: boolean;
+  /** Reached past the opponent's head this extension without touching anything: already a whiff. */
+  spent: boolean;
+  /** Touched something since it was last pulled back. */
+  struck: boolean;
+  /** How long it has been closing on the opponent faster than bot.seeSpeedMps, s (0 = not). */
+  closingT: number;
+}
+
+/** A clean hit a boxer took. */
+export interface HitTaken {
+  t: number;
+  /** 0 = the boxer's left side, 1 = right, 2 = chin (from below). */
+  zone: 0 | 1 | 2;
+  part: 'head' | 'body';
+  /** Closing speed at contact, m/s. */
+  speed: number;
+}
 
 export interface Boxer {
   /** Pie segments left, 0…max. */
@@ -40,6 +87,10 @@ export interface Boxer {
   /** Sim time of the last clean hit / block taken (render recoil), s. */
   hitT: number;
   blockT: number;
+  body: BodyTrack;
+  gloves: [GloveContact, GloveContact];
+  /** The latest clean hits taken, oldest first, at most 4 (render: bruises, head snap). */
+  hits: HitTaken[];
 }
 
 export type BoxingPhase = 'intro' | 'fight' | 'down' | 'break' | 'paused' | 'over';

@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { boxingConfig as C } from '../../core/boxing/boxing.config';
 import { initBoxing, tickBoxing, type BoxingInput } from '../../core/boxing/sim';
 import type { BoxingState } from '../../core/boxing/types';
-import { createPresentation, impactZone } from './presentation';
+import { createPresentation } from './presentation';
+
+/** Sim ticks in `seconds`. */
+const ticks = (seconds: number) => Math.round(seconds / C.fixedDt);
 
 /** `n` sim ticks, reading the presentation after each like the renderer does. */
 function run(
@@ -17,32 +21,34 @@ function run(
 }
 
 describe('boxing presentation', () => {
-  it('maps hook sides and uppercuts in defender coordinates', () => {
-    const f = initBoxing({ seed: 42 }).boxers[0].fists[0];
-    f.aim = { x: 1, y: 0 };
-    expect(impactZone(f, 0)).toBe(0);
-    f.aim = { x: -1, y: 0 };
-    expect(impactZone(f, 0)).toBe(1);
-    f.aim = { x: 0, y: 1 };
-    expect(impactZone(f, 0)).toBe(2);
+  it('hit zones come from where the glove touched, in defender coordinates', () => {
+    const zone = (type: BoxingInput['type'], aim: { x: number; y: number }) => {
+      const s = initBoxing({ seed: 42, skipIntro: true });
+      tickBoxing(s, [{ type, aim }]);
+      for (let i = 0; i < ticks(0.3); i++) tickBoxing(s, []);
+      return s.boxers[1].hits.at(-1)?.zone;
+    };
+    expect(zone('PUNCH_RIGHT', { x: 1, y: 0 })).toBe(0); // hook to the puncher's right: defender's left cheek
+    expect(zone('PUNCH_LEFT', { x: -1, y: 0 })).toBe(1);
+    expect(zone('PUNCH_LEFT', { x: 0, y: 1 })).toBe(2); // uppercut: the chin
   });
   it('accumulates real clean hits once, excludes blocks, preserves damage through regen, resets on restart', () => {
     const s = initBoxing({ seed: 42, skipIntro: true }),
       read = createPresentation();
     read(s, 1);
     tickBoxing(s, [{ type: 'PUNCH_RIGHT', aim: { x: 1, y: 0 } }]);
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < ticks(0.2); i++) {
       tickBoxing(s, []);
       read(s, 1);
     }
     expect(read(s, 1).damage).toEqual([0.24, 0, 0]);
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < ticks(2); i++) {
       tickBoxing(s, []);
       read(s, 1);
     }
     s.boxers[1].guard = true;
     tickBoxing(s, [{ type: 'PUNCH_LEFT' }]);
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < ticks(0.5); i++) {
       tickBoxing(s, []);
       read(s, 1);
     }
@@ -54,14 +60,14 @@ describe('boxing presentation', () => {
       read = createPresentation();
     read(s, 1);
     Object.assign(s.boxers[1], { stamina: 0, dizzy: true });
-    run(s, read, 30);
+    run(s, read, ticks(0.5));
     expect(read(s, 1)).toMatchObject({ stage: 'standing', floor: 0 });
     expect(read(s, 1).dizzy).toBeGreaterThan(0.9);
     s.boxers[1].dizzy = false; // e.g. the sim's clinch break
     run(s, read, 1);
     expect(read(s, 1).dizzy).toBeGreaterThan(0.5);
     expect(read(s, 1).floor).toBe(0);
-    run(s, read, 60);
+    run(s, read, ticks(1));
     expect(read(s, 1).dizzy).toBeLessThan(0.01);
   });
 
@@ -71,7 +77,7 @@ describe('boxing presentation', () => {
     read(s, 1);
     Object.assign(s.boxers[1], { stamina: 0, dizzy: true });
     run(s, read, 1, [{ type: 'PUNCH_LEFT' }]);
-    for (let i = 0; i < 60 && s.phase === 'fight'; i++) run(s, read, 1);
+    for (let i = 0; i < ticks(1) && s.phase === 'fight'; i++) run(s, read, 1);
     expect(s.phase).toBe('down');
     expect(read(s, 1).floor).toBeLessThan(0.2);
     const floors: number[] = [];
@@ -108,7 +114,7 @@ describe('boxing presentation', () => {
     tko(t, 1);
     Object.assign(t.boxers[1], { stamina: 0, dizzy: true, knockdowns: 2 });
     run(t, tko, 1, [{ type: 'PUNCH_LEFT' }]);
-    for (let i = 0; i < 60 && t.phase === 'fight'; i++) run(t, tko, 1);
+    for (let i = 0; i < ticks(1) && t.phase === 'fight'; i++) run(t, tko, 1);
     expect([t.phase, t.result]).toEqual(['over', 'TKO']);
     expect(tko(t, 1).floor).toBeLessThan(0.2);
     run(t, tko, 60);
@@ -133,7 +139,7 @@ describe('boxing presentation', () => {
       { type: 'PUNCH_LEFT', aim: { x: -1, y: 0 } },
       { type: 'PUNCH_RIGHT', aim: { x: 1, y: 0 } },
     ]);
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < ticks(0.2); i++) {
       tickBoxing(s, []);
       read(s, 1);
     }
@@ -147,7 +153,7 @@ describe('boxing presentation', () => {
     a(s, 0);
     b(s, 1);
     tickBoxing(s, [{ type: 'PUNCH_LEFT', aim: { x: -1, y: 0 } }]);
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < ticks(0.35); i++) {
       tickBoxing(s, []);
       a(s, 0);
       b(s, 1);
