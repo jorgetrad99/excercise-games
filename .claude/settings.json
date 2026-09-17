@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/guard-paths.mjs"
+            "command": "node .claude/hooks/run-main.mjs guard-paths || exit 2"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/format-and-typecheck.mjs"
+            "command": "node .claude/hooks/run-main.mjs format-and-typecheck"
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/remind-progress-log.mjs"
+            "command": "node .claude/hooks/run-main.mjs remind-progress-log"
           }
         ]
       }
