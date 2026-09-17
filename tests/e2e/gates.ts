@@ -1,11 +1,13 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { test, type Page } from '@playwright/test';
-import { machineState } from './machine-state';
+import { contention, machineState } from './machine-state';
 
 // Every perf gate writes what it measured before asserting, pass or fail, so a red run and the runs
 // that went green after it stay comparable. One JSON line per gate in tmp/verify/gates.jsonl.
 // It also records the GPU at measurement time: a red gate on a software rasterizer (or a different
 // adapter) is a machine problem, not a regression, and must be diagnosable from the log alone.
+// A value measured on a contended machine (other heavy processes, lock not held, software renderer) is
+// PROVISIONAL: recorded and printed, then the test is skipped, so it counts as neither pass nor fail.
 
 const SOFTWARE = /swiftshader|warp|basic render|llvmpipe|softpipe|software/i;
 
@@ -39,6 +41,7 @@ export async function recordGate(
 ): Promise<void> {
   const gpu = await gpuInfo(page);
   const machine = await machineState();
+  const provisional = contention(machine, gpu.software);
   const round = (n: number) => Math.round(n * 10) / 10;
   const stats = Object.fromEntries(
     Object.entries(samples).map(([k, v]) => [
@@ -55,6 +58,8 @@ export async function recordGate(
     gate,
     retry: test.info().retry,
     limits,
+    status: provisional.length ? 'provisional' : 'measured',
+    provisional,
     gpu,
     machine,
     ...stats,
@@ -68,8 +73,18 @@ export async function recordGate(
       (gpu.software ? ' · SOFTWARE RENDERER: perf numbers are not comparable' : ''),
   );
   const others = machine.otherHeavy.map((p) => `${p.pid} ${p.cmd.slice(0, 60)}`);
+  const th = machine.gpuThermal;
   console.info(
-    `GATE ${gate} machine: cpu ${machine.cpuBusyPct}% · gpu ${machine.gpuUtilPct ?? '-'}% · lock ${machine.lockHeld ? 'held' : 'NOT HELD'}` +
+    `GATE ${gate} machine: cpu ${machine.cpuBusyPct}% · gpu ${machine.gpuUtilPct ?? '-'}%` +
+      (th ? ` ${th.tempC}°C ${th.pstate} throttle ${th.clockEventReasons}` : '') +
+      ` · gpu top ${machine.gpuTop.map((p) => `${p.process} ${p.pct}%`).join(', ') || '-'}` +
+      ` · lock ${machine.lockHeld ? 'held' : 'NOT HELD'}` +
       ` · other heavy: ${others.length ? `${others.length} CONTENDED [${others.join(' | ')}]` : 'none'}`,
   );
+  if (provisional.length) {
+    const why = `PROVISIONAL (${provisional.join('; ')}): not a pass or fail. Re-measure on a quiet machine.`;
+    console.info(`GATE ${gate} ${why}`);
+    test.info().annotations.push({ type: 'provisional', description: why });
+    test.skip(true, why);
+  }
 }

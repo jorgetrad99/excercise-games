@@ -60,7 +60,7 @@ If you are stuck on the same problem for two attempts, stop, write what you trie
   - tools-only Playwright probes (`--project=tools`)
   - the format-and-typecheck hook: waits ≤ 45 s, then skips tsc and says so
 - **Anything else heavy** (an ad-hoc `node` probe, a build): run `node scripts/e2e-lock.mjs wait` first.
-- **Fallback when a process can't check the lock:** every perf gate records the GPU (`GATE <name> gpu:`) **and the machine state it observed** (`GATE <name> machine:`: CPU busy %, GPU util %, whether this run holds the lock, and other tsc/eslint/vitest/playwright/build/probe processes outside this run). Both are also written to `tmp/verify/gates.jsonl`. A gate value reported without its machine line isn't a usable number; `CONTENDED` means re-measure.
+- **Fallback when a process can't check the lock:** every perf gate records the GPU (`GATE <name> gpu:`) **and the machine state it observed** (`GATE <name> machine:`: CPU busy %, GPU util %, whether this run holds the lock, and other tsc/eslint/vitest/playwright/build/probe processes outside this run). Both are also written to `tmp/verify/gates.jsonl`. A gate value reported without its machine line isn't a usable number. A contended gate (other heavy processes, lock not held, or software renderer) is **PROVISIONAL**: recorded, then skipped, so it's neither pass nor fail; re-measure quietly. The list of commands that bypass the lock is in PROGRESS 2026-09-16 "Perf follow-ups".
 - **Worktrees:** set `PLAYWRIGHT_PORT`, so a stale Vite from another checkout isn't silently reused.
 
 Beyond that, verify at the level of the thing you changed:

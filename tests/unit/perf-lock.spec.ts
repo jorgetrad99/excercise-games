@@ -4,7 +4,21 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { acquire, currentHolder, waitForLock } from '../../scripts/e2e-lock.mjs';
-import { isHeavyCommand } from '../e2e/machine-state';
+import { contention, isHeavyCommand } from '../e2e/machine-state';
+
+describe('provisional gate results', () => {
+  const quiet = { otherHeavy: [], lockHeld: true };
+  it('a quiet run with the lock on a hardware GPU is a real measurement', () => {
+    expect(contention(quiet, false)).toEqual([]);
+  });
+  it.each([
+    [{ ...quiet, otherHeavy: [{ pid: 1, cmd: 'tsc' }] }, false, /1 other heavy/],
+    [{ ...quiet, lockHeld: false }, false, /lock not held/],
+    [quiet, true, /software renderer/],
+  ])('contended (%j, software %s) → provisional', (m, sw, why) => {
+    expect(contention(m, sw).join('; ')).toMatch(why);
+  });
+});
 
 describe('machine state: which other processes count as contention', () => {
   it.each([

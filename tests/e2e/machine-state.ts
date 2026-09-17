@@ -21,6 +21,11 @@ export interface MachineState {
   cpuBusyPct: number;
   /** nvidia-smi utilization, % (includes this test); null without an NVIDIA driver. */
   gpuUtilPct: number | null;
+  /** nvidia-smi temperature (°C), P-state and active clock-event (throttle) reasons bitmask; null without NVIDIA. */
+  gpuThermal: { tempC: number; pstate: string; clockEventReasons: string } | null;
+  /** Windows per-process GPU engine use, top 5, %. Catches GPU consumers that aren't dev tools (the desktop
+   *  compositor dwm sat at ~42 % of the RTX 4060's 3D engine while idle, 2026-09-16). Empty elsewhere. */
+  gpuTop: { process: string; pid: number; pct: number }[];
   /** Heavy processes outside this run's own process chain: the contention signal. */
   otherHeavy: { pid: number; cmd: string }[];
   /** True when this run holds the perf lock. */
@@ -78,17 +83,66 @@ const cpuBusy = async (): Promise<number> => {
   return Math.round((1 - (b.idle - a.idle) / Math.max(1, b.total - a.total)) * 100);
 };
 
-function gpuUtil(): number | null {
+function nvidia(): Pick<MachineState, 'gpuUtilPct' | 'gpuThermal'> {
   try {
-    const out = execFileSync(
-      'nvidia-smi',
-      ['--query-gpu=utilization.gpu', '--format=csv,noheader,nounits'],
-      { encoding: 'utf8' },
-    );
-    return Number.parseInt(out, 10);
+    const q = 'utilization.gpu,temperature.gpu,pstate,clocks_event_reasons.active';
+    const out = execFileSync('nvidia-smi', [`--query-gpu=${q}`, '--format=csv,noheader,nounits'], {
+      encoding: 'utf8',
+    });
+    const [util, temp, pstate, reasons] = out
+      .split('\n')[0]!
+      .split(',')
+      .map((x) => x.trim());
+    return {
+      gpuUtilPct: Number.parseInt(util!, 10),
+      gpuThermal: {
+        tempC: Number.parseInt(temp!, 10),
+        pstate: pstate!,
+        clockEventReasons: reasons!,
+      },
+    };
   } catch {
-    return null;
+    return { gpuUtilPct: null, gpuThermal: null };
   }
+}
+
+function gpuTop(): MachineState['gpuTop'] {
+  if (process.platform !== 'win32') return [];
+  const ps =
+    "(Get-Counter '\\GPU Engine(*)\\Utilization Percentage').CounterSamples | Where-Object CookedValue -gt 0.5 | " +
+    "ForEach-Object { if ($_.InstanceName -match 'pid_(\\d+)_') { [pscustomobject]@{ pid = [int]$matches[1]; pct = $_.CookedValue } } } | " +
+    'Group-Object pid | ForEach-Object { [pscustomobject]@{ pid = [int]$_.Name; pct = [math]::Round(($_.Group | Measure-Object pct -Sum).Sum, 1); ' +
+    'process = (Get-Process -Id ([int]$_.Name) -ErrorAction SilentlyContinue).ProcessName } } | ' +
+    'Sort-Object pct -Descending | Select-Object -First 5 | ConvertTo-Json -Compress';
+  try {
+    const out = execFileSync('powershell', ['-NoProfile', '-Command', ps], {
+      encoding: 'utf8',
+    }).trim();
+    if (!out) return [];
+    const rows = JSON.parse(out) as
+      | { pid: number; pct: number; process: string | null }[]
+      | { pid: number; pct: number; process: string | null };
+    return (Array.isArray(rows) ? rows : [rows]).map((r) => ({
+      process: r.process ?? '?',
+      pid: r.pid,
+      pct: r.pct,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** A gate value measured under these conditions is provisional: reported, never counted as pass or fail. */
+export function contention(
+  machine: Pick<MachineState, 'otherHeavy' | 'lockHeld'>,
+  softwareGpu: boolean,
+): string[] {
+  const reasons: string[] = [];
+  if (machine.otherHeavy.length)
+    reasons.push(`${machine.otherHeavy.length} other heavy process(es)`);
+  if (!machine.lockHeld) reasons.push('perf lock not held by this run');
+  if (softwareGpu) reasons.push('software renderer');
+  return reasons;
 }
 
 export async function machineState(): Promise<MachineState> {
@@ -119,7 +173,8 @@ export async function machineState(): Promise<MachineState> {
   const holder = currentHolder();
   return {
     cpuBusyPct,
-    gpuUtilPct: gpuUtil(),
+    ...nvidia(),
+    gpuTop: gpuTop(),
     otherHeavy,
     lockHeld: holder !== null && ours.has(holder.pid),
   };
