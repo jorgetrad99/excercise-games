@@ -74,7 +74,8 @@ test.describe('latency', { tag: '@perf' }, () => {
     const samples = await rigResponse(page);
     const rig = response(samples);
     const total = (p: typeof one) => p.captureToResult.p50 + rig.ms;
-    recordGate(
+    await recordGate(
+      page,
       'latency-camera-to-glove',
       {
         pipeline1pP50: [one.captureToResult.p50],

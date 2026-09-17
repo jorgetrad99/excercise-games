@@ -200,7 +200,8 @@ test.describe('perf', { tag: '@perf' }, () => {
       [0, 1].map((i) => window.__game.getState<SimState>(i).phase),
     );
     console.info('perf 2 players', JSON.stringify(samples), { phases });
-    recordGate(
+    await recordGate(
+      page,
       'skate-2p-1080p',
       {
         fps: samples.map((s) => s.fps),

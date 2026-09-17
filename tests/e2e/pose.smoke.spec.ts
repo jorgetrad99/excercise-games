@@ -42,7 +42,8 @@ test(
       inferMs: b.s!.inferMs,
     };
     console.log('pose e2e', JSON.stringify(summary));
-    recordGate(
+    await recordGate(
+      page,
       'pose-1p-5s',
       { poseFps: [summary.poseFps], withPoseRatio: [withPose / processed] },
       { poseFps: '>= 20', withPoseRatio: '> 0.9' },

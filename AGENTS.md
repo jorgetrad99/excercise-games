@@ -49,7 +49,7 @@ If you are stuck on the same problem for two attempts, stop, write what you trie
 
 ## 4. Verification — what "done" means here
 
-`pnpm verify` = `tsc --noEmit` + `eslint` + `vitest run` + `playwright test --project=smoke --project=perf` (`@perf` fps gates and `@realtime` wall-clock replays run after smoke, one worker). It must be green before any commit and before you say a task is done.
+`pnpm verify` = `tsc --noEmit` + `eslint` + `vitest run` + `playwright test --project=smoke --project=perf` (`@perf` fps gates and `@realtime` wall-clock replays run after smoke, one worker). It must be green before any commit and before you say a task is done. **One e2e run per machine:** `tests/e2e/e2e-lock.ts` takes `.git/move-arcade-e2e.lock` (shared by all worktrees) and a second run fails fast naming the holder. Every perf gate logs the GPU it ran on (`GATE <name> gpu:` line and `gpu` in `tmp/verify/gates.jsonl`). In a worktree, set `PLAYWRIGHT_PORT` so a stale Vite from another checkout isn't reused.
 
 Beyond that, verify at the level of the thing you changed:
 

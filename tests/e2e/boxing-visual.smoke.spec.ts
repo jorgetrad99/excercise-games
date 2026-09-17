@@ -238,7 +238,8 @@ test(
     }
     await mkdir(ROOT, { recursive: true });
     await writeFile(`${ROOT}/live-face-performance.json`, JSON.stringify(samples, null, 2));
-    recordGate(
+    await recordGate(
+      page,
       'boxing-1p-1080p-face',
       {
         fps: samples.map((s) => s.fps),

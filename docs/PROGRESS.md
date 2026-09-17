@@ -1723,3 +1723,58 @@ Three branches collided on M7.11+. `feat/player-authority` is the integration po
 - **After-the-fact probe:** RTX 4060 Laptop through Chrome's Direct3D 11 layer, hardware accelerated, in page and worker.
 - **Still open:** the render budget, which Jorge asked for before the chaser and web-swinging get designed. The park biome is 586k triangles.
 - **Next:** an e2e lock so two sessions can't run e2e at once, and the GPU name logged by every perf gate.
+
+## 2026-09-16 — e2e lock + GPU name on every perf gate
+
+Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), fast-forwarded onto `feat/player-authority` `7f68b4b`. Harness only; no game code.
+
+### Why
+
+- **Cross-session interference:** two sessions ran e2e on one GPU (22:26–22:34) and poisoned each other's perf gates.
+- **Undiagnosable failures:** the red runs only recorded the MediaPipe delegate, not the GPU, so a software or wrong adapter couldn't be ruled out at the time.
+
+### What changed
+
+- **`tests/e2e/e2e-lock.ts` + `global-setup.ts`:** global setup takes a lockfile in the git common dir (`.git/move-arcade-e2e.lock`), so every worktree and session shares it.
+  - Written with an exclusive create (`wx`), holding `{pid, cwd, branch, startedAt}`.
+  - A second run throws: "Another e2e run holds the lock: pid …, <cwd> (<branch>), since …".
+  - A lock whose pid is dead is stale and taken over.
+  - Released by the teardown function that global setup returns. It also releases when the models check fails.
+  - `ponytail:` pid liveness only; a reused pid after a crash needs the manual delete the message names.
+- **`tests/e2e/gates.ts`:** `recordGate(page, …)` is now async and records `gpu: {renderer, poseGpu, poseDelegate, software}`.
+  - `renderer` is the page's unmasked WebGL renderer; the pose worker's renderer and delegate come from `getPoseStats()`.
+  - It prints a `GATE <name> gpu:` line and flags a software rasterizer as "perf numbers are not comparable".
+  - All 6 gate call sites updated.
+- **AGENTS §4:** the lock, the GPU line, and `PLAYWRIGHT_PORT` in worktrees.
+  - Why: a stale Vite from 19:09 was still serving the main checkout on 5173, and `reuseExistingServer` would silently test that code from a worktree.
+
+### Verified
+
+- **Lock logic** (`node --experimental-strip-types tmp/lock-check.mts`): acquire; a second acquire throws naming the pid; release removes; a dead-pid holder is taken over. Both worktrees resolve the same `.git/move-arcade-e2e.lock`.
+- **Real Playwright, lock held by a live fake holder:** `boot.smoke -g vendored` exited 1 after 5 s with the holder message, and the holder's lock was left in place.
+- **`pnpm verify` run 1** (`PLAYWRIGHT_PORT=5190`, 22:55–22:59, lock held): **exit 1.**
+  - Passed: tsc, eslint, vitest 348 passed + 1 skipped (27 files), 30 of 31 e2e. The lock was released afterwards.
+  - Gate values, all GPU = ANGLE RTX 4060 Laptop D3D11 (hardware); pose delegate GPU where the pipeline runs:
+    - latency: pipeline P50 25.6 / P95 43.6 ms (1P), 35.7 / 49.8 ms (2P), rig response 216.7 ms
+    - boxing-1p-1080p-face: fps 60, pose-fps min 24
+    - pose-1p-5s: 26.7
+    - skate-1p-1080p-bot: fps 60
+    - skate-1p-1080p-pose: fps 60, pose-fps min 25
+  - **Red: skate-2p-1080p pose-fps min 15, mean 19.9** (≥ 20). Samples 18, 15, 17, 18, 20, 18, 16, 20, 18, 18, 21, 26, 26, 25, 23 (the rest ≥ 20); render fps 60 throughout.
+  - **Load during the run:** session move-arcade-64 was editing `src/` in its worktree (a tsc on every edit through the format hook, and a probe writing `tmp/probe-body.txt`). The lock covers e2e only, not CPU-heavy work.
+- **`pnpm verify` run 2, retry 1** (23:0x, lock held, move-arcade-64 paused edits/tsc/probes on request): **exit 0.**
+  - tsc, eslint, vitest 348 + 1 skipped, e2e 31/31 (2.7 min). All 6 gates logged GPU = RTX 4060 Laptop D3D11, no software renderer.
+  - Gate values:
+    - latency: pipeline P50 21.0 / P95 29.9 ms (1P), 32.4 / 41.2 ms (2P), rig response 200.1 ms
+    - boxing-1p-1080p-face: fps 60, pose-fps min 29
+    - pose-1p-5s: 29.5
+    - skate-1p-1080p-bot: fps min 59
+    - skate-1p-1080p-pose: fps 60, pose-fps min 27
+    - **skate-2p-1080p: fps min 59, pose-fps min 28, mean 29.7** (samples 28–31)
+- **Reading:** the same code on the same GPU gave 2P pose-fps min 15 under another session's edit load and min 28 without it. The e2e lock is necessary but not sufficient: **perf numbers are only trustworthy while no other session is running tsc, vitest or probes.** That's a machine/session-policy question for Jorge, not something the lock can enforce.
+
+### Still open
+
+- **Render budget:** the park biome is at 586k triangles, and the budget is needed before the chaser and web-swinging are designed.
+- **The guard hook doesn't cover worktrees** (see the previous entry).
+- **Next step:** stop. M7.15 is owned by session move-arcade-64, per Jorge's answer relayed by that session; to be confirmed by Jorge.

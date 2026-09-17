@@ -110,7 +110,8 @@ test.describe('perf', { tag: '@perf' }, () => {
       distance: Math.round(window.__game.getState<SimState>().distance),
     }));
     console.info('perf fps samples', samples.join(','), stats);
-    recordGate(
+    await recordGate(
+      page,
       'skate-1p-1080p-bot',
       { fps: samples, calls: [stats.render?.calls ?? NaN] },
       { fps: '>= 55 min', calls: '< 150' },
@@ -148,7 +149,8 @@ test.describe('perf', { tag: '@perf' }, () => {
     }
     const calls = await page.evaluate(() => window.__game.getRenderStats()?.calls ?? 0);
     console.info('perf with pose', JSON.stringify(samples), { calls });
-    recordGate(
+    await recordGate(
+      page,
       'skate-1p-1080p-pose',
       { fps: samples.map((s) => s.fps), poseFps: samples.map((s) => s.poseFps), calls: [calls] },
       { fps: '>= 55 min', poseFps: '>= 20 min', calls: '> 20' },
