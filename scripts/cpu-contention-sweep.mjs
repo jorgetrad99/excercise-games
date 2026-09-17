@@ -1,7 +1,9 @@
 // CPU-contention sweep: does machine-wide CPU load move pose-fps on this machine, and from what load?
 // Decides tests/e2e/contention.config.ts maxExternalCpuCores from measured effect (Jorge, 2026-09-17).
-// Not in verify. Run on a quiet GPU (after the display change) with nothing else heavy:
-//   node scripts/cpu-contention-sweep.mjs [--levels 0,2,4,6,8,10,12,14] [--reps 3] [--seconds 20] [--cooldown 10] [--port 5191]
+// Not in verify. Run in a quiet window with nothing else heavy, in the gate reference config (external display
+// unplugged):
+//   node scripts/cpu-contention-sweep.mjs [--levels 0,2,4,6,8,10,12,14] [--reps 3] [--seconds 20] [--cooldown 10] [--port 5191] [--label cpu-sweep]
+// Also samples GPU telemetry per second (sweep-telemetry.mjs) and correlates it with the 2P run-to-run scatter.
 // Load = N worker threads spinning at normal priority (external to the probe's browser, like VS Code or
 // Defender). Order alternates ascending/descending per repetition so heat and drift spread over levels.
 import { execFileSync, spawn } from 'node:child_process';
@@ -11,6 +13,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { waitForLock } from './e2e-lock.mjs';
+import { correlate, displays, startTelemetry } from './sweep-telemetry.mjs';
 
 const SCENARIOS = ['skate-2p-pose', 'skate-1p-pose'];
 const BINDING = 'skate-2p-pose';
@@ -111,6 +114,7 @@ async function main() {
   const seconds = Number(arg('seconds', 20));
   const cooldown = Number(arg('cooldown', 10));
   const port = arg('port', '5191');
+  const out = arg('label', 'cpu-sweep'); // e.g. cpu-sweep-unplugged: one output per display config
   const base = `http://localhost:${port}`;
   mkdirSync('tmp/perf', { recursive: true });
 
@@ -129,6 +133,9 @@ async function main() {
     },
   );
   const idle = JSON.parse(readFileSync('tmp/machine-state/cpu-sweep-idle.json', 'utf8'));
+  // Which reference config this is: the gate reference is the external display unplugged (Jorge, 2026-09-17).
+  const display = displays();
+  const telemetry = startTelemetry(`tmp/perf/${out}`);
 
   const vite = spawn(
     process.execPath,
@@ -180,11 +187,13 @@ async function main() {
             renderMin: r.renderFps.min,
             busyPct,
             nvidia: gpu,
+            series: r.series ?? [],
           });
         console.log(`level ${level} rep ${rep}: busy ${busyPct} % · nvidia ${gpu}`);
         await new Promise((r) => setTimeout(r, cooldown * 1_000));
       }
     }
+    const scatter = correlate(points, await telemetry.stop());
     const result = summarize(points);
     const proposal =
       result.onset === null
@@ -192,14 +201,21 @@ async function main() {
         : `2P pose-fps degrades from ${result.onset} added cores (baseline − ${result.margin}). ` +
           `Gate threshold = idle external ${idle.externalCpuCores} + last good level ${result.lastGood} = ` +
           `${(idle.externalCpuCores + result.lastGood).toFixed(1)} external cores.`;
+    const at = new Date().toISOString();
     writeFileSync(
-      'tmp/perf/cpu-sweep.json',
-      JSON.stringify({ at: new Date().toISOString(), idle, points, ...result, proposal }, null, 1),
+      `tmp/perf/${out}.json`,
+      JSON.stringify({ at, display, idle, points, ...result, proposal, scatter }, null, 1),
     );
     console.table(result.rows);
-    console.log(proposal, '\n→ tmp/perf/cpu-sweep.json');
+    console.log(proposal);
+    console.log(
+      `2P pose-fps vs telemetry, Pearson r (${scatter.runs} runs ≤ 10 added threads, ${scatter.samples} samples; displays ${JSON.stringify(display)}):`,
+    );
+    console.table(scatter.r);
+    console.log(`→ tmp/perf/${out}.json`);
   } finally {
     vite.kill();
+    telemetry.kill();
   }
 }
 

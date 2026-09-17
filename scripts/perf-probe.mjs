@@ -246,7 +246,7 @@ async function run(sc) {
     const samples = [];
     for (let i = 0; i < SECONDS; i++) {
       await page.waitForTimeout(1000);
-      samples.push(await snap());
+      samples.push({ ...(await snap()), at: Date.now() });
     }
     const b = samples.at(-1);
     const secs = (b.now - a.now) / 1000;
@@ -277,6 +277,13 @@ async function run(sc) {
       calls: b.render?.calls ?? null,
       triangles: b.render?.triangles ?? null,
       perf,
+      // Per-second readings with wall-clock time, so a sweep can join them to GPU telemetry.
+      series: samples.map((s) => ({
+        at: s.at,
+        fps: s.fps,
+        poseFps: s.pose?.poseFps ?? null,
+        inferMs: s.pose?.inferMs ?? null,
+      })),
       errors,
     };
   } finally {

@@ -2178,3 +2178,66 @@ Branch `chore/perf-lock` (`tmp/perf-lock-worktree`). Three items, committed on J
 
 - **External GPU ≤ 10 % → measured; above → provisional: approved.** The 2P pose-fps min 19 read as "quiet" had dwm at 20.6 %, so it was taken under load and isn't a real red.
 - **External CPU threshold: not approved.** VS Code, Defender and dwm (~4.8 cores idle) are the machine's steady state, not contention, and gates must measure the machine as developed on. Derive it from measurement: if external CPU doesn't move pose-fps, report it in the machine line without making results provisional; if it does, set the threshold where pose-fps degrades. One session measures it (coordinated with `move-arcade-bd`).
+
+
+## 2026-09-17: CPU sweep pass 1 (stopped early); the 2P scatter is now the first question; display-unplugged reference
+
+Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`).
+
+### Pass 1 of the CPU sweep ran; passes 2–3 were stopped
+
+- **Window:** 00:16–00:29, agreed with move-arcade-32. Display plugged in (dwm on the 4060).
+- **Stopped at 00:29:** Jorge's camera playtest started (new Chrome processes from 00:28:31) while 14 burner threads were running. It would have ruined his fixture recordings and contaminated the sweep. The processes were killed and the stale lock this run left was removed.
+- **No `tmp/perf/cpu-sweep.json`:** the summary is written only at the end. The numbers below come from `tmp/perf/cpu-sweep.log` (idle offset in `tmp/machine-state/cpu-sweep-idle.json`: external CPU 4.02 cores, external GPU 29.4 %, dwm 28.3 %).
+
+| Added threads | CPU busy | 2P pose mean / min | 2P inference | 1P pose mean / min | Render min 2P / 1P |
+|---|---|---|---|---|---|
+| 0 | 49 % | 24.1 / 18 | 26.6 ms | 28.3 / 25 | 60 / 60 |
+| 2 | 54 % | 24.7 / 21 | 27.9 | 28.8 / 26 | 60 / 60 |
+| 4 | 62 % | 24.8 / 20 | 26.2 | 29.6 / 29 | 60 / 60 |
+| 6 | 70 % | 25.1 / 24 | 26.7 | 29.2 / 27 | 60 / 60 |
+| 8 | 80 % | 26.2 / 23 | 27.5 | 29.4 / 27 | 60 / 60 |
+| 10 | 92 % | 28.2 / 23 | 27.4 | 27.9 / 23 | 59 / 60 |
+| 12 | 95 % | 23.1 / 16 | 28.2 | 29.1 / 26 | 55 / 60 |
+| 14 | 100 % | 16.6 / 13 | 35.1 | 25.4 / 21 | 57 / 58 |
+| 14 (pass 2) | 100 % | 17.6 / 15 | 35.6 | 24.3 / 16 | 56 / 43 |
+
+- **Q1 (does CPU load move pose-fps?):** yes, but only near saturation. No 2P drop up to 10 added threads (92 % busy). It starts at 12, and at 14 2P loses about 7 fps with inference at 35 ms. The old 2-core proposal was an order of magnitude low.
+- **Planned shape (Jorge, not final until passes 2–3):** CPU is report-only in the machine line, with a provisional trigger near saturation (about 14 external cores = 4 idle + 10 added threads with no effect).
+- **One pass only:** the 100 % rows partly overlap the start of the playtest, although the two agree within 1 fps.
+
+### The 2P scatter is the real problem (first-class question)
+
+- **At level 0–10, 2P mean ran 24.1–28.2 fps** with no load-dependent trend. That is larger than any effect below 12 added threads.
+- **The same size as before:** the unexplained 25–26 (repeat block) vs 28–30 (verify runs) from earlier reports.
+- **Already ruled out:** other sessions' work, dwm alone and CPU load.
+- **Next pass instruments it:** `scripts/sweep-telemetry.mjs` samples at 1 Hz during the whole sweep:
+  - `nvidia-smi -l 1`: util %, temperature, graphics clock MHz, power W, P-state, throttle reasons
+  - `typeperf`: dwm's 3D engine % per adapter
+  - `perf-probe` now emits a per-second `series` (wall clock, render fps, pose-fps, inference ms)
+- **`correlate()`:** Pearson r of 2P pose-fps against each reading, per second and per run (the run-to-run scatter), levels ≤ 10 only. It goes into `tmp/perf/<label>.json` as `scatter` and is printed.
+- **If nothing correlates, that is reported as a finding:** the 2P gate can't be made reliable on this machine at its current threshold.
+
+### Display: unplugged is the gate reference config (Jorge, 2026-09-17)
+
+- **Why:** the external port appears hardwired to the RTX 4060, so dwm can't be moved.
+- **Decision:** gate runs and perf re-measures are done with the external display unplugged. The normal setup (external display) stays for development.
+- **Recording it:** the sweep records `displays()` (WmiMonitorConnectionParams: internal vs external).
+- **Built-in experiment:** passes 2–3 run unplugged. If the 24–28 scatter persists without dwm on the dGPU, dwm is ruled out as its cause.
+- **Not yet applied to gates:** the gate machine line doesn't record the display config yet. That belongs with the machine-state port (move-arcade-32), so I left it out here.
+
+### Checks
+
+- **Tests and lint:** `tests/unit/sweep-telemetry.spec.ts` (parsers, and correlation that picks the reading tracking the scatter and ignores saturated runs) and `cpu-sweep.spec.ts` pass. `pnpm typecheck` clean; eslint and prettier clean on the changed files.
+- **Sampler smoke run (5 s):** 10 rows, and both files flush on kill. Displays read `{internal: 1, external: 1}`.
+- **Not run:** e2e, and no full `pnpm verify` (Jorge was recording on the machine). The instrumented sweep itself is not yet run end to end.
+
+### Next
+
+Once Jorge is off the machine and has unplugged the display, in a quiet window agreed with move-arcade-32 (and move-arcade-64 holding its verify):
+
+```bash
+node scripts/cpu-contention-sweep.mjs --label cpu-sweep-unplugged
+```
+
+About 32 min for 3 passes. Then report Q2 (the CPU trigger) and the scatter correlation.
