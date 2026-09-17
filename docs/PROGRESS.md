@@ -1942,6 +1942,107 @@ Branch `chore/perf-lock` (`tmp/perf-lock-worktree`). Three items, committed on J
 - **External GPU ≤ 10 % → measured; above → provisional: approved.** The 2P pose-fps min 19 read as "quiet" had dwm at 20.6 %, so it was taken under load and isn't a real red.
 - **External CPU threshold: not approved.** VS Code, Defender and dwm (~4.8 cores idle) are the machine's steady state, not contention, and gates must measure the machine as developed on. Derive it from measurement: if external CPU doesn't move pose-fps, report it in the machine line without making results provisional; if it does, set the threshold where pose-fps degrades. One session measures it (coordinated with `move-arcade-bd`).
 
+---
+
+## 2026-09-17 — Class of problem: Claude Code config read from the working tree, not from main
+
+Branch `chore/perf-lock` (`tmp/perf-lock-worktree`). Docs only; git-only reads, taken during `move-arcade-bd`'s CPU sweep.
+
+### The class
+
+The launcher makes the hook *scripts* branch-independent. But Claude Code reads its project configuration from the checkout a session starts in, at whatever branch that checkout has out. Any file in that set lets a plain branch switch silently change enforcement. The first case found was `.claude/settings.json`: the launcher existed, yet a branch without Jorge's edit ran the old direct-call guard, which can fail open. No error, no warning.
+
+**Instance found and fixed:** `.claude/settings.json`. Committed as `31c3b37` on `docs/skate-step-propulsion`, cherry-picked to `main` as `e83c45b` (the blob is identical: `918d3ca`).
+
+**Branch state at `e83c45b`:**
+
+| Branch | Has launcher | settings.json uses launcher | Action |
+| --- | --- | --- | --- |
+| `main` | yes | yes | — |
+| `docs/skate-step-propulsion` | yes | yes (`31c3b37`) | none needed; the next main merge is a no-op for this file |
+| `docs/plan-boxing` | yes (via `ab96f9e`) | **no** | merge `e83c45b` after the sweep (`move-arcade-bd` confirmed) |
+| `feat/player-authority` | no | no | merge `e83c45b` (brings ff560ad too); sessions told |
+| `feat/visual-expressiveness` | no | no | same |
+
+Sessions load hooks when they start. After merging, restart any session in that checkout.
+
+### Full inventory (what Claude Code resolves per checkout)
+
+Tracked in this repo (on `main`):
+
+1. **`.claude/settings.json`:** hooks, permissions, env. *Enforcement.* Fixed as above, but only for branches that merge main.
+2. **`.claude/hooks/run-main.mjs`:** the launcher itself is read from the working tree, since settings.json names it by relative path.
+   - If it's missing, the guard's `|| exit 2` fails closed (safe and loud).
+   - If it's **edited**, e.g. `POLICY['guard-paths'] = 'open'`, the guard fails open. **`guard-paths` doesn't protect `.claude/hooks/**`**, so this is an open hole today.
+3. **`.claude/agents/reviewer.md`, `perf.md`:** subagent prompts and `tools:` allowlists. "Read-only" for `reviewer` is enforced only by its `tools:` line, per branch.
+4. **`.claude/commands/verify.md`, `playtest.md`, `milestone-check.md`:** procedures. A branch can carry an older `/verify` (e.g. one without the serial perf project).
+5. **`CLAUDE.md` → `@AGENTS.md`:** the rules text (hard boundaries, perf lock). Guidance, not enforcement, but it's what sessions follow.
+
+Not present in any of the five checkouts (checked; `CLAUDE.md` is root-only), but would be read if created:
+
+6. **`.claude/settings.local.json`:** untracked, per checkout, and can **add hooks and permissions**. Invisible to git, so no merge fixes it.
+7. **`CLAUDE.local.md`** and nested **`CLAUDE.md`** in subdirectories.
+8. **`.mcp.json`:** project MCP servers.
+9. **`.claude/skills/`, `.claude/output-styles/`.**
+
+Same property outside Claude Code (already accepted): `package.json` lock-wait prefixes, `vite.config.ts` / `vitest.tools.config.ts` globalSetup, `playwright.config.ts`, and `scripts/e2e-lock.mjs` as used by vitest and Playwright.
+
+**Rule: restart any session after a merge that touches this set.** When Claude Code re-reads settings after a mid-session branch switch is deliberately *not* tested (Jorge): the answer could change with a Claude Code update, and a tested rule would then be wrong in a way nobody re-checks.
+
+### Decided (Jorge, 2026-09-17): A and B, both
+
+The launcher being editable makes the whole guard optional. A session could set the guard's policy to open, and nothing would stop it. Fail-closed on a missing file doesn't help: the risk is modification, not deletion. A and B cover different failures, and neither is enough alone.
+
+- **A. Guard (blocks edits made through Claude).** Add `.claude/hooks/`, `.claude/settings.local.json`, `.mcp.json`, `CLAUDE.local.md` and **`AGENTS.md`** to `guard-paths`.
+  - `AGENTS.md` goes in A, not B. It states what agents may not do, so an agent that can edit it can lift its own restrictions, and a warning afterwards doesn't undo that.
+  - Cost accepted: hook and AGENTS changes become hand-applied, like settings.json.
+- **B. Drift warning (catches unmerged branches and edits made outside Claude).** The Stop hook, which runs from main, compares the working tree with `main` for `.claude/settings.json`, `.claude/hooks/**`, `AGENTS.md`, `.claude/agents/`, `.claude/commands/` and `CLAUDE.md`.
+  - Each warning names the file and the fix, e.g. `settings.json differs from main — merge <sha> and restart`, never just "differs".
+  - An existing `.claude/settings.local.json` always warns, since no merge fixes it.
+- **Not guarded:** `.claude/agents/`, `.claude/commands/`, `CLAUDE.md`. They change with normal work, so B lists them instead.
+- **Timing:** implemented after `move-arcade-bd`'s CPU sweep, not during it.
+
+**Standard for guarded files (Jorge, 2026-09-17):**
+1. Diff limited to the intended lines.
+2. First bytes checked (no BOM).
+3. Parse check where applicable.
+4. SHA-256 recorded, then re-checked immediately before a commit containing only that file.
+
+---
+
+## 2026-09-17 — Guard the launcher and agent rules (A) + config drift warning (B), committed WITHOUT e2e, by exception
+
+Branch `chore/perf-lock`, commit `13df045`, fast-forwarded to `main`. Jorge extended the no-e2e exception to A and B only (hooks are harness code, and the gates can't give a trustworthy result yet). The perf-gate port stays held and needs a real green verify.
+
+### What changed
+
+- **A.** `guard-paths` also blocks `.claude/hooks/**`, `.claude/settings.local.json`, `.mcp.json`, `CLAUDE.local.md` and `AGENTS.md`. AGENTS §3 and the CLAUDE.md quick rule list the same set.
+  - From here on, hook and AGENTS changes are hand-applied, following the guarded-file standard in the entry above.
+- **B.** New `.claude/hooks/config-drift.mjs`, called by the Stop hook. It compares `.claude/settings.json`, `.claude/hooks/**`, `AGENTS.md`, `CLAUDE.md`, `.claude/agents/` and `.claude/commands/` with `main`, and each warning names the file and the fix:
+  - **Branch lacks main's version:** `… differ from main — merge <sha> (main) and restart the session.`
+  - **Guarded file changed on the branch:** `… is human-owned — restore it with git checkout main -- <file> and restart, or have Jorge land the change on main.`
+  - **Watched file changed on the branch:** `… sessions in this checkout use this branch's version; land it on main or restore it.`
+  - **`.claude/settings.local.json` exists:** always warns.
+  - The check is advisory: an error in it never blocks a stop.
+- **Held port:** the `AGENTS.md` §4 bullets from the held port were removed from the worktree (patch kept in the session scratchpad). Jorge applies the final text by hand when the port lands.
+
+### Verified
+
+- `pnpm typecheck`, `pnpm lint` → exit 0. `pnpm test` → 27 files, 364 passed + 1 skipped (held port set aside, so this is exactly the committed tree).
+- **Unit tests:**
+  - `guard-paths.spec`: 8 new rows, including CLAUDE.md and a command staying allowed.
+  - `config-drift.spec` (temp repos): no drift → silent; branch behind → names the merge sha; AGENTS.md edited → restore; command changed → named; settings.local.json → warns; no `main` → exit 0.
+- **Live, through `run-main.mjs` from the main checkout at `main` = `13df045`:**
+  - Guard exits 2 for the launcher, a worktree's `guard-paths.mjs`, `settings.local.json`, a worktree `.mcp.json`, `CLAUDE.local.md`, `AGENTS.md` (checkout and worktree), `PLAN.md` and `settings.json`.
+  - Guard exits 0 for `CLAUDE.md`, `.claude/commands/verify.md` and `src/core/sim.ts`.
+  - The Stop hook in each of the five checkouts printed the merge line naming `13df045` for every checkout not yet on it. `feat/visual-expressiveness` also lists `settings.json` and `run-main.mjs`.
+- A malformed stdin to the launcher-run guard exits 2 ("could not run from main"), so it fails closed.
+
+### Known gaps
+
+- A branch that keeps its own `AGENTS.md` edits (e.g. `docs/plan-boxing`'s §4 bullets) will warn "human-owned — restore" after merging main, until Jorge lands that text on main. That's intended.
+- Only sessions started after a merge get the new guard. Restart after merging (rule, deliberately untested).
+
 ## 2026-09-17 — M7.15 Boxing control-model inversion: the player owns the rig, the sim resolves consequences
 
 Branch `feat/player-authority`. Spec: PLAN-BOXING §2–§4 with D1 (overlays O1 + O2) and D5 (collision scoring, prediction instead of easing, body scan, 120 Hz).
@@ -2017,4 +2118,4 @@ The core requirement of the brief is met and measured.
 - **Body scan and `armGainM` (found while measuring; affects your playtest if you scanned):** on the whole path main.ts runs, longer scanned arms always read deeper. With the synthetic figure's true arm lengths (0.71), **a guard alone reads z 1.23 m, past the 0.99 m head contact.** Either `armGainM.forward` 1.3 is too high for an accurately scanned player (it was chosen with default bone lengths on a figure whose arms are really 0.71), or the synthetic guard is unrealistic. Only the drills can tell. If a scanned player's guard scores hits, this is why; a name with no scan plays with the defaults. PLAN-BOXING BX-CAL-6.
 - **Pending test fix:** `body-input.spec` "body scan changes reach" varies only the `BODY` normalisation, not the engine's bone lengths, so it asserts "longer arms reach less", the opposite of what the app does. The whole-path version (engine `setArms` + `bodyFromPose`, longer → deeper by > 0.1 m) is written but not applied: the Edit tool was blocked by the fail-closed hook launcher until the merge, and after it a `.ts` edit would have run tsc during the other sessions' quiet window. Next session, first thing.
 - **1080p fps and pose-fps gate values are provisional** until the display/contention rule is settled (Jorge's display routing change, or its replacement).
-- **Next:** merge main at e83c45b (launcher hooks, zero-gates reporter), restart the session, re-run verify on the merged tree. Then M7.16–M7.19 are unblocked.
+- **Next:** main merged at e83c45b (0a49beb) and ec9ba77 (hook launcher, zero-gates reporter, guard over agent config, config-drift Stop hook); both merges unverified. Jorge restarts this session so the hooks load; then apply the pending `body-input.spec` fix and re-run verify on the merged tree (zero-gates reporter present). BX-PRED-1 awaits Jorge's call after the playtest. Then M7.16–M7.19 are unblocked.

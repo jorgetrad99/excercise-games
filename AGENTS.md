@@ -38,14 +38,14 @@ If you are stuck on the same problem for two attempts, stop, write what you trie
 
 - **`src/core/` is pure TypeScript.** No `window`, `document`, `three`, `requestAnimationFrame`, timers, `Math.random`. Randomness comes only from the seeded PRNG passed in. ESLint boundaries rule fails the build otherwise.
 - **Determinism is a feature.** `GameSim.step(dt, events)` with the same seed and event log must produce identical state. There is a test; keep it green.
-- **Do not edit** `fixtures/**`, `public/models/**`, `docs/PLAN.md`. They are human-owned. If a fixture seems wrong, say so in PROGRESS.md.
+- **Do not edit** `fixtures/**`, `public/models/**`, `docs/PLAN.md`, `AGENTS.md`, `.claude/settings.json`, `.claude/settings.local.json`, `.claude/hooks/**`, `.mcp.json`, `CLAUDE.local.md`. They are human-owned; the guard hook blocks them. If a fixture seems wrong, say so in PROGRESS.md.
 - **No new runtime dependency without an ADR** in `docs/DECISIONS/`. Dev dependencies need a one-line justification in the commit message.
 - **Pinned versions.** No `latest`, no `^` for `three` or `@mediapipe/tasks-vision`.
 - **No network at runtime for models/wasm.** They are vendored under `public/models/`.
 - **Assets:** CC0 by default. Any CC-BY file must be listed in `CREDITS.md`; a test checks this.
 - **Files ≤ 400 lines, functions ≤ 60.** Split rather than scroll.
 - Never remove or skip a failing test to make verify green. Never widen a type to `any` to silence the compiler.
-- Never run `git push --force`, `rm -rf` outside `tmp/`, or modify `.claude/settings.json` hooks.
+- Never run `git push --force`, `rm -rf` outside `tmp/`, or modify `.claude/settings.json` or `.claude/hooks/`.
 
 ## 4. Verification — what "done" means here
 

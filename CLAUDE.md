@@ -7,7 +7,7 @@
 - For symbol navigation, prefer the LSP tool over grep; use grep only for literal text; trust the language server's results rather than re-reading files to confirm them.
 - `src/core/` is pure TypeScript — no DOM, no three.js, no `Math.random`.
 - Run `pnpm verify` before every commit and before saying anything is done. Log each session in `docs/PROGRESS.md`.
-- Don't touch `fixtures/**`, `public/models/**`, `docs/PLAN.md`.
+- Don't touch `fixtures/**`, `public/models/**`, `docs/PLAN.md`, `AGENTS.md`, `.claude/hooks/**`, `.claude/settings*.json`, `.mcp.json`, `CLAUDE.local.md`.
 - Read `docs/PLAN.md` §2–§4 for the spec and milestone DoD. Work one milestone at a time.
 
 ## Setup once (human)
