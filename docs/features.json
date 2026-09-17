@@ -1,5 +1,5 @@
 {
-  "$comment": "Milestone task list from PLAN §4. Status: todo | in_progress | done | blocked. Agent-maintained.",
+  "$comment": "Milestone task list from PLAN §4. Status: todo | in_progress | done | unverified | blocked. 'unverified' = the code exists but the claim in 'text' has never been checked the way it is written; say what is missing in 'note'. A 'done' whose note contradicts its text is a bug: fix one of them. Agent-maintained.",
   "milestones": [
     {
       "id": "M0",
@@ -8,7 +8,7 @@
         { "id": "M0.1", "text": "Vite + TS strict, ESLint (+ boundaries rule), Prettier, Vitest, Playwright (Chromium with fake-camera flags)", "status": "done" },
         { "id": "M0.2", "text": "pnpm verify = typecheck + lint + unit + e2e-smoke", "status": "done" },
         { "id": "M0.3", "text": ".claude/settings.json hooks (guard-paths, format-and-typecheck, remind-progress-log), slash commands, subagents (PLAN §5)", "status": "done" },
-        { "id": "M0.4", "text": "typescript-lsp plugin confirmed working (workspaceSymbol returns results)", "status": "done" },
+        { "id": "M0.4", "text": "typescript-lsp plugin confirmed working (workspaceSymbol returns results)", "status": "unverified", "note": "Only the enablement is in the repo (.claude/settings.json). Whether the server answers is a per-session runtime fact that no file can record: re-check with /lsp, don't trust this line." },
         { "id": "M0.5", "text": "docs/ARCHITECTURE.md, docs/features.json, docs/PROGRESS.md, ADR-001 (WebGL renderer), ADR-002 (pure core)", "status": "done" },
         { "id": "M0.6", "text": "Vendored MediaPipe wasm + pose_landmarker_full.task in public/models/", "status": "done" }
       ],
@@ -23,9 +23,9 @@
       "tasks": [
         { "id": "M1.1", "text": "Camera manager: enumerateDevices after permission, dropdown, remembered deviceId, request 1280x720@30, graceful fallback", "status": "done" },
         { "id": "M1.2", "text": "Worker-hosted PoseLandmarker (GPU delegate, VIDEO mode), main-thread bridge with PoseFrame stream, downscale to 640x360", "status": "done" },
-        { "id": "M1.3", "text": "Debug view: mirrored video + skeleton overlay + FPS (camera/pose/render) + visibility heatmap", "status": "done" },
+        { "id": "M1.3", "text": "Debug view: mirrored video + skeleton overlay + FPS (camera/pose/render) + visibility heatmap", "status": "done", "note": "All three fps readouts are real: pose-panel.ts:107 prints camera/pose (pipeline.ts:127-128) and render (main.ts:162)." },
         { "id": "M1.4", "text": "Fixture recorder: ?record=1 dumps last 30 s of PoseFrame[] to downloadable JSON", "status": "done" },
-        { "id": "M1.5", "text": "HUMAN: Jorge records lean-left-right.json, jump.json, crouch.json, idle.json, two-players.json and one .mjpeg/.y4m clip", "status": "todo", "note": "Waiting on Jorge. Recorder (?record=1) is ready." }
+        { "id": "M1.5", "text": "HUMAN: Jorge records lean-left-right.json, jump.json, crouch.json, idle.json, two-players.json and one .mjpeg/.y4m clip", "status": "in_progress", "note": "Two real recordings exist, neither per-gesture: fixtures/pose/combined-raw.json (26 s mixed Skate session, knees tracked in 420/569 frames) and fixtures/pose/boxing/b1-capture-2026-09-17.json (6 takes, the B1 punch/guard capture). Still missing: the per-gesture Skate clips, two-players.json and a video clip. Recorder (?record=1) and the capture wizard (?record=1&capture=b1) are ready." }
       ],
       "dod": [
         { "id": "M1.D1", "text": "e2e with fake camera clip shows >= 1 pose detected at >= 20 pose-fps for 5 s", "status": "in_progress", "note": "Passing on the INTERIM placeholder clip (tests/e2e/assets/placeholder-person.mjpeg, 30 pose-fps). Real DoD needs Jorge's fixtures/video clip swapped into playwright.config.ts." },
@@ -44,7 +44,7 @@
         { "id": "M2.6", "text": "Replay InputSource (real-time or instant)", "status": "done" }
       ],
       "dod": [
-        { "id": "M2.D1", "text": "Fixture-driven unit tests assert exact event sequences (jump.json -> exactly N JUMP, zero LANE, etc.)", "status": "in_progress", "note": "Exact-sequence tests pass on TEMPORARY synthetic sequences (grep TEMPORARY(synthetic-fixtures)). Done when rewired to Jorge's per-gesture recordings." },
+        { "id": "M2.D1", "text": "Fixture-driven unit tests assert exact event sequences (jump.json -> exactly N JUMP, zero LANE, etc.)", "status": "in_progress", "note": "Exact-sequence tests still run on TEMPORARY synthetic sequences (grep TEMPORARY(synthetic-fixtures)). Real data covers only sanity, not counts: gestures.spec.ts runs the whole combined-raw.json recording (finite signals, CALIBRATED, plausible event count). Done when per-gesture recordings exist with counts said aloud." },
         { "id": "M2.D2", "text": "Tuning constants isolated in gestures.config.ts", "status": "done" },
         { "id": "M2.D3", "text": "Debug HUD shows live signals with thresholds drawn", "status": "done" }
       ]
@@ -71,14 +71,14 @@
       "tasks": [
         { "id": "M4.1", "text": "three.js scene: renderer factory, follow camera, lighting (directional + hemisphere + HDRI), biome fog", "status": "done", "note": "HDRI env replaced by RoomEnvironment+PMREM until art is locked (ADR-004)." },
         { "id": "M4.2", "text": "Chunk views bound to sim chunks, pools, InstancedMesh coins with spin", "status": "done" },
-        { "id": "M4.3", "text": "Procedural skater + board (run/jump/slide/grab)", "status": "done" },
-        { "id": "M4.4", "text": "Obstacles from Kenney kits; biome 1 & 2", "status": "done", "note": "Kenney City Kit (Roads), Car Kit, Nature Kit; street + park biomes." },
+        { "id": "M4.3", "text": "Skater + board (run/jump/slide/grab)", "status": "done", "note": "NOT procedural, as PLAN §4 originally said: the skater is Quaternius 'Casual_Hoodie' (CC0, rigged) with animation clips (render/skater.ts, render/models.ts); only the board is procedural. Changed by ADR-005." },
+        { "id": "M4.4", "text": "Obstacles from CC0 kits; biome 1 & 2", "status": "done", "note": "Quaternius, NOT Kenney: ADR-005 replaced the Kenney flat set after Jorge picked Quaternius/KayKit from the screenshot comparison (render/biomes.ts:1-2). No Kenney file is left in public/assets or CREDITS. Street + park biomes." },
         { "id": "M4.5", "text": "HUD overlay (DOM): score, coins, multiplier, distance, power-up timers, tracking indicator, revive prompt, results card", "status": "done" },
         { "id": "M4.6", "text": "Perf gate: 60 fps at 1080p with pose running; draw calls < 150; GPU frame < 8 ms", "status": "in_progress", "note": "Automated on this machine (RTX 4060 Laptop GPU per nvidia-smi, new-headless Chromium): 60 fps at 1920x1080 with and without the pose worker, 51-53 draw calls. GPU frame < 8 ms not measured (needs a timer query) and not yet checked on the external 1080p60 display by Jorge." }
       ],
       "dod": [
         { "id": "M4.D1", "text": "Playwright screenshot tests on seed 42 at t=0/10/30 s (pixel diff tolerance)", "status": "done", "note": "tests/e2e/render.smoke.spec.ts: seed 42 bot autoplay with ?clock=manual at t=0/10/30 (+60 park), maxDiffPixelRatio 0.01." },
-        { "id": "M4.D2", "text": "Perf test reads getFps() >= 55 over 20 s with keyboard input", "status": "done", "note": "Perf test uses ?input=bot (the keyboard source is live too) so the run lasts 20 s; pure keyboard with no presses would crash at ~7 s." }
+        { "id": "M4.D2", "text": "Perf test reads getFps() >= 55 over 20 s with keyboard input", "status": "unverified", "note": "The fps half is verified (render.smoke.spec.ts:95-121, 20 samples, >= 55 at 1080p); the 'with keyboard input' half is not. The test runs ?input=bot because pure keyboard with no presses crashes at ~7 s. Either rewrite this DoD line to say bot input, or drive real key presses." }
       ]
     },
     {
@@ -120,18 +120,41 @@
         { "id": "M7.7", "text": "MiniGame framework hardening: defineGame + OpaqueSim registry typing, generic __game.getState<S>(), shared-sim support in the shell, per-game keyboard maps, lint rule for sibling-game folder-index imports", "status": "done" },
         { "id": "M7.8", "text": "Kinect-style hand-hover menu: raised hand = per-player cursor, ~1 s dwell selects; player-count choice; mouse/keyboard fallback", "status": "done", "note": "gestureConfig.cursor zone/dwell are UNTUNED: synthetic poses only. Needs a real-camera playtest." },
         { "id": "M7.9", "text": "Cabezota faces (Piece 5, Boxing): oversized heads wearing each player's live camera face crop from pose landmarks (no face model)", "status": "done", "note": "Boxing only. Skate Run's rear camera never shows the face: separate work." },
-        { "id": "M7.10", "text": "Pose mirroring: per-frame PoseState (bone directions/rotations, arm extension + reach, sway/duck/forward, torso/head angles) for render binding; punch handedness and detection tuning against real boxing recordings", "status": "in_progress", "note": "PoseState contract, plumbing to GameView.render and real-data tests done (ARCHITECTURE Pose mirroring). Tuning blocked on Jorge recording fixtures/pose/boxing/ drills (PROGRESS 2026-09-16 Pose mirroring), then pnpm tune:boxing GRID=1. Rig binding: Codex, feat/visual-expressiveness. M7.15 removed pose punch detection (collision scoring): punch-count tuning and pnpm tune:boxing are gone; the drills remain useful for bone lengths and BODY gains. B1 capture (2026-09-17, src/pose/testdata/real-b1-capture.json): camera not mirrored; 18/18 real punches on the correct glove (b1-capture.spec)." },
+        { "id": "M7.10", "text": "Pose mirroring: per-frame PoseState (bone directions/rotations, arm extension + reach, sway/duck/forward, torso/head angles) for render binding; punch handedness and detection tuning against real boxing recordings", "status": "in_progress", "note": "PoseState contract, plumbing to GameView.render and real-data tests done (ARCHITECTURE Pose mirroring). Tuning blocked on Jorge recording fixtures/pose/boxing/ drills (PROGRESS 2026-09-16 Pose mirroring), then pnpm tune:boxing GRID=1 — both gone now: the drills were never recorded and boxing-tune.tool.ts was deleted, so nothing waits on them. Rig binding: merged into main (was Codex / feat/visual-expressiveness, branch deleted 2026-09-17). M7.15 removed pose punch detection (collision scoring): punch-count tuning and pnpm tune:boxing are gone; the drills remain useful for bone lengths and BODY gains. B1 capture (2026-09-17, src/pose/testdata/real-b1-capture.json): camera not mirrored; 18/18 real punches on the correct glove (b1-capture.spec)." },
         { "id": "M7.11", "text": "Boxing visual expressiveness: zero-stamina fall, count get-up, hit reactions, complete big-head replacement, directional face damage", "status": "done", "note": "Codex handoff rescued, rebased and finished (PROGRESS 2026-09-16 Visual expressiveness). Live PoseState expression (sim-authoritative), falls follow the sim (dizzy wobbles), head snaps away from the blow, bruises + geometric swelling, lit seamless face. Harness/fake-camera verified only: needs a real-camera playtest." },
         { "id": "M7.12", "text": "Perf diagnosis 1P/2P Boxing (per-feature attribution, before/after) + software-WebGL detection (CPU delegate, visible warning)", "status": "done", "note": "Root cause of the slow sessions: Chrome rendering WebGL in software (WARP). Lite auto-fallback (PLAN 1.1) deliberately NOT wired: measured no gain (PROGRESS 2026-09-16 Perf diagnosis)." },
         { "id": "M7.13", "text": "Research: threshold rules vs learned classifiers for movement detection (docs/RESEARCH-movement-detection.md)", "status": "in_progress", "note": "Waiting for Jorge's decision." },
         { "id": "M7.14", "text": "Named players: 'Who's playing?' slot claiming by hand hover (menu), per-player match history in ProfileStore, Stats page with per-stat charts", "status": "done", "note": "Identity = name bound to a screen side for the session. Real two-person hover flow untested with a camera (synthetic poses)." },
-        { "id": "M7.15", "text": "Boxing control-model inversion: the player owns the rig, the sim resolves consequences; authority table + boxingAuthority() with exact handover ticks (PLAN-BOXING §2-§4)", "status": "in_progress", "note": "Branch feat/player-authority (PROGRESS 2026-09-17). Player owns the rig (BODY events, uncapped, no easing; prediction ≤ 50 ms for drawing only); glove-collision scoring at 120 Hz; boxingAuthority() + bounded overlays O1/O2; arm landmarks unfiltered (BX-CL-7); body scan in the menu (profile v2), BUT scan NOT applied to reach (BLOCKER 2026-09-17: an accurate scan makes a plain guard score; acceptance 5 unmet until armGainM is retuned from the drills). BX-PRED-1 15 cm lead cap approved, pending implementation. Latency camera → drawn glove p50 1P 223 → 37.8 ms, rig response 200 → 16.7 ms. Untested with a real camera: playtest note in PROGRESS." },
+        { "id": "M7.15", "text": "Boxing control-model inversion: the player owns the rig, the sim resolves consequences; authority table + boxingAuthority() with exact handover ticks (PLAN-BOXING §2-§4)", "status": "in_progress", "note": "On main since the 2026-09-17 consolidation (was feat/player-authority, then fix/boxing-phase0). Player owns the rig (BODY events, uncapped, no easing; prediction ≤ 50 ms for drawing only); glove-collision scoring at 120 Hz; boxingAuthority() + bounded overlays O1/O2; arm landmarks unfiltered (BX-CL-7); body scan in the menu (profile v2), BUT scan NOT applied to reach (BLOCKER 2026-09-17: an accurate scan makes a plain guard score; acceptance 5 unmet until armGainM is retuned from the drills). BX-PRED-1 15 cm lead cap approved, pending implementation. Latency camera → drawn glove p50 1P 223 → 37.8 ms, rig response 200 → 16.7 ms. Untested with a real camera: playtest note in PROGRESS." },
         { "id": "M7.16", "text": "Boxing knockdown from the player's perspective: own-slot fall camera, look-up on the canvas, count + effort meter (PLAN-BOXING §5)", "status": "todo", "note": "New item, not a reopening of M7.11: M7.11 delivered its spec; the gap was the spec. Blocked on M7.15 merged." },
         { "id": "M7.17", "text": "Boxing active recovery: effort (march/hop/arm pump) drives getting up, need scales with knockdown number, min floor 2 s, KO cap 8 s, no rng; state-scoped recovery classifier (PLAN-BOXING §6, §8)", "status": "todo", "note": "Blocked on M7.15 merged. MARCH_STEP comes from the shared src/pose/march.ts (also for the queued Skate Run step-propulsion amendment). Real-data tests provisional until Jorge records fixtures (PLAN-BOXING §11); no tuning on synthetic poses. Flag: arm pump at +0.5 is the least efficient way up; check against recordings." },
         { "id": "M7.18", "text": "Boxing free movement: positional hip mapping + walking-in-place locomotion outside exchanges; lean-vs-hips dodge (PLAN-BOXING §7)", "status": "todo", "note": "D2 decided: positions in the sim (MOVE events), out-of-reach punches whiff; bot approach/retreat (PLAN-BOXING §7). Blocked on M7.15 merged." },
         { "id": "M7.19", "text": "Boxing trainer between rounds: automatic walk to corner, seated trainer loop with free head/torso, walk out (PLAN-BOXING §9)", "status": "todo", "note": "D3 decided: 11 s break, interruptible by walking out after cornerMinS 2 s (PLAN-BOXING §9). D4: arms free. Blocked on M7.15 merged." }
       ],
       "dod": []
+    },
+    {
+      "id": "M8",
+      "title": "Skate Run step propulsion",
+      "$comment": "PLAN §4 M8, amended 2026-09-16 (D1-D4). NOT STARTED: no code exists on any branch. Nothing here has ever been tested against a real body; the six skate-* recordings it needs do not exist.",
+      "tasks": [
+        { "id": "M8.0", "text": "Port perf reporting: GPU name + delegate in debug stats, software-GL CPU fallback, perf probe", "status": "done", "note": "Already on main (M7.12 / platform/gpu.ts, scripts/perf-probe.mjs). The port M8.0 asked for happened before M8 existed." },
+        { "id": "M8.1", "text": "activeGestures detector scoping", "status": "todo", "note": "Shared with PLAN-BOXING §8 (M7.17). No DetectorSet in the code." },
+        { "id": "M8.2", "text": "Shared march classifier (src/pose/march.ts) + knee calibration + JUMP both-knees gate", "status": "todo", "note": "src/pose/march.ts does not exist. Knee calibration DOES (pose/calibration.ts kneeY, main.ts:218 knees-visible prompt), built for Boxing. Thresholds cannot be tuned without the skate-* recordings." },
+        { "id": "M8.3", "text": "Speed model (PLAN §2.3), motion modes (§2.9), S key, bot steps at 2.4 steps/s", "status": "todo", "note": "Speed is still distance-only: core/sim.config.ts speed { base 12, perMeter 0.02, max 26 }. Cadence, floor F and the target formula are unwritten and untuned." },
+        { "id": "M8.4", "text": "Chaser / the Sweeper (PLAN §2.7): sim, HUD warning, view", "status": "todo", "note": "Waits until the 1080p fps gate failures are explained or the park biome is decimated (park is at 586k/1.17M triangles, PROGRESS 2026-09-16)." },
+        { "id": "M8.5", "text": "Skyhook (PLAN §2.8): sim, SKYHOOK_GATE pattern, view", "status": "todo", "note": "Same perf precondition as M8.4." },
+        { "id": "M8.6", "text": "Perf gates 1P/2P re-run serially; measured values and retry counts logged", "status": "todo" }
+      ],
+      "dod": [
+        { "id": "M8.D1", "text": "Determinism test with STEP events; solvability at floor speed F", "status": "todo" },
+        { "id": "M8.D2", "text": "Chaser trigger, warning, escape and catch at exact ticks; Skyhook earn, gate, chaser reset and landing at exact ticks", "status": "todo" },
+        { "id": "M8.D3", "text": "Fixture tests for STEP counts, 0 JUMP while jogging, 0 STEP on jumps, lanes/slides unchanged while stepping", "status": "blocked", "note": "Blocked on HUMAN M8.H1. Do not write these against synthetic poses: step-vs-jump is exactly the confusion the fixtures exist to settle." },
+        { "id": "M8.D4", "text": "Perf gates green with no threshold changed; render cap <= +3 draw calls and <= +5k triangles per screen slot", "status": "todo" }
+      ],
+      "human": [
+        { "id": "M8.H1", "text": "HUMAN: Jorge records fixtures/pose/skate/ (skate-still, skate-march ~2 steps/s, skate-jog ~2.6 steps/s, skate-jog-jumps, skate-jog-lanes, skate-jog-slides), full body with knees visible, counts said aloud", "status": "todo" }
+      ]
     }
   ]
 }
