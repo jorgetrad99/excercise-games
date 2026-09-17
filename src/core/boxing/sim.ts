@@ -52,7 +52,6 @@ function newBoxer(): Boxer {
     dodgeT: 0,
     dodgeCd: 0,
     counterT: 0,
-    idleT: 0,
     fists: [readyFist(), readyFist()],
     knockdowns: 0,
     landed: 0,
@@ -96,7 +95,7 @@ const fistOut = (b: Boxer): boolean => b.fists.some((f) => f.phase === 'out');
 /** Moves reset after a knockdown and between rounds. `guard` is left alone: it mirrors what the
  *  player is physically holding (GUARD_START/END), and only counts while not dizzy. */
 function settle(b: Boxer): void {
-  Object.assign(b, { dodge: 'none', dodgeT: 0, dodgeCd: 0, counterT: 0, idleT: 0 });
+  Object.assign(b, { dodge: 'none', dodgeT: 0, dodgeCd: 0, counterT: 0 });
   b.fists = [readyFist(), readyFist()];
 }
 
@@ -160,7 +159,6 @@ function punch(s: BoxingState, who: BoxerId, type: string, aim: Aim = { x: 0, y:
   // Recovery: a fist punches again only once its glove has stopped (back to ready).
   if (b.dizzy || b.dodge !== 'none' || fist.phase !== 'ready') return;
   Object.assign(fist, { phase: 'out', t: 0, aim: { x: aim.x, y: aim.y } });
-  b.idleT = 0;
   emit(s, 'PUNCH', who);
 }
 
@@ -192,7 +190,6 @@ function fight(s: BoxingState, dt: number): void {
 
 function moveBoxer(s: BoxingState, who: BoxerId, dt: number): void {
   const b = s.boxers[who];
-  b.idleT += dt;
   b.counterT = Math.max(0, b.counterT - dt);
   if (b.dodge !== 'none') {
     b.dodgeT -= dt;
@@ -207,9 +204,6 @@ function moveBoxer(s: BoxingState, who: BoxerId, dt: number): void {
     else if (fist.phase === 'back' && fist.t >= C.punch.retractS - EPS)
       Object.assign(fist, { phase: 'ready', t: 0 });
   }
-  const resting = !b.dizzy && b.fists.every((f) => f.phase === 'ready');
-  if (resting && b.idleT >= C.stamina.regenIdleS)
-    b.stamina = Math.min(b.max, b.stamina + C.stamina.regenPerS * dt);
 }
 
 function drain(s: BoxingState, who: BoxerId, amount: number): void {
@@ -227,13 +221,11 @@ function resolve(s: BoxingState, who: BoxerId, o: Outcome): void {
   const def = other(who);
   const d = s.boxers[def];
   if (a.dizzy) return;
-  a.idleT = 0;
   if (o.kind === 'whiff') {
     d.counterT = C.stamina.counterWindowS;
     emit(s, 'WHIFF', who);
     return drain(s, who, C.stamina.whiff);
   }
-  d.idleT = 0;
   if (o.kind === 'block') {
     d.blockT = s.t;
     emit(s, 'BLOCK', def);

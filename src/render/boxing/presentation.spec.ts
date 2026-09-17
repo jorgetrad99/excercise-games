@@ -34,7 +34,7 @@ describe('boxing presentation', () => {
     expect(zone('PUNCH_LEFT', { x: -1, y: 0 })).toBe(1);
     expect(zone('PUNCH_LEFT', { x: 0, y: 1 })).toBe(2); // uppercut: the chin
   });
-  it('accumulates real clean hits once, excludes blocks, preserves damage through regen, resets on restart', () => {
+  it('accumulates real clean hits once, excludes blocks, keeps damage over idle time, resets on restart', () => {
     const s = initBoxing({ seed: 42, skipIntro: true }),
       read = createPresentation();
     read(s, 1);

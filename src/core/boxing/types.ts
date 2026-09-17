@@ -76,8 +76,6 @@ export interface Boxer {
   dodgeCd: number;
   /** Counter window left after dodging a punch, s. */
   counterT: number;
-  /** Time since this boxer last punched or was hit, s (regen gate). */
-  idleT: number;
   /** [left, right]. */
   fists: [Fist, Fist];
   /** Knockdowns suffered. */

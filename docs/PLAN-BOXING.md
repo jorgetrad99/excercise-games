@@ -398,9 +398,9 @@ The player stands in front of a fixed camera with about ±0.5 m of usable floor.
 
 **What D2 changes for the bot** (`core/boxing/bot.ts`; still stateless and deterministic, `rngAt` only):
 - **Approach:** the bot moves to `reachM − 0.15` m before punching and punches only inside reach. Walk speed cap `bot.moveMps` = 1.5 m/s, below the player's 2.5 m/s, so a player can out-walk it. It obeys the exchange rule.
-- **Retreat:** when stamina < 3 segments and not dizzy, it backs out to `reachM + 0.3` m and regenerates.
+- **Retreat:** when stamina < 3 segments and not dizzy, it backs out to `reachM + 0.3` m. (Until 2026-09-17 this said "and regenerates": that described a retreat never built in `bot.ts`, and mid-round regen is now removed, B3. Retreating buys distance, not stamina.)
 - **Defence unchanged:** it still reacts to thrown punches 0.08 s after they leave (guard/sway), and doesn't react to punches thrown from out of reach.
-- **Balance risk, kiting:** a player can retreat to regen indefinitely. The small ring (±2.2 m) and the bot's approach limit it. BX-MV-7 measures it, and there's no anti-kite rule until that shows a problem.
+- **Balance risk, kiting:** a player can retreat to avoid exchanges indefinitely (no stamina comes back mid-round since B3, so kiting only runs the clock). The small ring (±2.2 m) and the bot's approach limit it. BX-MV-7 measures it, and there's no anti-kite rule until that shows a problem.
 - **Tests to re-baseline, not delete:**
   - bot-vs-bot match length and result distribution in `sim.spec.ts` (old vs new values recorded in PROGRESS)
   - the 1P e2e screenshot baselines (boxers no longer at fixed marks)

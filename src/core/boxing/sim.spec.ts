@@ -40,6 +40,16 @@ describe('boxing sim rules', () => {
     expect(s.boxers[0].landed).toBe(1);
   });
 
+  it('no mid-round regen: a hit boxer left idle for 10 s keeps its stamina (the pie is the health)', () => {
+    const s = fight();
+    run(s, PUNCH_S, [ev('PUNCH_RIGHT')]);
+    const hurt = s.boxers[1].stamina;
+    expect(hurt).toBeLessThan(10);
+    expect(run(s, 10)).toEqual([]);
+    expect(s.boxers[1].stamina).toBe(hurt);
+    expect(s.boxers[0].stamina).toBe(10); // the attacker's landed gain was already capped at max
+  });
+
   it('recovery: the same fist cannot punch again until its glove has stopped; the other fist can', () => {
     const s = fight();
     run(s, 0.25, [ev('PUNCH_RIGHT')]);
@@ -113,7 +123,7 @@ describe('boxing sim rules', () => {
     const s = fight();
     s.boxers[1].stamina = C.stamina.clean;
     expect(run(s, PUNCH_S, [ev('PUNCH_RIGHT')])).toEqual(['PUNCH', 'HIT', 'DIZZY']);
-    expect(run(s, 2, [ev('PUNCH_LEFT', 1)])).toEqual([]); // can't punch, and no regen while dizzy
+    expect(run(s, 2, [ev('PUNCH_LEFT', 1)])).toEqual([]); // can't punch
     expect(s.boxers[1].stamina).toBe(0);
     expect(run(s, PUNCH_S, [ev('DODGE_LEFT', 1), ev('PUNCH_RIGHT')])).toEqual(['PUNCH', 'WHIFF']);
     run(s, 1);

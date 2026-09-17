@@ -70,9 +70,6 @@ export const boxingConfig = {
     whiff: 0.3,
     /** Gained by the attacker for a clean hit, seg. */
     landedGain: 0.2,
-    /** Regen after regenIdleS without punching or being hit, seg/s. */
-    regenPerS: 0.5,
-    regenIdleS: 1,
   },
   /**
    * Keyboard/bot puppet only (a pose-driven boxer's gloves are the player's): a key punch travels out
