@@ -2043,3 +2043,58 @@ The provisional path (`recordGate` → `contention()` → annotation → `test.s
   - draw calls: ≤ 150 − R4 calls − 10, halved per view
   - negative headroom means cut park geometry first
 - **Handover sentence:** "≤ T triangles, ≤ D draw calls per view; 2P added frame p95 ≤ Hr; added inference p95 ≤ Hp".
+
+
+## 2026-09-17 — CPU contention threshold: question framed, sweep prepared (not run); `pnpm machine:state`
+
+Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), on `6a28bf5`.
+- **Signed off by Jorge:** `maxExternalGpuPct` 10 %.
+- **Not signed off:** `maxExternalCpuCores` 2. Jorge's objection: this machine's steady external CPU is ~3–5 cores (VS Code ~1.0, Defender ~0.7, dwm ~0.6), so 2 cores would make every gate provisional forever, and with the zero-gates reporter no run could ever pass.
+- **Nothing was run on the GPU:** Jorge is changing the display routing and measuring before/after.
+
+### Q1: does CPU load move pose-fps on this machine? Existing evidence doesn't answer it
+
+- **Points at GPU:** 1P inference held at 12.3–12.9 ms across the 2026-09-16 variance step, and 2P moves because inference takes 25–29 ms of a 33 ms frame.
+- **The only controlled CPU test is partial:** main thread throttled 4× (probe `boxing-*-pose-cpu4x`) left inference unchanged (12.3 / 23.1 ms). It dropped render min to 47 / 42 and 2P pose mean to 26.1 (min 22). It throttles only the page's main thread, not the pose worker, the GPU process or the machine.
+- **The uncontrolled probe history is inconclusive:** `tmp/perf/probe-*.json` shows 2P pose 15–30 with inference 23–42 ms, but no machine state was recorded, so CPU and GPU load can't be separated.
+- **Candidate CPU-bound steps exist:** frame capture/transfer, WASM pre/post-processing around the GPU delegate, and 2-pose postprocessing. So CPU can't be ruled out on reasoning alone.
+
+### Q2: set the threshold from measurement: `scripts/cpu-contention-sweep.mjs` (prepared, not run)
+
+- **Load:** N worker threads spinning at normal priority, N ∈ {0, 2, 4, 6, 8, 10, 12, 14} of 16 logical cores (Ryzen 7 7735H, 8 cores / 16 threads). This is external load, like the editor or Defender.
+- **Workload:** `perf-probe` `skate-2p-pose` (binding) and `skate-1p-pose` (control), 20 s each. The probe waits for and holds the perf lock.
+- **Design:**
+  - 3 repetitions, order alternating ascending/descending so heat and drift spread across levels
+  - 10 s cooldown between points
+  - per point: pose mean/min, inference ms, render min, whole-machine CPU busy %, nvidia temperature and throttle bitmask
+  - `pnpm machine:state` taken first as the idle external-CPU offset
+- **Decision (pure `summarize`, unit-tested in `tests/unit/cpu-sweep.spec.ts`):**
+  - **onset** = the lowest added load where 2P pose mean < baseline − max(1 fps, 2 × sd of the baseline repetitions)
+  - **no onset** up to 14 added cores → **CPU becomes reported-only, not gated**
+  - **onset found** → threshold = idle external cores + the last level that didn't degrade, in the same "external cores" unit the gate measures
+- **Run it only on the quiet GPU after the display change:**
+
+  ```bash
+  node scripts/cpu-contention-sweep.mjs
+  ```
+
+  About 25–30 min. Output in `tmp/perf/cpu-sweep.json` plus a printed table and proposal.
+- **Not verified end to end:** the script hasn't run. Only the summary logic has unit tests; the orchestration (burners, probe, Vite) is unexercised.
+
+### `pnpm machine:state` (new; the "live-read path")
+
+- **What it is:** `tests/tools/machine-state.tool.ts` runs the same `machineState()` read every perf gate records. It writes `tmp/machine-state/<MACHINE_LABEL>.json` and prints external GPU/CPU with the top processes.
+- **Before/after of the display change:** `MACHINE_LABEL=display-before pnpm machine:state`, then `display-after`.
+- **Why:** my earlier live reads came from a throwaway spec, so Jorge had no command to reproduce them.
+
+### Two more live-path bugs fixed
+
+- **Process list salvage:** `Get-CimInstance Win32_Process` also exits 1 mid-enumeration while printing valid rows. The process list came back empty, so names were "?", and worse, **nothing could be attributed to this run**: its own browser would have counted as external. The PowerShell helper now keeps stdout for every call.
+- **Empty process list → not measurable:** if it's still empty, the load is "not measurable" (provisional), never a reading.
+- **Three consecutive reads (idle, lock not held):**
+  - external GPU 30 / 30 / 27.1 % (dwm.exe 28.9 / 28.9 / 25.9)
+  - external CPU 2.91 / 3.55 / 3.04 cores (Code.exe 0.99–1.01, dwm.exe 0.57–0.63)
+
+### First-real-run confirmation list: one item added (Jorge)
+
+5. **A run where every @perf gate is provisional fails end to end** with move-arcade-32's `GATES: no gates measured`: a real Playwright run on a contended machine, not only the reporter's unit tests. This is the guard against the false-green hole.

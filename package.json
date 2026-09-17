@@ -13,7 +13,8 @@
     "latency:gestures": "vitest run --config vitest.tools.config.ts gesture-latency",
     "latency:pipeline": "playwright test --project=tools pipeline-latency",
     "latency:judder": "vitest run --config vitest.tools.config.ts frame-judder",
-    "tune:boxing": "vitest run --config vitest.tools.config.ts boxing-tune"
+    "tune:boxing": "vitest run --config vitest.tools.config.ts boxing-tune",
+    "machine:state": "vitest run --config vitest.tools.config.ts machine-state"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.0.1",

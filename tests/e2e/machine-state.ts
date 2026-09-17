@@ -44,11 +44,19 @@ export interface CounterRow {
   v: number;
 }
 
-const ps = (command: string): string =>
-  execFileSync('powershell', ['-NoProfile', '-Command', command], {
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
+/** PowerShell stdout. Processes exit mid-enumeration during a test run; the cmdlet then exits 1 but still
+ *  prints every valid row (seen for Get-Counter and Get-CimInstance under vitest, 2026-09-16), so the
+ *  output is kept. Callers treat unparseable output as "no data". */
+function ps(command: string): string {
+  try {
+    return execFileSync('powershell', ['-NoProfile', '-Command', command], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (e) {
+    return String((e as { stdout?: string }).stdout ?? '');
+  }
+}
 
 function processes(): Proc[] {
   try {
@@ -118,14 +126,7 @@ function readCounters(): CounterRow[] | null {
     `$i = 0; Get-Counter -Counter ${counters} -SampleInterval 1 -MaxSamples ${C.samples} -ErrorAction SilentlyContinue | ` +
     'ForEach-Object { $i++; foreach ($s in $_.CounterSamples) { [pscustomobject]@{ i = $i; path = $s.Path.ToLower(); v = $s.CookedValue } } } | ' +
     'ConvertTo-Json -Compress';
-  let out: string;
-  try {
-    out = ps(command);
-  } catch (e) {
-    // Processes exit mid-sample during a test run; Get-Counter then exits 1 but still prints every
-    // valid sample (seen under vitest, 2026-09-16). Keep the output; only unparseable output is "no data".
-    out = String((e as { stdout?: string }).stdout ?? '');
-  }
+  const out = ps(command);
   try {
     return out.trim() ? (JSON.parse(out) as CounterRow[]) : null;
   } catch {
@@ -235,7 +236,9 @@ export function contention(
 export async function machineState(): Promise<MachineState> {
   const procs = processes();
   const ours = ourPids(procs);
-  const rows = readCounters();
+  // Without the process list nothing can be attributed to this run: its own browser would count as
+  // external. Treat that as "not measurable" (provisional), never as a reading.
+  const rows = procs.length ? readCounters() : null;
   const names = new Map(procs.map((p) => [p.pid, p.name]));
   const load = rows
     ? summarizeLoad(rows, ours, names)
