@@ -12,7 +12,8 @@
     "verify": "pnpm typecheck && pnpm lint && pnpm test && pnpm test:smoke",
     "latency:gestures": "vitest run --config vitest.tools.config.ts gesture-latency",
     "latency:pipeline": "playwright test --project=tools pipeline-latency",
-    "latency:judder": "vitest run --config vitest.tools.config.ts frame-judder"
+    "latency:judder": "vitest run --config vitest.tools.config.ts frame-judder",
+    "machine:state": "vitest run --config vitest.tools.config.ts machine-state"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.0.1",

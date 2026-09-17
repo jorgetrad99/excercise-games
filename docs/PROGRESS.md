@@ -1861,6 +1861,243 @@ Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), on `852efb0`. Harness an
 
 - **Render budget:** the park biome is at 586k triangles; needed before the chaser and web-swinging get designed. Not built here; flagged so it isn't lost across branches.
 - **The 7f68b4b amendments** (glove collision, prediction, body scan, 120 Hz) are under Jorge's review. Any §4.1 / authority-table conflict is his to resolve.
+
+
+## 2026-09-16 — Perf follow-ups: quiet-variance pass, lock bypass list, provisional gates, contended-era audit
+
+Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), on `0457ca6`. No verify or re-baseline run: other sessions are active, and option B (lock infrastructure onto `main`, file by file) is another session's job.
+
+### 1. Quiet-machine variance (2P pose-fps 28–30 vs 25–26): one pass
+
+**The variance is a step in time, not a verify-vs-standalone difference.** From `tmp/verify/*.jsonl` and the logs:
+
+| Run (local time, end) | Path | 2P min / mean | 1P pose min | 1P inference | CPU % | nvidia-smi GPU % |
+|---|---|---|---|---|---|---|
+| 23:00 | verify (retry) | 28 / 29.7 | 27 | 12.9 ms | — | — |
+| 23:17 | verify | 28 / 29.6 | 30 | 12.3 ms | 28 | 42 |
+| 23:20–23:22 | standalone ×5 | 25 / 25.3–26.5 | — | — | 23–31 | 33–39 |
+| 23:25 | verify | 24 / 26.3 | 27 | 12.7 ms | 24 | 38 |
+
+**Ruled out:**
+- **Verify path vs standalone gate:** the 23:25 verify ran the full verify path and measured 26.3, the same level as the standalone block.
+- **Power plan:** Balanced before and after, on AC at 100 %. No UserModePowerService, Kernel-Power or display-driver events in the System log since 22:30.
+- **The apps Jorge planned to close:** GoPro Webcam (running since 09-15), NVIDIA Overlay (since 19:32), Codex/ChatGPT (since 19:43) and the stale Vite on 5173 were all running across the step. None started or stopped at ~23:18.
+- **Dev-tool contention:** machine state showed `other heavy: none` in every run on both sides of the step (after the false-positive fix), and CPU busy was the same (23–31 %).
+- **Per-pose inference cost:** 1P inference was 12.3–12.9 ms on both sides, and 1P pose-fps stayed at the camera's 30 fps cap.
+- **Progressive thermal throttling (not supported):** five back-to-back 2P runs got slightly *faster* (mean 25.3 → 26.5), not slower. No GPU throttle reason is active now. Temperature and clock state weren't recorded at the time, so thermal is not excluded, only not supported.
+
+**Mechanism (supported by earlier data, and why only 2P moves):**
+- **Inference sits right at the frame budget in 2P:** 2 poses × ~12 ms plus transfer ≈ 25–29 ms against a 33 ms camera interval (Perf diagnosis entry: "23–29 ms of inference", 5–10 ms headroom). A few ms more per frame costs whole pose frames: 30 → 25.
+- **1P has ~20 ms of headroom,** so the same perturbation is invisible there.
+- **The same bimodality appeared earlier on the same code:** 2P means of 23.9, 25.2, 27.6, 28.3 and 29.7 across runs (Perf diagnosis entry).
+
+**Unmeasured consumers of that headroom, found in this pass:**
+- **`dwm.exe` on the RTX 4060's 3D engine:** 42 % while idle (per-process `\GPU Engine(*)\Utilization Percentage`). The RTX 4060 drives the external 1920×1080 display, so the desktop compositor shares the GPU with the pose worker. Its load depends on what's on screen, which a headless test doesn't control. The earlier gate column "GPU 33–42 %" is mostly this baseline.
+- **A second Chrome process (pid 54084)** at 25 % GPU during a later idle check, plus Jorge's Chrome video decode at 4 %.
+- **VS Code's extension host (NodeService)** at a steady ~1.2 cores (41,804 CPU-seconds so far).
+- A SudoMaker virtual display adapter is installed.
+- **None of these match the dev-tool classifier,** so none showed as CONTENDED.
+
+**Conclusion:** the most likely cause is a change in background GPU load (compositor or browser) eating the 2P frame budget, not our code, the run path, power settings or dev tools. It isn't proven, because per-process GPU use wasn't recorded at 23:17–23:20.
+
+**Closed going forward:** every gate's machine line now records `gpu top` (top 5 processes by GPU engine %) and GPU temperature / P-state / throttle reasons. The next shift is attributable from the log.
+
+**Implication for the gate:** 2P's quiet floor on this machine is ~24–25 with this background, not 28–30. That's still ≥ 20, but the 2P margin is ~4–5 pose-fps, not 8–10.
+
+### 2. Commands that bypass the perf lock (don't run these by hand while an e2e/perf run holds `.git/move-arcade-e2e.lock`)
+
+**Waits for the lock (safe):**
+- `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm verify` (each step)
+- any vitest run using `vite.config.ts` or `vitest.tools.config.ts`: `pnpm exec vitest`, `npx vitest`, `pnpm tune:boxing`, `pnpm latency:gestures`, `pnpm latency:judder`
+- `pnpm latency:pipeline` (tools project)
+- `node scripts/perf-probe.mjs`
+- the format-and-typecheck hook (≤ 45 s, then skips tsc), **once B lands on the checkout that sessions run hooks from**
+
+**Fails fast instead:** `pnpm test:smoke` and any `playwright test` on smoke/perf.
+
+**Bypass the lock:**
+
+| Command | Why it escapes |
+|---|---|
+| `npx tsc`, `pnpm exec tsc`, `tsc -p .`, `node node_modules/typescript/bin/tsc` | calls tsc directly, not the `typecheck` script |
+| `npx eslint`, `pnpm exec eslint …` | calls eslint directly, not the `lint` script |
+| `vite build`, `pnpm exec vite build` | no build script exists; nothing wraps it |
+| `pnpm dev` + a browser tab on the game (including the Claude browser pane and a real Chrome) | renders WebGL and runs the pose worker on the same GPU |
+| `vitest --config <any other config>` or `vitest --globalSetup …` overrides | skips the configs that carry the lock `globalSetup` |
+| ad-hoc Playwright/Chromium scripts (`node tmp/*.mjs`, e.g. GPU probes) | not a Playwright project; no global setup |
+| `node scripts/vendor-*.mjs`, `scripts/make-placeholder-clip.mjs` | heavy I/O and CPU, not wrapped |
+| `pnpm install` | CPU and disk, not wrapped |
+| `prettier --write` over many files | CPU burst, not wrapped (the per-file hook run is negligible) |
+| the hooks, until B lands | sessions run hooks from their project-dir checkout, which doesn't have the waiting hook yet |
+
+**Rule for anything in the table:** run `node scripts/e2e-lock.mjs wait` first. The machine line catches tsc, eslint, vitest, playwright, vite build and probes if they overlap anyway. It doesn't catch browsers, the compositor, installs or vendor scripts; `gpu top` and CPU % cover part of that.
+
+### 3. CONTENDED gate results are provisional, not pass/fail
+
+- **Rule:** `recordGate` computes `contention(machine, softwareGpu)`. Any of these makes the result provisional:
+  - other heavy processes
+  - the perf lock not held by this run
+  - a software renderer
+- **What a provisional result does:**
+  - it's still written to `gates.jsonl` with `status: "provisional"` and the reasons (a quiet run writes `status: "measured"`)
+  - it prints `GATE <name> PROVISIONAL (<reasons>): not a pass or fail. Re-measure on a quiet machine.`
+  - it adds a `provisional` annotation
+  - it calls `test.skip`, so the gate's asserts don't run and Playwright reports it as skipped, not passed or failed
+- **A verify with skipped perf gates isn't perf-green.** Its perf numbers need a quiet re-run.
+- **Tested:** unit cases for `contention()` (quiet = none; each of the 3 reasons). **Not exercised end-to-end in Playwright:** that needs an e2e run, and none was allowed this pass. The skip path is plain `test.skip(true, reason)` inside the test body.
+
+### 4. Earlier PROGRESS perf conclusions and the machine state they rest on
+
+Before `0457ca6` no measurement recorded machine state. "Unrecorded" therefore means *provisional*, not *wrong*. Counts and strings (triangles, draw calls, renderer names) don't depend on contention.
+
+**Rests on known-contended measurements (re-measure before relying on them):**
+- **Perf diagnosis entry, all timing numbers.** The entry itself notes Jorge's WARP Chrome at 4.4 cores, VS Code and Codex running.
+  - "No recent feature regressed anything measurable"
+  - **park biome: "fps unchanged on this GPU", "inference +1–3 ms from GPU sharing", "Skate frame p50 1.3 → 2.1 ms", and the decision "Park triangles: not changed: no fps effect on a GPU"**
+  - "2P has 5–10 ms headroom"
+  - the two-workers vs one-worker comparison
+  - the CPU-delegate-on-WARP bench
+  - The **586k / 1.17 M triangle counts** are solid; the **render-budget conclusion drawn from them isn't.**
+- **1080p fps 46 against ≥ 55** (Boxing spec entry): overlapped another session's e2e suite (22:26–22:34). Not a regression signal.
+- **2P pose-fps 19** (same entry) and **15** (e2e-lock entry run 1, move-arcade-64 editing and probing): contended.
+- **2P pose-fps 20 at `12c1ddf`:** flagged by move-arcade-64 as overlapping.
+- **Visual expressiveness entry:** the parallel runs (14 pose-fps, 44 fps; ambient CPU ~50 % from a 5-Vite bisect), the "2P single samples 18 / 19", and "53 fps / 17 pose-fps while the other session was active". The conclusion that justified serializing perf tests is right in direction. Its numbers are contended.
+- **Pose mirroring entry:** `verify-pose-1` 18.5 pose-fps / 2P render 51, and the "inconclusive" world-landmark-copy A/B (0–11 pose-fps).
+- **Named players entry:** the smoke-perf split's A/B ("20–27 vs 2–30") and "2P dipped to 19". This was the WARP-Chrome era on the same afternoon.
+
+**Machine state unrecorded, no known contention (provisional):**
+- **M1:** pose 29.8 fps.
+- **M4:** 60 fps, pose 28–31.
+- **Input-to-screen latency entry:** the filter retune was based on these latency numbers.
+- **Art (Quaternius):** 60 fps at 1450 m.
+- **Piece 3:** "2P costs about −4 pose-fps / +7 ms".
+- **Piece 4 Boxing:** the perf table.
+- **Features entry:** 2P pose 22–27.
+- **Named players verify:** 2P 26–30.
+
+**Recorded quiet (usable):** from the e2e-lock retry onward. 2P pose-fps min 28 at 23:00 and 23:17, then 25 ×5 and 24 after the step described in §1, each with its machine line.
+
+**Render budget (still open, not built here):** the park biome's triangle counts stand. Its "no fps effect" conclusion is contended-era and needs a quiet re-measure with the `gpu top` line before the chaser and web-swinging budget is set.
+
+
+## 2026-09-16 — Contention check widened to measured external load; render-budget measurement specified
+
+Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), on `1612791`. No verify, e2e or baseline run: Jorge changes the display routing first. Session move-arcade-32 ports these files onto `chore/perf-lock` (agreed: it dropped its own waiter registry and threshold version, and keeps a gate-coverage reporter).
+
+### Contention check: "how much of the machine is not mine", not "is a dev tool running"
+
+- **Supersedes** the name-based catch described at the end of "Perf follow-ups" §2.
+- **Removed:** process-name matching (`HEAVY`, `WRAPPER`, `otherHeavy`, `isHeavyCommand`) and its unit table. It saw none of the real load (the compositor, a browser, the editor).
+- **`tests/e2e/machine-state.ts` now samples Windows performance counters** for `contentionConfig.samples` = 3 s:
+  - **External GPU %:** `\GPU Engine(*engtype_3D|Compute)\Utilization Percentage`, per process, summed over processes that aren't this run, on **the adapter this run renders on**. The adapter is where this run's own processes are busiest, else the busiest adapter.
+  - **External CPU in logical cores:** `\Process(*)\% Processor Time` joined to `ID Process`, excluding Idle and this run.
+  - **Total CPU %**, **own GPU %**, and the **top 5 external processes by GPU and by CPU**, with names for the report only, never for the decision.
+  - **nvidia-smi:** utilization, temperature, P-state, throttle bitmask.
+- **"This run"** = the worker's ancestors plus everything the Playwright runner spawned (workers, headless Chrome and its GPU process, Vite, the sampler). Without a recognisable runner, everything the worker spawned.
+- **Provisional rule** (`contention()`), thresholds in the new `tests/e2e/contention.config.ts`:
+  - external GPU > `maxExternalGpuPct` = **10 %**
+  - external CPU > `maxExternalCpuCores` = **2 cores**
+  - counters unavailable (never silently "measured")
+  - lock not held
+  - software renderer
+  - **The thresholds are untuned start values,** to be set from Jorge's display-routing before/after. move-arcade-32 presents them to Jorge for sign-off; this file is the only set.
+- **Side effect:** sessions blocked in `waitForLock` poll every 2 s and use about 0 CPU/GPU, so they no longer count as contention. move-arcade-32 found that the name rule counted them and skipped every gate; that's why a registry isn't needed.
+- **Ceiling (`ponytail:`):** counters are read right *after* the gate's sampling window, not during it. A load that ends exactly with the window is missed. The upgrade is a streaming sampler started with the test.
+
+**Bug found while checking the live path:** under vitest, `Get-Counter` exits with status 1 while still printing every valid sample; processes exit mid-sample during test runs. The first version threw that output away and reported "not measurable". It now keeps stdout whenever it parses.
+
+**Live read on this machine (not a gate run; lock not held; 23:5x):**
+- external GPU **29.8 %** (dwm.exe 28.7 %, claude.exe 0.8 %)
+- external CPU **4.76 cores** (Code.exe 1.04, MsMpEng.exe/Defender 0.70, dwm.exe 0.60, two node.exe 0.43 + 0.31)
+- nvidia 38 %, 47 °C, P5, throttle bitmask 0x1 (GPU idle)
+- **Under this rule the machine is contended right now,** as Jorge suspected: the old "quiet" baselines weren't quiet.
+
+**Verified (unit only):**
+- `tests/unit/perf-lock.spec.ts`, 21 passed together with `guard-paths.spec.ts`:
+  - the threshold table: dwm at 42 % → provisional; extension host + browser at 2.4 cores → provisional; lock not held; software; counters unavailable → provisional; quiet → measured
+  - `summarizeLoad` on synthetic counter rows: dwm on our adapter → external 42; our Chrome 20 + 5 → own 25; Code at 1.2 cores; Idle excluded; another adapter's load ignored
+  - `ourPids`: the runner's descendants including Chrome's GPU process, and the no-runner fallback
+- tsc and eslint clean.
+
+### UNTESTED IN ANGER: the provisional rule has never run end-to-end in Playwright
+
+The provisional path (`recordGate` → `contention()` → annotation → `test.skip`) and the load sampler inside a real perf gate have **not** run in a Playwright e2e run. Unit tests and one live vitest read only; no e2e was allowed this pass.
+
+**Don't treat the first provisional (or measured) gate result as verified behaviour.** The first real run must check, from its `GATE <name> machine:` lines:
+1. Own GPU % is non-zero while the game renders, so the adapter pick and the "ours" tree work with real Chrome processes.
+2. Headless Chrome and its GPU process are *not* in the external top lists.
+3. A deliberately contended run (e.g. a video playing on the dGPU display) comes out PROVISIONAL, and a quiet one comes out measured.
+4. move-arcade-32's coverage reporter fails the run when every @perf gate is provisional.
+
+### Render-budget measurement: specified, not run
+
+`docs/RENDER-BUDGET-MEASUREMENT.md`: what the session Jorge assigns measures, after the display change, so the chaser + skyhook get a number instead of the void "no fps effect" conclusion.
+- **Preconditions:** routing recorded, lock held, contention not provisional at the start and end of every scene.
+- **Scenes:** Skate 1P/2P street and park with pose, 2P park without pose, a Boxing 2P control scene for machine drift, and 2P park headed on the real display (the cross-adapter present after routing).
+- **Procedure:** 5 round-robin repetitions, uncapped render, p95s. The set is valid only if the control drifts ≤ 10 %.
+- **Budget arithmetic:**
+  - render headroom = 16.7 − frame p95 − 2.5 ms reserve
+  - pose headroom = 33.3 − 2P inference p95 − 5.0 ms reserve
+  - marginal ms per triangle from street → park
+  - allowance per view = min over the two budgets, halved for 2P
+  - draw calls: ≤ 150 − R4 calls − 10, halved per view
+  - negative headroom means cut park geometry first
+- **Handover sentence:** "≤ T triangles, ≤ D draw calls per view; 2P added frame p95 ≤ Hr; added inference p95 ≤ Hp".
+
+
+## 2026-09-17 — CPU contention threshold: question framed, sweep prepared (not run); `pnpm machine:state`
+
+Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), on `6a28bf5`.
+- **Signed off by Jorge:** `maxExternalGpuPct` 10 %.
+- **Not signed off:** `maxExternalCpuCores` 2. Jorge's objection: this machine's steady external CPU is ~3–5 cores (VS Code ~1.0, Defender ~0.7, dwm ~0.6), so 2 cores would make every gate provisional forever, and with the zero-gates reporter no run could ever pass.
+- **Nothing was run on the GPU:** Jorge is changing the display routing and measuring before/after.
+
+### Q1: does CPU load move pose-fps on this machine? Existing evidence doesn't answer it
+
+- **Points at GPU:** 1P inference held at 12.3–12.9 ms across the 2026-09-16 variance step, and 2P moves because inference takes 25–29 ms of a 33 ms frame.
+- **The only controlled CPU test is partial:** main thread throttled 4× (probe `boxing-*-pose-cpu4x`) left inference unchanged (12.3 / 23.1 ms). It dropped render min to 47 / 42 and 2P pose mean to 26.1 (min 22). It throttles only the page's main thread, not the pose worker, the GPU process or the machine.
+- **The uncontrolled probe history is inconclusive:** `tmp/perf/probe-*.json` shows 2P pose 15–30 with inference 23–42 ms, but no machine state was recorded, so CPU and GPU load can't be separated.
+- **Candidate CPU-bound steps exist:** frame capture/transfer, WASM pre/post-processing around the GPU delegate, and 2-pose postprocessing. So CPU can't be ruled out on reasoning alone.
+
+### Q2: set the threshold from measurement: `scripts/cpu-contention-sweep.mjs` (prepared, not run)
+
+- **Load:** N worker threads spinning at normal priority, N ∈ {0, 2, 4, 6, 8, 10, 12, 14} of 16 logical cores (Ryzen 7 7735H, 8 cores / 16 threads). This is external load, like the editor or Defender.
+- **Workload:** `perf-probe` `skate-2p-pose` (binding) and `skate-1p-pose` (control), 20 s each. The probe waits for and holds the perf lock.
+- **Design:**
+  - 3 repetitions, order alternating ascending/descending so heat and drift spread across levels
+  - 10 s cooldown between points
+  - per point: pose mean/min, inference ms, render min, whole-machine CPU busy %, nvidia temperature and throttle bitmask
+  - `pnpm machine:state` taken first as the idle external-CPU offset
+- **Decision (pure `summarize`, unit-tested in `tests/unit/cpu-sweep.spec.ts`):**
+  - **onset** = the lowest added load where 2P pose mean < baseline − max(1 fps, 2 × sd of the baseline repetitions)
+  - **no onset** up to 14 added cores → **CPU becomes reported-only, not gated**
+  - **onset found** → threshold = idle external cores + the last level that didn't degrade, in the same "external cores" unit the gate measures
+- **Run it only on the quiet GPU after the display change:**
+
+  ```bash
+  node scripts/cpu-contention-sweep.mjs
+  ```
+
+  About 25–30 min. Output in `tmp/perf/cpu-sweep.json` plus a printed table and proposal.
+- **Not verified end to end:** the script hasn't run. Only the summary logic has unit tests; the orchestration (burners, probe, Vite) is unexercised.
+
+### `pnpm machine:state` (new; the "live-read path")
+
+- **What it is:** `tests/tools/machine-state.tool.ts` runs the same `machineState()` read every perf gate records. It writes `tmp/machine-state/<MACHINE_LABEL>.json` and prints external GPU/CPU with the top processes.
+- **Before/after of the display change:** `MACHINE_LABEL=display-before pnpm machine:state`, then `display-after`.
+- **Why:** my earlier live reads came from a throwaway spec, so Jorge had no command to reproduce them.
+
+### Two more live-path bugs fixed
+
+- **Process list salvage:** `Get-CimInstance Win32_Process` also exits 1 mid-enumeration while printing valid rows. The process list came back empty, so names were "?", and worse, **nothing could be attributed to this run**: its own browser would have counted as external. The PowerShell helper now keeps stdout for every call.
+- **Empty process list → not measurable:** if it's still empty, the load is "not measurable" (provisional), never a reading.
+- **Three consecutive reads (idle, lock not held):**
+  - external GPU 30 / 30 / 27.1 % (dwm.exe 28.9 / 28.9 / 25.9)
+  - external CPU 2.91 / 3.55 / 3.04 cores (Code.exe 0.99–1.01, dwm.exe 0.57–0.63)
+
+### First-real-run confirmation list: one item added (Jorge)
+
+5. **A run where every @perf gate is provisional fails end to end** with move-arcade-32's `GATES: no gates measured`: a real Playwright run on a contended machine, not only the reporter's unit tests. This is the guard against the false-green hole.
 ## 2026-09-16 — Perf lock and gate logging onto main (harness only)
 
 Branch `chore/perf-lock`, from `main` (`6708eb4`), built in `tmp/perf-lock-worktree`. Jorge's option B: the lock goes to main so every branch picks it up by merging main, without the feature work around it on `docs/plan-boxing`.
@@ -2521,3 +2758,64 @@ Branch `fix/boxing-phase0`.
 `pnpm dev --port 5180` in `tmp/boxing-phase0-worktree`, then `http://localhost:5180/?game=boxing&debug=1&names=Jorge`. What to check and the known weaknesses are in the chat reply of this session and summarised here:
 - twist punches should now land about as often as square ones
 - known, not new: arms rising to guard can touch; a resting glove can score a small hit; the guarding hand can score during a twist (once at max damage, from a landmark glitch); the bot rarely blocks by reaction (§2.5 known limit); ~25 real hits per pie; standing off your calibration spot shifts everything sideways (recalibrate with C); no lean dodges for pose players (by decision); scan not applied (BX-CAL-6).
+## 2026-09-17: CPU sweep pass 1 (stopped early); the 2P scatter is now the first question; display-unplugged reference
+
+Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`).
+
+### Pass 1 of the CPU sweep ran; passes 2–3 were stopped
+
+- **Window:** 00:16–00:29, agreed with move-arcade-32. Display plugged in (dwm on the 4060).
+- **Stopped at 00:29:** Jorge's camera playtest started (new Chrome processes from 00:28:31) while 14 burner threads were running. It would have ruined his fixture recordings and contaminated the sweep. The processes were killed and the stale lock this run left was removed.
+- **No `tmp/perf/cpu-sweep.json`:** the summary is written only at the end. The numbers below come from `tmp/perf/cpu-sweep.log` (idle offset in `tmp/machine-state/cpu-sweep-idle.json`: external CPU 4.02 cores, external GPU 29.4 %, dwm 28.3 %).
+
+| Added threads | CPU busy | 2P pose mean / min | 2P inference | 1P pose mean / min | Render min 2P / 1P |
+|---|---|---|---|---|---|
+| 0 | 49 % | 24.1 / 18 | 26.6 ms | 28.3 / 25 | 60 / 60 |
+| 2 | 54 % | 24.7 / 21 | 27.9 | 28.8 / 26 | 60 / 60 |
+| 4 | 62 % | 24.8 / 20 | 26.2 | 29.6 / 29 | 60 / 60 |
+| 6 | 70 % | 25.1 / 24 | 26.7 | 29.2 / 27 | 60 / 60 |
+| 8 | 80 % | 26.2 / 23 | 27.5 | 29.4 / 27 | 60 / 60 |
+| 10 | 92 % | 28.2 / 23 | 27.4 | 27.9 / 23 | 59 / 60 |
+| 12 | 95 % | 23.1 / 16 | 28.2 | 29.1 / 26 | 55 / 60 |
+| 14 | 100 % | 16.6 / 13 | 35.1 | 25.4 / 21 | 57 / 58 |
+| 14 (pass 2) | 100 % | 17.6 / 15 | 35.6 | 24.3 / 16 | 56 / 43 |
+
+- **Q1 (does CPU load move pose-fps?):** yes, but only near saturation. No 2P drop up to 10 added threads (92 % busy). It starts at 12, and at 14 2P loses about 7 fps with inference at 35 ms. The old 2-core proposal was an order of magnitude low.
+- **Planned shape (Jorge, not final until passes 2–3):** CPU is report-only in the machine line, with a provisional trigger near saturation (about 14 external cores = 4 idle + 10 added threads with no effect).
+- **One pass only:** the 100 % rows partly overlap the start of the playtest, although the two agree within 1 fps.
+
+### The 2P scatter is the real problem (first-class question)
+
+- **At level 0–10, 2P mean ran 24.1–28.2 fps** with no load-dependent trend. That is larger than any effect below 12 added threads.
+- **The same size as before:** the unexplained 25–26 (repeat block) vs 28–30 (verify runs) from earlier reports.
+- **Already ruled out:** other sessions' work, dwm alone and CPU load.
+- **Next pass instruments it:** `scripts/sweep-telemetry.mjs` samples at 1 Hz during the whole sweep:
+  - `nvidia-smi -l 1`: util %, temperature, graphics clock MHz, power W, P-state, throttle reasons
+  - `typeperf`: dwm's 3D engine % per adapter
+  - `perf-probe` now emits a per-second `series` (wall clock, render fps, pose-fps, inference ms)
+- **`correlate()`:** Pearson r of 2P pose-fps against each reading, per second and per run (the run-to-run scatter), levels ≤ 10 only. It goes into `tmp/perf/<label>.json` as `scatter` and is printed.
+- **If nothing correlates, that is reported as a finding:** the 2P gate can't be made reliable on this machine at its current threshold.
+
+### Display: unplugged is the gate reference config (Jorge, 2026-09-17)
+
+- **Why:** the external port appears hardwired to the RTX 4060, so dwm can't be moved.
+- **Decision:** gate runs and perf re-measures are done with the external display unplugged. The normal setup (external display) stays for development.
+- **Recording it:** the sweep records `displays()` (WmiMonitorConnectionParams: internal vs external).
+- **Built-in experiment:** passes 2–3 run unplugged. If the 24–28 scatter persists without dwm on the dGPU, dwm is ruled out as its cause.
+- **Not yet applied to gates:** the gate machine line doesn't record the display config yet. That belongs with the machine-state port (move-arcade-32), so I left it out here.
+
+### Checks
+
+- **Tests and lint:** `tests/unit/sweep-telemetry.spec.ts` (parsers, and correlation that picks the reading tracking the scatter and ignores saturated runs) and `cpu-sweep.spec.ts` pass. `pnpm typecheck` clean; eslint and prettier clean on the changed files.
+- **Sampler smoke run (5 s):** 10 rows, and both files flush on kill. Displays read `{internal: 1, external: 1}`.
+- **Not run:** e2e, and no full `pnpm verify` (Jorge was recording on the machine). The instrumented sweep itself is not yet run end to end.
+
+### Next
+
+Once Jorge is off the machine and has unplugged the display, in a quiet window agreed with move-arcade-32 (and move-arcade-64 holding its verify):
+
+```bash
+node scripts/cpu-contention-sweep.mjs --label cpu-sweep-unplugged
+```
+
+About 32 min for 3 passes. Then report Q2 (the CPU trigger) and the scatter correlation.

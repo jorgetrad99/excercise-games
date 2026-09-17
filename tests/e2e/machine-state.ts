@@ -1,28 +1,31 @@
 import { execFileSync } from 'node:child_process';
-import { cpus } from 'node:os';
 import { currentHolder } from '../../scripts/e2e-lock.mjs';
+import { contentionConfig as C } from './contention.config';
 
-// What else the machine was doing when a perf gate measured. The perf lock only stops cooperating
-// sessions; anything that can't check it (another tool, an ad-hoc probe) still shows up here, so a
-// gate value is never reported without the context that decides whether it's usable.
+// How much of the machine was NOT this run when a perf gate measured. The rule is measured external
+// load, not process names: the load that skewed 2P pose-fps on 2026-09-16 was the desktop compositor
+// (~42 % of the dGPU) and a browser, neither of which any dev-tool name list would catch.
+// ponytail: counters are read for C.samples s right AFTER the gate's window, not during it; a load that
+// ends exactly with the window is missed. Upgrade: a streaming sampler started with the test.
 
-/** Other processes doing the kind of work that skewed gates before (tsc, eslint, vitest, builds, probes). */
-const HEAVY =
-  /\btsc\b|typescript[\\/]bin[\\/]tsc|eslint|vitest|playwright|vite(\.js)?["']?\s+build|perf-probe|probe-|format-and-typecheck/i;
-/** Not work in themselves: shells whose command line merely mentions a tool (the heavy child is its own
- *  process and is matched separately; MSYS bash also breaks the parent chain) and idle editor language servers. */
-const WRAPPER =
-  /^"?[^"]*[\\/](bash|sh|zsh|cmd|powershell|pwsh)(\.exe)?"?\s|[\\/]\.vscode[\\/]extensions[\\/]/i;
-
-export const isHeavyCommand = (cmd: string): boolean => HEAVY.test(cmd) && !WRAPPER.test(cmd);
+interface ProcLoad {
+  pid: number;
+  name: string;
+}
 
 export interface MachineState {
-  /** All-core CPU busy over 1 s right after sampling, % (includes this test's own browser and pose worker). */
-  cpuBusyPct: number;
-  /** nvidia-smi utilization, % (includes this test); null without an NVIDIA driver. */
-  gpuUtilPct: number | null;
-  /** Heavy processes outside this run's own process chain: the contention signal. */
-  otherHeavy: { pid: number; cmd: string }[];
+  /** Whole-machine CPU busy, % of all cores (includes this run). */
+  cpuBusyPct: number | null;
+  /** CPU used by processes outside this run, logical cores; null when counters are unavailable. */
+  externalCpuCores: number | null;
+  /** GPU engine use by processes outside this run on this run's adapter, %; null when unavailable. */
+  externalGpuPct: number | null;
+  /** GPU engine use by this run's own processes (browser, pose worker) on that adapter, %. */
+  ownGpuPct: number | null;
+  topExternalCpu: (ProcLoad & { cores: number })[];
+  topExternalGpu: (ProcLoad & { pct: number })[];
+  /** nvidia-smi: whole-GPU utilization %, temperature °C, P-state, active clock-event (throttle) bitmask. */
+  nvidia: { utilPct: number; tempC: number; pstate: string; clockEventReasons: string } | null;
   /** True when this run holds the perf lock. */
   lockHeld: boolean;
 }
@@ -30,80 +33,72 @@ export interface MachineState {
 interface Proc {
   pid: number;
   ppid: number;
+  name: string;
   cmd: string;
+}
+
+/** A raw counter reading: sample-set index, lower-cased counter path, cooked value. */
+export interface CounterRow {
+  i: number;
+  path: string;
+  v: number;
+}
+
+/** PowerShell stdout. Processes exit mid-enumeration during a test run; the cmdlet then exits 1 but still
+ *  prints every valid row (seen for Get-Counter and Get-CimInstance under vitest, 2026-09-16), so the
+ *  output is kept. Callers treat unparseable output as "no data". */
+function ps(command: string): string {
+  try {
+    return execFileSync('powershell', ['-NoProfile', '-Command', command], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (e) {
+    return String((e as { stdout?: string }).stdout ?? '');
+  }
 }
 
 function processes(): Proc[] {
   try {
     if (process.platform === 'win32') {
-      const json = execFileSync(
-        'powershell',
-        [
-          '-NoProfile',
-          '-Command',
-          'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress',
-        ],
-        { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
-      );
-      return (
-        JSON.parse(json) as {
-          ProcessId: number;
-          ParentProcessId: number;
-          CommandLine: string | null;
-        }[]
-      ).map((p) => ({ pid: p.ProcessId, ppid: p.ParentProcessId, cmd: p.CommandLine ?? '' }));
+      const rows = JSON.parse(
+        ps(
+          'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress',
+        ),
+      ) as {
+        ProcessId: number;
+        ParentProcessId: number;
+        Name: string;
+        CommandLine: string | null;
+      }[];
+      return rows.map((p) => ({
+        pid: p.ProcessId,
+        ppid: p.ParentProcessId,
+        name: p.Name,
+        cmd: p.CommandLine ?? '',
+      }));
     }
-    return execFileSync('ps', ['-eo', 'pid=,ppid=,args='], { encoding: 'utf8' })
+    return execFileSync('ps', ['-eo', 'pid=,ppid=,comm=,args='], { encoding: 'utf8' })
       .split('\n')
-      .map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+      .map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/))
       .filter((m): m is RegExpMatchArray => m !== null)
-      .map((m) => ({ pid: +m[1]!, ppid: +m[2]!, cmd: m[3]! }));
+      .map((m) => ({ pid: +m[1]!, ppid: +m[2]!, name: m[3]!, cmd: m[4]! }));
   } catch {
     return [];
   }
 }
 
-const cpuBusy = async (): Promise<number> => {
-  const snap = () =>
-    cpus().reduce(
-      (a, c) => {
-        const t = Object.values(c.times).reduce((x, y) => x + y, 0);
-        return { idle: a.idle + c.times.idle, total: a.total + t };
-      },
-      { idle: 0, total: 0 },
-    );
-  const a = snap();
-  await new Promise((r) => setTimeout(r, 1_000));
-  const b = snap();
-  return Math.round((1 - (b.idle - a.idle) / Math.max(1, b.total - a.total)) * 100);
-};
-
-function gpuUtil(): number | null {
-  try {
-    const out = execFileSync(
-      'nvidia-smi',
-      ['--query-gpu=utilization.gpu', '--format=csv,noheader,nounits'],
-      { encoding: 'utf8' },
-    );
-    return Number.parseInt(out, 10);
-  } catch {
-    return null;
-  }
-}
-
-export async function machineState(): Promise<MachineState> {
-  const cpuBusyPct = await cpuBusy();
-  const procs = processes();
+/** This worker's ancestors (runner, pnpm verify, shell) plus everything the Playwright runner spawned
+ *  (workers, browsers, Vite, this sampler): all of that is "this run". */
+export function ourPids(procs: Proc[], self = process.pid): Set<number> {
   const byPid = new Map(procs.map((p) => [p.pid, p]));
-  // This worker's ancestors (runner, pnpm verify, shell) are our own run, not contention.
   const ours = new Set<number>();
   let runner: number | null = null;
-  for (let p = byPid.get(process.pid); p && !ours.has(p.pid); p = byPid.get(p.ppid)) {
+  for (let p = byPid.get(self); p && !ours.has(p.pid); p = byPid.get(p.ppid)) {
     ours.add(p.pid);
-    if (runner === null && p.pid !== process.pid && /playwright/i.test(p.cmd)) runner = p.pid;
+    if (runner === null && p.pid !== self && /playwright/i.test(p.cmd)) runner = p.pid;
   }
-  // ...and so is everything the Playwright runner spawned (sibling workers, the Vite web server).
-  const spawned = new Set<number>(runner === null ? [] : [runner]);
+  const spawned = new Set<number>([runner ?? self]);
   for (let grew = true; grew;) {
     grew = false;
     for (const p of procs)
@@ -113,14 +108,148 @@ export async function machineState(): Promise<MachineState> {
         grew = true;
       }
   }
-  const otherHeavy = procs
-    .filter((p) => !ours.has(p.pid) && isHeavyCommand(p.cmd))
-    .map((p) => ({ pid: p.pid, cmd: p.cmd.slice(0, 140) }));
-  const holder = currentHolder();
+  return ours;
+}
+
+function readCounters(): CounterRow[] | null {
+  if (process.platform !== 'win32') return null;
+  const counters = [
+    '\\Processor(_Total)\\% Processor Time',
+    '\\Process(*)\\% Processor Time',
+    '\\Process(*)\\ID Process',
+    '\\GPU Engine(*engtype_3D)\\Utilization Percentage',
+    '\\GPU Engine(*engtype_Compute)\\Utilization Percentage',
+  ]
+    .map((c) => `'${c}'`)
+    .join(',');
+  const command =
+    `$i = 0; Get-Counter -Counter ${counters} -SampleInterval 1 -MaxSamples ${C.samples} -ErrorAction SilentlyContinue | ` +
+    'ForEach-Object { $i++; foreach ($s in $_.CounterSamples) { [pscustomobject]@{ i = $i; path = $s.Path.ToLower(); v = $s.CookedValue } } } | ' +
+    'ConvertTo-Json -Compress';
+  const out = ps(command);
+  try {
+    return out.trim() ? (JSON.parse(out) as CounterRow[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+const round = (n: number, d = 1) => Math.round(n * 10 ** d) / 10 ** d;
+
+/** Pure: per-process CPU and GPU load split into this run vs everything else. */
+export function summarizeLoad(rows: CounterRow[], ours: Set<number>, names: Map<number, string>) {
+  const sets = Math.max(1, new Set(rows.map((r) => r.i)).size);
+  const inst = (path: string) => path.match(/\(([^)]*)\)/)?.[1] ?? '';
+  // Process instance names ("chrome#3") map to pids per sample set.
+  const pidOf = new Map<string, number>();
+  for (const r of rows)
+    if (r.path.endsWith('\\id process')) pidOf.set(`${r.i}|${inst(r.path)}`, r.v);
+  const cpu = new Map<number, number>();
+  const total: number[] = [];
+  for (const r of rows) {
+    if (!r.path.endsWith('\\% processor time')) continue;
+    const name = inst(r.path);
+    if (r.path.includes('\\processor(')) {
+      if (name === '_total') total.push(r.v);
+      continue;
+    }
+    const pid = pidOf.get(`${r.i}|${name}`);
+    if (pid === undefined || pid === 0 || name === '_total' || name === 'idle') continue;
+    cpu.set(pid, (cpu.get(pid) ?? 0) + r.v / 100 / sets);
+  }
+  // GPU engines: pid_<pid>_luid_<hi>_<lo>_..., summed per (pid, adapter), averaged over sample sets.
+  const gpu = new Map<string, Map<number, number>>();
+  for (const r of rows) {
+    const m = r.path.match(/pid_(\d+)_luid_(0x[0-9a-f]+_0x[0-9a-f]+)_/);
+    if (!m) continue;
+    const byPid = gpu.get(m[2]!) ?? new Map<number, number>();
+    byPid.set(+m[1]!, (byPid.get(+m[1]!) ?? 0) + r.v / sets);
+    gpu.set(m[2]!, byPid);
+  }
+  const sum = (m: Map<number, number>, keep: (pid: number) => boolean) =>
+    [...m].filter(([pid]) => keep(pid)).reduce((a, [, v]) => a + v, 0);
+  // This run's adapter: where our own processes are busiest; otherwise the busiest adapter overall.
+  const adapters = [...gpu.values()];
+  const mine = adapters.sort((a, b) => sum(b, (p) => ours.has(p)) - sum(a, (p) => ours.has(p)))[0];
+  const adapter =
+    mine && sum(mine, (p) => ours.has(p)) > 0
+      ? mine
+      : adapters.sort((a, b) => sum(b, () => true) - sum(a, () => true))[0];
+  const top = <K extends string>(m: Map<number, number>, key: K, d: number) =>
+    [...m]
+      .filter(([pid]) => !ours.has(pid))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(
+        ([pid, v]) =>
+          ({ pid, name: names.get(pid) ?? '?', [key]: round(v, d) }) as ProcLoad &
+            Record<K, number>,
+      );
   return {
-    cpuBusyPct,
-    gpuUtilPct: gpuUtil(),
-    otherHeavy,
-    lockHeld: holder !== null && ours.has(holder.pid),
+    cpuBusyPct: total.length ? round(mean(total)) : null,
+    externalCpuCores: round(
+      sum(cpu, (p) => !ours.has(p)),
+      2,
+    ),
+    externalGpuPct: adapter ? round(sum(adapter, (p) => !ours.has(p))) : 0,
+    ownGpuPct: adapter ? round(sum(adapter, (p) => ours.has(p))) : 0,
+    topExternalCpu: top(cpu, 'cores', 2),
+    topExternalGpu: adapter ? top(adapter, 'pct', 1) : [],
   };
+}
+
+function nvidia(): MachineState['nvidia'] {
+  try {
+    const q = 'utilization.gpu,temperature.gpu,pstate,clocks_event_reasons.active';
+    const out = execFileSync('nvidia-smi', [`--query-gpu=${q}`, '--format=csv,noheader,nounits'], {
+      encoding: 'utf8',
+    });
+    const [util, temp, pstate, reasons] = out
+      .split('\n')[0]!
+      .split(',')
+      .map((x) => x.trim());
+    return { utilPct: +util!, tempC: +temp!, pstate: pstate!, clockEventReasons: reasons! };
+  } catch {
+    return null;
+  }
+}
+
+/** Why a gate value measured under this machine state is provisional; empty = a real measurement. */
+export function contention(
+  m: Pick<MachineState, 'externalCpuCores' | 'externalGpuPct' | 'lockHeld'>,
+  softwareGpu: boolean,
+  cfg = C,
+): string[] {
+  const reasons: string[] = [];
+  if (m.externalGpuPct === null || m.externalCpuCores === null)
+    reasons.push('external load not measurable here');
+  if (m.externalGpuPct !== null && m.externalGpuPct > cfg.maxExternalGpuPct)
+    reasons.push(`external GPU ${m.externalGpuPct} % > ${cfg.maxExternalGpuPct} %`);
+  if (m.externalCpuCores !== null && m.externalCpuCores > cfg.maxExternalCpuCores)
+    reasons.push(`external CPU ${m.externalCpuCores} cores > ${cfg.maxExternalCpuCores}`);
+  if (!m.lockHeld) reasons.push('perf lock not held by this run');
+  if (softwareGpu) reasons.push('software renderer');
+  return reasons;
+}
+
+export async function machineState(): Promise<MachineState> {
+  const procs = processes();
+  const ours = ourPids(procs);
+  // Without the process list nothing can be attributed to this run: its own browser would count as
+  // external. Treat that as "not measurable" (provisional), never as a reading.
+  const rows = procs.length ? readCounters() : null;
+  const names = new Map(procs.map((p) => [p.pid, p.name]));
+  const load = rows
+    ? summarizeLoad(rows, ours, names)
+    : {
+        cpuBusyPct: null,
+        externalCpuCores: null,
+        externalGpuPct: null,
+        ownGpuPct: null,
+        topExternalCpu: [],
+        topExternalGpu: [],
+      };
+  const holder = currentHolder();
+  return { ...load, nvidia: nvidia(), lockHeld: holder !== null && ours.has(holder.pid) };
 }
