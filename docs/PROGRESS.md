@@ -2154,3 +2154,38 @@ Docs + one warning line in vitest setup. **Earlier entries on every branch that 
   - **If a bug only shows with a real body,** ask Jorge for one short clip aimed at that bug, not the drill set.
 - **Where it trips you:** every vitest run (`scripts/vitest-perf-lock.mjs`, globalSetup of both vitest configs) prints `NO REAL POSE RECORDINGS: fixtures/pose/ has none…` while that folder holds no `.json`. It disappears on its own when the first recording lands. `fixtures/README.md` is human-owned (guarded), so its text was handed to Jorge to place.
 - **Verified:** `PLAYWRIGHT_PORT=5193 pnpm verify` exit 0 (`tmp/verify/verify-no-recordings.log`): the warning prints at vitest start; vitest 364 passed + 1 skipped; e2e 22 passed. **Gate values not usable:** all 4 read `CONTENDED` (2 other node processes: the Boxing bug-triage agent working in parallel). The change doesn't touch app code.
+
+## 2026-09-17 — Boxing Phase 0, B1 (right punch registers as left): not a mirror in code; handedness evidence corrected
+
+Branch `fix/boxing-phase0` (off `feat/player-authority` 6d7dd46, main `7c6771e` merged). Orchestrator session for Boxing; work by the `bug-triage` subagent. **All evidence is synthetic poses** (no drills exist, see "No real pose recordings").
+
+### Result
+
+- **No left/right swap in code.** Two tests, each proven to fail when a link is broken on purpose (arms swapped in `bodyFromPose`, sides flipped in `zoneOf`, `hitSide` flipped, O1 yaw sign flipped; each reverted):
+  - **B1a** (`body-input.spec.ts`): landmarks 12/14/16 drive glove 1 (> 0.4 m travel, glove 0 < 0.01 m). Through `mirrorFrame` the gloves swap: the reported symptom, produced only by a mirrored stream.
+  - **B1b**: pose → engine → BODY → sim gives exactly `HIT:1`, zone 0 (defender's left cheek), `hitSide` +1, bruise x > 0.5, head snap away from the blow. The debug event list shows no hit side.
+- **Remaining causes, for Jorge's B1 clip:**
+  1. **Mirrored camera stream.** Fix if confirmed: `?mirror=1` (manual flag; auto-detection later). **If the clip reads `SWAPPED`, every synthetic pose test has validated a convention the real camera doesn't produce; that gets reported as bigger than B1.**
+  2. **(Jorge's read: more likely) `DODGE_LEFT` in the debug list, no mirror.** `BOXING_GESTURES` still maps `LANE_LEFT → DODGE_LEFT` for pose players. On synthetic frames a shoulder-centre shift of ~0.36 shoulder widths (~14 cm, a right cross's weight shift) fires it; 0.33 doesn't. Inert in the sim (it only affects puppet punches), but it is the one "left" a right punch prints with `debug=1`.
+- **Decided (Jorge):** remove lean → `DODGE_*` for pose players regardless of the clip, together with B4 (same lean path; M7.15 made pose dodges geometric, §8.2 expects the change).
+- **Added:** `src/pose/handedness.ts` (+ spec): `handedness(frames)` from a raised-LEFT-hand marker, `mirrorFrame` (its own inverse).
+
+### Correction: handedness evidence accepted in M7.10 never proved the camera is unmirrored
+
+- **What was claimed** (M7.10, "Handedness: what the real data says"): "MediaPipe's left labels sit at larger raw x … This matches the anatomy for an unmirrored camera and every left/right convention in the code."
+- **Why it proves nothing:** MediaPipe labels left/right from how a body looks. A mirrored image looks like a normal person facing the camera, so landmark 11 is still at the larger x. `handedness.spec` pins this: shoulder order is identical with and without `mirrorFrame`. The same holds for `pose-state.spec`'s "left arm on +x" on `testdata/real-skate-2-10s.json`.
+- **What rests on the unproven premise** (consistent with each other, correct for an unmirrored camera, unconfirmed for Jorge's): `pose-state.ts:111` (image x grows toward the player's left), `testdata/synthetic.ts:95` (synthetic left side at larger x), `types.ts:1` / `recorder.ts:6` ("raw, unmirrored"), and so every synthetic pose test.
+- **Not affected:** the rejection of "MediaPipe swaps labels" (M7.10) rests on wrist continuity through a real body turn, not on shoulder order. No label canonicalization is still right.
+- **Only a side the player chooses can tell** (the raised-left-hand marker). Jorge records a short B1 clip, not a drill set.
+- **Also corrected:** ARCHITECTURE still described the deleted tuning tool as checking handedness; it now points at `src/pose/handedness.ts`.
+- **Note on "no real recordings":** one real excerpt does exist, `src/pose/testdata/real-skate-2-10s.json` (10 s of Jorge's Skate take, used by `pose-state.spec`). It isn't a boxing drill and can't settle mirroring.
+
+### Verified
+
+- **`PLAYWRIGHT_PORT=5194 pnpm verify` exit 0** on the merged tree (`tmp/verify/verify-b1.log`): vitest 428 passed + 1 skipped (38 files), e2e 33 passed (3.1 min), `GATES: 6 measured, 0 provisional`.
+- **Quiet machine:** every gate `lock held · other heavy: none`. Values: boxing-1p-1080p-face fps 60 / pose-fps min 27; pose-1p-5s 29.7; skate-1p-1080p-pose pose-fps min 28; skate-2p-1080p pose-fps min 24; latency total 1P p50 44.3 ms, 2P p50 48.8 ms, rig response 16.9 ms.
+- **This is also the first verify of `feat/player-authority`'s two unverified main merges (0a49beb, 6d7dd46)**, since this branch contains both. It does NOT include the architecture session's uncommitted handover (`APPLY_BODY_SCAN = false`, BX-PRED-1); that merges in before any playtest.
+
+### Next
+
+B2 (hits don't damage) and B3 (remove mid-round regen, decided by Jorge; PLAN-BOXING §7 "retreats and regenerates" text fixed with it) are with `bug-triage`. B4 + the DODGE mapping removal after. B5 last.

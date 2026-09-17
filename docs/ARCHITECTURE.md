@@ -180,10 +180,8 @@ interface ArmState {
   - hand-built guard/punch arm geometry
 - e2e `boxing.smoke` replay: `getSignals().pose` present.
 
-- Reads `fixtures/pose/boxing/*.json` with exact expected counts per drill.
-- Checks handedness from a raised-left-hand marker at the start of each file.
-- Reports counts and pose-state channels at each punch.
-- `GRID=1` sweeps `fists` (including `reference: 'nose' | 'shoulder'`).
+- ~~Boxing tuning tool~~ (`tests/tools/boxing-tune.tool.ts`): deleted in M7.15 with the punch detector. Its drills were never recorded.
+- **Handedness** (`src/pose/handedness.ts`): `handedness(frames)` reads a raised-LEFT-hand marker at the start of a take (`ok | SWAPPED | unclear`); `mirrorFrame` simulates or undoes a mirrored stream. Shoulder order can't detect a mirror (MediaPipe labels sides by appearance), and neither can "left arm on +x" in the real-excerpt test above.
 
 ## Boxing visual expressiveness (render only)
 
