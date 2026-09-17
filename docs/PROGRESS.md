@@ -1552,3 +1552,16 @@ Docs only. For the next coordination round, so messages go to one session instea
   - `feat/player-authority` differs by `786cd25` (Body scan entry, pose-Boxing input notes).
   - Jorge applies these by hand in one pass.
 - **Hold on step-propulsion constants (Skate M8):** `move-arcade-64` found that with a body scan applied, a plain guard reads 1.23 m forward against a 0.99 m touch threshold. Scan-derived reach is disabled until it's diagnosed against Jorge's drill recordings. The same gesture pipeline feeds step propulsion, so no Skate constants get built on scan-calibrated arm or leg proportions until that diagnosis lands.
+
+## 2026-09-17 — No real pose recordings exist (correction, applies to every session)
+
+Docs + one warning line in vitest setup. **Earlier entries on every branch that say "Jorge's drill recordings", "once Jorge confirms which recordings are clean" or "provisional until the drills" assume recordings that were never made** (Jorge, 2026-09-17). The file in his Downloads (`pose-2026-09-16T18-42-19-146Z.json`) is old and unrelated. `fixtures/pose/` doesn't exist on any branch. Same situation as `src/pose/march.ts`, which also doesn't exist yet and was planned around by two sessions.
+
+- **What this means:**
+  - **Every pose before/after is synthetic.** Say so each time, but don't list "use a real recording" as an option.
+  - **BX-CAL-6 is blocked on recordings that don't exist, not pending work.** Choosing between its two hypotheses needed real drills. `APPLY_BODY_SCAN` stays `false` indefinitely.
+  - **The Skate M8 hold above follows from that:** scan-calibrated proportions stay off, so step propulsion builds on default bone lengths, not "after the diagnosis lands".
+  - **Values marked "provisional until Jorge's drills" stay provisional and untuned.** Don't wait on them, don't tune them on synthetic poses.
+  - **If a bug only shows with a real body,** ask Jorge for one short clip aimed at that bug, not the drill set.
+- **Where it trips you:** every vitest run (`scripts/vitest-perf-lock.mjs`, globalSetup of both vitest configs) prints `NO REAL POSE RECORDINGS: fixtures/pose/ has none…` while that folder holds no `.json`. It disappears on its own when the first recording lands. `fixtures/README.md` is human-owned (guarded), so its text was handed to Jorge to place.
+- **Verified:** `PLAYWRIGHT_PORT=5193 pnpm verify` exit 0 (`tmp/verify/verify-no-recordings.log`): the warning prints at vitest start; vitest 364 passed + 1 skipped; e2e 22 passed. **Gate values not usable:** all 4 read `CONTENDED` (2 other node processes: the Boxing bug-triage agent working in parallel). The change doesn't touch app code.
