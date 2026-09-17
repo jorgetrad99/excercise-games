@@ -1,5 +1,6 @@
 // Renderer factory (ADR-001): the only place that picks WebGLRenderer. Swap to WebGPURenderer here.
 import { ACESFilmicToneMapping, PCFShadowMap, SRGBColorSpace, Vector2, WebGLRenderer } from 'three';
+import { glRenderer, isSoftwareRenderer, warnSoftwareGl } from '../platform/gpu';
 
 export function createRenderer(canvas: HTMLCanvasElement): WebGLRenderer {
   const renderer = new WebGLRenderer({
@@ -13,6 +14,8 @@ export function createRenderer(canvas: HTMLCanvasElement): WebGLRenderer {
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = PCFShadowMap;
+  const gpu = glRenderer(renderer.getContext());
+  if (isSoftwareRenderer(gpu)) warnSoftwareGl('renderer', gpu);
   return renderer;
 }
 

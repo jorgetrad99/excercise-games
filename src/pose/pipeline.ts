@@ -1,4 +1,5 @@
 // Camera frames → downscaled ImageBitmap → worker → PoseFrame, with fps counters.
+import { isSoftwareRenderer, warnSoftwareGl } from '../platform/gpu';
 import { createRate } from '../platform/rate';
 import { createPoseBridge, type PoseBridge } from './bridge';
 import type { FrameTiming, ModelVariant, PoseFrame } from './types';
@@ -9,6 +10,8 @@ const INFER_WIDTH = 640;
 export interface PoseStats {
   state: 'loading' | 'ready' | 'restarting';
   delegate: 'GPU' | 'CPU' | null;
+  /** The pose worker's WebGL renderer ("… WARP …" / "SwiftShader" = software, very slow). */
+  gpu: string | null;
   cameraFps: number;
   poseFps: number;
   inferMs: number;
@@ -82,6 +85,7 @@ export function startPosePipeline({ video, model, numPoses, onFrame, snapshot }:
   const s: Omit<PoseStats, 'cameraFps' | 'poseFps' | 'restarts' | 'video'> = {
     state: 'loading',
     delegate: null,
+    gpu: null,
     inferMs: 0,
     framesProcessed: 0,
     framesWithPose: 0,
@@ -108,7 +112,10 @@ export function startPosePipeline({ video, model, numPoses, onFrame, snapshot }:
     },
     onStatus(status) {
       s.state = status.state;
-      if (status.state === 'ready') s.delegate = status.delegate;
+      if (status.state !== 'ready') return;
+      s.delegate = status.delegate;
+      s.gpu = status.gpu ?? null;
+      if (s.gpu && isSoftwareRenderer(s.gpu)) warnSoftwareGl('pose worker', s.gpu);
     },
   });
 
