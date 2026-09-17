@@ -122,15 +122,21 @@ function record(e: InputEvent, player = 0): void {
 // Created at launch, with the game's keys.
 let keyboard: ReturnType<typeof createKeyboardSource> | null = null;
 
+/** BLOCKER (Jorge, 2026-09-17): scanned arm lengths are stored but NOT applied. With an accurate scan a
+ *  plain guard reads past head contact and scores (PLAN-BOXING BX-CAL-6). Default proportions for
+ *  everyone until `armGainM` is retuned from the drills; then set APPLY_BODY_SCAN back to true. */
+const APPLY_BODY_SCAN = false;
+const armsFor = (name: string) => (APPLY_BODY_SCAN ? profiles.body(name) : null);
+
 function attach(source: PosePlayers): void {
   source.onEvent((e) => record(e, e.player));
-  names.forEach((name, i) => source.setArms(i, profiles.body(name)));
+  names.forEach((name, i) => source.setArms(i, armsFor(name)));
   source.onSignals((s) => {
     const p = players[s.player];
     const pose = s.pose;
     // A new calibrated pose frame (signals also refresh without one): the game's continuous body input.
     if (p && pose && pose.t !== p.signals?.pose?.t && game?.poseInput)
-      record(game.poseInput(pose, s.player, profiles.body(names[s.player] ?? '')), s.player);
+      record(game.poseInput(pose, s.player, armsFor(names[s.player] ?? '')), s.player);
     if (p) p.signals = s;
     if (s.player === 0) signalHud?.signals(s);
   });
@@ -210,7 +216,8 @@ function trackingLabel({ signals }: Player): { tracking: string; trackingOk: boo
   if (c.state !== 'calibrated') {
     const pct = c.state === 'calibrating' ? ` ${Math.round(c.progress * 100)}%` : '';
     // BX-CAL-2: calibration still completes without knees; the player just can't march then.
-    const knees = game?.needsKnees && !signals.knees ? ' · step back so your knees are visible' : '';
+    const knees =
+      game?.needsKnees && !signals.knees ? ' · step back so your knees are visible' : '';
     return { tracking: `📷 calibrating${pct}: stand still${knees}`, trackingOk: false };
   }
   return { tracking: '📷 tracking', trackingOk: true };

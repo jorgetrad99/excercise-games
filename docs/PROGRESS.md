@@ -2118,4 +2118,27 @@ The core requirement of the brief is met and measured.
 - **Body scan and `armGainM` (found while measuring; affects your playtest if you scanned):** on the whole path main.ts runs, longer scanned arms always read deeper. With the synthetic figure's true arm lengths (0.71), **a guard alone reads z 1.23 m, past the 0.99 m head contact.** Either `armGainM.forward` 1.3 is too high for an accurately scanned player (it was chosen with default bone lengths on a figure whose arms are really 0.71), or the synthetic guard is unrealistic. Only the drills can tell. If a scanned player's guard scores hits, this is why; a name with no scan plays with the defaults. PLAN-BOXING BX-CAL-6.
 - **Pending test fix:** `body-input.spec` "body scan changes reach" varies only the `BODY` normalisation, not the engine's bone lengths, so it asserts "longer arms reach less", the opposite of what the app does. The whole-path version (engine `setArms` + `bodyFromPose`, longer → deeper by > 0.1 m) is written but not applied: the Edit tool was blocked by the fail-closed hook launcher until the merge, and after it a `.ts` edit would have run tsc during the other sessions' quiet window. Next session, first thing.
 - **1080p fps and pose-fps gate values are provisional** until the display/contention rule is settled (Jorge's display routing change, or its replacement).
-- **Next:** main merged at e83c45b (0a49beb) and ec9ba77 (hook launcher, zero-gates reporter, guard over agent config, config-drift Stop hook); both merges unverified. Jorge restarts this session so the hooks load; then apply the pending `body-input.spec` fix and re-run verify on the merged tree (zero-gates reporter present). BX-PRED-1 awaits Jorge's call after the playtest. Then M7.16–M7.19 are unblocked.
+- **Merges:** main merged at e83c45b (0a49beb) and ec9ba77 (6d7dd46): hook launcher, zero-gates reporter, guard over agent config, config-drift Stop hook. Both merges unverified.
+
+### Update after Jorge's review (2026-09-17)
+
+- **Body scan is a BLOCKER, not a caveat (Jorge):** standing in guard scores for anyone with an accurate scan.
+  - **Done:** `main.ts` `APPLY_BODY_SCAN = false`. Scans are still measured and saved, but everyone plays with default proportions.
+  - **Verified:** `playwright test --project=smoke --project=perf --no-deps body-scan`: 2 passed. Stored scan vs no scan, same replay: peak glove z 1.039 m both (contact 0.99 m).
+  - **Test changed to pin the decision:** the e2e now asserts |scanned − unscanned| < 3 cm. **Acceptance 5 is not met while the blocker holds.** Re-enabling restores the old assertion (1.29 vs 1.04 m when last applied).
+  - **Phantom hits in Jorge's playtest:** if a scan was active, they are probably this.
+  - **To lift it:** on Jorge's clean drills, measure a real guard's forward wrist distance against a real full straight. Decide: `armGainM` tuned on the wrong arm lengths, or the synthetic guard holding the wrists too far forward. Retune, re-enable.
+- **BX-PRED-1 approved at 15 cm, provisional.** It gets implemented with the next verify, after the restart; collision stays untouched and the 50 ms time cap stays. It'll be re-measured on the drills before the value is settled.
+  - The case the cap doesn't reach (instant reversal at the end of a punch, 19.7 cm) is written into PLAN-BOXING §2.5 as a known limit, with why and where its fix would go (the predictor, not the cap).
+  - I also corrected my own text there: it had called the cap "the backstop" for that case, which the numbers contradict.
+- **Coordination failure (record it):** relays between sessions aren't fast enough to act as a stop signal for something already running.
+  - My verify ran 00:32–00:36 over Jorge's recording window. He had told me to proceed; the relayed "wait until he's off the machine" arrived after the run started.
+  - **Lesson:** a hold that must stop a run has to reach the running session before it starts (or be a lock it checks), not a message delivered at its next tool round.
+  - Jorge is checking the drills recorded in that window for dropped frames.
+- **AGENTS.md:** 786cd25 edited it before it became human-owned. The exact diff was sent to Jorge for review and re-application by hand.
+  - One line in it is now **false** while the blocker holds ("Boxing uses them for depth and reach"). I can't edit AGENTS.md; that's for Jorge to fix.
+- **Next, in Jorge's order:**
+  1. ~~Disable scan-derived reach~~ (done, uncommitted until verify).
+  2. Jorge restarts the session so the new hooks load.
+  3. Apply the `body-input.spec` whole-path fix and implement BX-PRED-1, then verify the merged tree (zero-gates reporter present) and commit.
+  4. Guard-distance diagnosis against Jorge's drills, once he confirms which recordings are clean.
