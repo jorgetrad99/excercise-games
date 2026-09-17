@@ -1,5 +1,8 @@
-// TEMPORARY(synthetic-fixtures): synthetic boxing arms (3D IK, pose/testdata/synthetic.ts) until
-// Jorge's boxing recordings exist. PLAN-BOXING §2.5 (BX-CL-1 end to end), BX-CAL-6 (reach from arms).
+// PLAN-BOXING §2.5 (BX-CL-1 end to end), BX-CAL-6 (reach from arms). Guard reach and handedness run on
+// Jorge's B1 capture (pose/testdata/real-b1-capture.json).
+// TEMPORARY(synthetic-fixtures): the rest stays synthetic (pose/testdata/synthetic.ts): it needs what a
+// 30 fps take can't give: controlled pose rates and sampling phases (BX-CL-1, BX-CL-7), a known lean, a
+// body scan, and a glove whose true path is known for the render chain (B1b).
 import { describe, expect, it } from 'vitest';
 import { boxingConfig as C } from '../../core/boxing/boxing.config';
 import { fromRing, len, sub, toRing } from '../../core/boxing/body';
@@ -8,6 +11,7 @@ import type { V3 } from '../../core/boxing/types';
 import { createGestureEngine } from '../../pose/gestures';
 import { gestureConfig } from '../../pose/gestures.config';
 import type { PoseState } from '../../pose/pose-state';
+import { b1Take, replayB1, type B1Step } from '../../pose/testdata/real-b1';
 import { CALIBRATE, script, type Key, type Stance } from '../../pose/testdata/synthetic';
 import type { PoseFrame } from '../../pose/types';
 import { mirrorFrame } from '../../pose/handedness';
@@ -48,6 +52,12 @@ function poses(frames: PoseFrame[], config = gestureConfig): (PoseState | null)[
   const engine = createGestureEngine({ video, config });
   return frames.map((f) => engine.push(f).signals.pose);
 }
+/** A B1 take's BODY placements (calibrated frames only), with the take's own t. */
+const realBodies = (step: B1Step) =>
+  replayB1(b1Take(step)).flatMap((r) =>
+    r.signals.pose ? [{ t: r.t, body: bodyFromPose(r.signals.pose) }] : [],
+  );
+
 /** The last pose after holding `to` (base: boxing ready stance), noise-free. */
 function held(to: Stance): PoseState {
   const frames = script([CALIBRATE, { ms: 300, to: {} }, { ms: 300, to }, { ms: 300, to }], {
@@ -58,9 +68,23 @@ function held(to: Stance): PoseState {
 }
 
 describe('player body → BODY input (PLAN-BOXING §2.5)', () => {
-  it('a guard stays well short of the opponent; half the travel to a straight reaches the head', () => {
+  it("Jorge's held guard stays short of the opponent; his straights reach past the face, at face height", () => {
+    // Guard take from GUARD_START (2602 ms, fists arrived) to the end: z 0.57–0.80 with default arms.
+    const guard = realBodies('guard').filter((r) => r.t >= 2602);
+    expect(Math.max(...guard.flatMap((r) => r.body.gloves.map((g) => g[2])))).toBeLessThan(
+      CONTACT_Z - 0.15,
+    );
+    // No-twist straights: the right glove's peak is well past contact, at face height.
+    const square = realBodies('square-right-x3').map((r) => r.body);
+    const peak = square.reduce((a, b) => (b.gloves[1][2] > a.gloves[1][2] ? b : a));
+    expect(peak.gloves[1][2]).toBeGreaterThan(CONTACT_Z + 0.5);
+    expect(peak.gloves[1][1]).toBeGreaterThan(B.head[1] - 0.2);
+    expect(peak.gloves[0][2]).toBeLessThan(CONTACT_Z); // the guarding hand stayed back
+  });
+
+  // Synthetic on purpose: the gain rule is stated for half the travel, which no real take isolates.
+  it('half the travel from guard to a straight reaches the head', () => {
     const guard = bodyFromPose(held({ fists: 'guard' }));
-    expect(guard.gloves[1][2]).toBeLessThan(CONTACT_Z - 0.2);
     const half = bodyFromPose(held({ fists: 'guard', punchR: 0.5 }));
     expect(half.gloves[1][2]).toBeGreaterThan(CONTACT_Z);
     expect(half.gloves[0][2]).toBeCloseTo(guard.gloves[0][2], 2); // the other hand stayed put
@@ -156,7 +180,8 @@ describe('player body → BODY input (PLAN-BOXING §2.5)', () => {
     expect(reached).toBeGreaterThan(0);
   });
 
-  // B1 (playtest: "threw a right, the debug showed the left"). Both ends of the chain on synthetic poses.
+  // B1 (playtest: "threw a right, the debug showed the left"). B1a on the real capture; B1b's render chain
+  // on a synthetic straight, whose one clean hit makes each link checkable.
   const rightStraight = (): PoseFrame[] =>
     script(
       [
@@ -168,26 +193,26 @@ describe('player body → BODY input (PLAN-BOXING §2.5)', () => {
       ],
       { base: { fists: 'guard' }, jitter: 0 },
     );
-  /** Peak forward travel of each glove over the take, m. */
-  const gloveTravel = (frames: PoseFrame[]): [number, number] => {
-    const ps = poses(frames).filter((p) => p !== null);
-    const z = (h: 0 | 1) => ps.map((p) => bodyFromPose(p).gloves[h][2]);
-    return [0, 1].map((h) => Math.max(...z(h as 0 | 1)) - z(h as 0 | 1)[0]!) as [number, number];
-  };
 
-  it("B1a: the player's right wrist (landmarks 12/14/16) drives glove 1; only a mirrored stream swaps it", () => {
-    const frames = rightStraight();
-    const lm = (i: number) => frames.map((f) => f.poses[0]![i]!);
-    const z0 = lm(16)[0]!.z;
-    expect(Math.min(...lm(16).map((l) => l.z))).toBeLessThan(z0 - 0.05); // the take moves the RIGHT wrist …
-    expect(lm(15).every((l) => l.x === lm(15)[0]!.x && l.z === lm(15)[0]!.z)).toBe(true); // … not the left
-    const [left, right] = gloveTravel(frames);
-    expect(right).toBeGreaterThan(0.4); // glove 1 = GloveR in render/boxing/boxer.ts
-    expect(left).toBeLessThan(0.01);
-    // The same body seen through a mirrored camera stream: MediaPipe labels it a left, glove 0 moves.
-    const [mLeft, mRight] = gloveTravel(frames.map(mirrorFrame));
-    expect(mLeft).toBeGreaterThan(0.4);
-    expect(mRight).toBeLessThan(0.01);
+  it("B1a (real): Jorge's right punches drive glove 1, his left punches glove 0; a mirrored stream swaps them", () => {
+    // Peak forward reach of each glove inside the prompted window, m.
+    const peaks = (step: B1Step, mirror: boolean): [number, number] => {
+      const take = b1Take(step);
+      const frames = mirror ? take.frames.map(mirrorFrame) : take.frames;
+      const zs = replayB1({ ...take, frames })
+        .filter((r) => r.signals.pose && r.t >= take.windowMs[0] && r.t <= take.windowMs[1])
+        .map((r) => bodyFromPose(r.signals.pose!).gloves);
+      return [0, 1].map((h) => Math.max(...zs.map((g) => g[h]![2]))) as [number, number];
+    };
+    // The idle hand also comes forward when the arms rise to guard (z 1.13 at 1.7 s): compare peaks.
+    const right = peaks('square-right-x3', false); // glove 1 = GloveR in render/boxing/boxer.ts
+    expect(right[1]).toBeGreaterThan(CONTACT_Z + 0.5);
+    expect(right[1]).toBeGreaterThan(right[0] + 0.4);
+    const left = peaks('left-x1', false);
+    expect(left[0]).toBeGreaterThan(left[1] + 0.4);
+    // The same take through a mirrored camera stream: MediaPipe labels each arm the other side.
+    const mirrored = peaks('square-right-x3', true);
+    expect(mirrored[0]).toBeGreaterThan(mirrored[1] + 0.4);
   });
 
   it('B1b: a right-glove hit is attributed to the right all the way to what the player sees', () => {

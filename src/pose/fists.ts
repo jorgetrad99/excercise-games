@@ -18,12 +18,14 @@ interface Rel {
 interface Hand {
   /** Wrist relative to the speed reference (fists.reference), newest last. */
   hist: Rel[];
-  /** Latest 2D distance from the nose (torso), and speed relative to the reference (torso/s). */
+  /** Latest 2D distance from the nose (torso), how far the wrist is below the nose (torso, − = above),
+   *  and speed relative to the reference (torso/s). */
   dist: number;
+  below: number;
   speed: number;
 }
 
-const newHand = (): Hand => ({ hist: [], dist: Infinity, speed: 0 });
+const newHand = (): Hand => ({ hist: [], dist: Infinity, below: -Infinity, speed: 0 });
 
 export function newFists() {
   return { hands: [newHand(), newHand()] as [Hand, Hand], guard: false };
@@ -51,7 +53,7 @@ function relative(
 
 function updateHand(h: Hand, pos: Rel | null, rel: Rel | null, windowMs: number): void {
   if (!pos || !rel) {
-    Object.assign(h, { hist: [], dist: Infinity, speed: 0 });
+    Object.assign(h, newHand());
     return;
   }
   let ref: Rel | undefined;
@@ -60,6 +62,7 @@ function updateHand(h: Hand, pos: Rel | null, rel: Rel | null, windowMs: number)
   h.hist.push(rel);
   while (h.hist.length > 0 && h.hist[0]!.t < rel.t - windowMs * 4) h.hist.shift();
   h.dist = Math.hypot(pos.x, pos.y);
+  h.below = pos.y;
   h.speed =
     ref && rel.t > ref.t
       ? Math.hypot(rel.x - ref.x, rel.y - ref.y, rel.z - ref.z) / ((rel.t - ref.t) / 1000)
@@ -78,16 +81,20 @@ export function trackFists(f: Fists, t: number, m: Measures, torso: number, cfg:
     updateHand(f.hands[i]!, pos, rel, fists.velocityWindowMs);
   });
   const [l, r] = f.hands;
-  return { fistL: l.speed, fistR: r.speed, guard: Math.max(l.dist, r.dist) < fists.guard.enter };
+  return { fistL: l.speed, fistR: r.speed, guard: guardPosture(f, cfg, fists.guard.enter) };
 }
+
+/** Both wrists within `reach` of the nose and neither raised past the nose: a fist thrown at the face
+ *  sits as close to the nose in 2D as a guard (B1 capture: 0.25–0.37 vs 0.24–0.26 torso), but above it. */
+const guardPosture = (f: Fists, cfg: GestureConfig, reach: number): boolean =>
+  f.hands.every((h) => h.dist < reach && h.below > -cfg.fists.guard.maxAboveNose);
 
 /** Edge-triggered guard events from the state trackFists left this frame (posture, with hysteresis). */
 export function detectGuard(f: Fists, cfg: GestureConfig, emit: FistEmit): void {
-  const far = Math.max(f.hands[0].dist, f.hands[1].dist);
-  if (!f.guard && far < cfg.fists.guard.enter) {
+  if (!f.guard && guardPosture(f, cfg, cfg.fists.guard.enter)) {
     f.guard = true;
     emit('GUARD_START');
-  } else if (f.guard && far > cfg.fists.guard.exit) {
+  } else if (f.guard && !guardPosture(f, cfg, cfg.fists.guard.exit)) {
     f.guard = false;
     emit('GUARD_END');
   }

@@ -53,7 +53,10 @@ export const gestureConfig = {
    * Boxing fists (pose/fists.ts): no punch thresholds (punches are glove collisions, PLAN-BOXING §2.5).
    * Wrist speed signal in torso/s over velocityWindowMs; zWeight scales MediaPipe's noisy depth in it.
    * Guard posture: GUARD_START when both wrists are within guard.enter of the nose (2D, torso lengths);
-   * GUARD_END when either passes guard.exit. UNTUNED: synthetic poses only.
+   * GUARD_END when either passes guard.exit or rises more than guard.maxAboveNose above the nose (a
+   * punch at the face is as near the nose in 2D as a guard, but above it).
+   * Checked on Jorge's B1 capture (src/pose/testdata/real-b1-capture.json): guard 0.24–0.26 from the
+   * nose, hands hanging ≥ 1.35, fists thrown at the face 0.25–0.37 (hence maxAboveNose).
    */
   fists: {
     velocityWindowMs: 70,
@@ -61,7 +64,7 @@ export const gestureConfig = {
     /** Speed is measured against this point: 'nose' (original) or the arm's own 'shoulder', which
      *  ignores head bobs, ducks and sways that move both wrists relative to the face at once. */
     reference: 'nose' as FistReference,
-    guard: { enter: 0.35, exit: 0.45 },
+    guard: { enter: 0.35, exit: 0.45, maxAboveNose: 0 },
   },
   /**
    * Pose mirroring (pose/pose-state.ts). Bone lengths in calibrated torso lengths (shoulder center to

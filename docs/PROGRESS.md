@@ -2417,3 +2417,62 @@ URL: `/?game=boxing&record=1&capture=b1`, press **L**. Check each of these:
 ### Next
 
 - Jorge practises, then records the B1 clip on this branch.
+
+## 2026-09-17 — B1 capture analysed: first real boxing measurement; lean dodge removed, guard fixed, tests on real data
+
+Branch `fix/boxing-phase0`. Input: Jorge's `capture-b1-2026-09-17T16-19-13-968Z.json` (`?record=1&capture=b1`, 6 takes, ~30 pose-fps). Method: each take replayed through the current engine, calibrated on the "still" take (the live calibration isn't in the file), then BODY → sim against an idle defender; plus the events the live build logged. Analysis scripts and dumps: `tmp/b1/` (not committed).
+
+### Read this first: the punch takes hold 6 punches each, not 3 / 3 / 1
+
+Counted in the image alone (wrist rises above the nose and comes back), so the count doesn't depend on the depth model: 6 right (no twist), 6 right (twist), 6 left, about 1.3 s apart. Everything below uses 6 / 6 / 6. Likely cause: the demo loops during GO and the 8 s window invites repeats. **Wizard fix to decide:** stop the demo loop at GO, or shorten the punch windows.
+
+### Findings (numbers)
+
+1. **Mirror: not mirrored.** "Left arm up": landmark 15 rises y 0.69 → 0.06 (nose 0.29) at raw x 0.53 > nose 0.45; landmark 16 stays at 0.70. `handedness()` = `ok`. The convention `pose-state.ts` and every synthetic test assume is Jorge's camera's.
+2. **B1 (dodges on right punches): not reproduced.**
+   - Live log: 0 `DODGE_*` in all 6 takes (GUARD events were logged, so logging worked).
+   - Replay, inside the windows: no twist 0, twist 0, left take 1 `DODGE_RIGHT` (first punch); 2 more in lead-ins.
+   - Lean per punch vs the 300 ms before it (shoulder widths): no twist ≤ 0.05; twist 0.11–0.19, alternating sign; left 0.03–0.10.
+   - So a twist moves the shoulders 3–4× a square punch, but only crosses `lean.enter` 0.35 when the stance already sits off-calibration (left take: 0.33–0.37).
+3. **Handedness: correct.** 18/18 punches contact with the correct glove (attributed by the glove whose contact state changed). Peak wrist speed: no twist R 38 / L 17; left L 15 / R 8; twist R 48 / L 40 (L = a 2-frame landmark jump while the right arm crossed the face).
+4. **Detection (idle defender):**
+
+   | Take | Punches | Touched | HIT | False contacts |
+   |---|---|---|---|---|
+   | right, no twist | 6 | 6 | 6 | 4 (2 lead-in whiffs, 1 raising hands, 1 resting glove z 1.12) |
+   | right, twist | 6 | 6 | **2** (4 BLOCK on the defender's ready glove) | 3 (left glove reads forward during the twist, z up to 1.38) |
+   | left | 6 | 6 | 6 | 1 (raising hands) |
+   | left arm up / still / guard | – | – | – | 1 / 0 / 1 (raising arms) |
+
+   - **Why twist punches block:** the forward bend of a twist reads as a duck of 0.14–0.25 torso; × `leanGainM` 1.2 both gloves travel 0.17–0.30 m lower, into the ready glove at y 1.2. **Open, Jorge's call:** should a duck/bend lower the gloves (it's geometric today), or only the head?
+   - **Arms rising from the sides read as reaching** (glove z 1.04–1.30 mid-raise, face at 0.99): 5 of the 10 false contacts.
+   - **Real depths, default arms (no scan):** held guard z 0.57–0.80; full straights 1.30–1.67; head contact 0.99. A real guard stays ~20 cm short of the face. **That supports BX-CAL-6's "synthetic guard too far forward" hypothesis, for unscanned arms only** (no scan in this capture).
+   - **Real damage:** hit closing speed 1.2–5.9 m/s (median ~2.8) → 0.17–0.83 seg per hit, ~25 hits per pie. Synthetic straights were ~4.4 m/s (~16 per pie). Feeds "how long a fight takes".
+   - **Vs the 1P bot:** player HITs 5 / 3 / 6 at 30 fps, 5 / 1 / 5 at 15 fps; the bot reacts to every take (BX-CL-9 holds on real punches).
+   - **Arm-gain sweep (not applied; exact per-glove attribution):** forward 1.3 (today) 18/18 touched, 14 HIT, 10 false contacts; **1.2: 18/18, 15 HIT, 7 false**; 1.1: 17/18, 12 HIT, 4 false. BX-CAL-6 reserves the gain retune for drills with a scan, so it stays 1.3; one person, one take isn't enough.
+   - Left punches land on the defender's left cheek here: the left take stood 0.27 m off the still-take calibration (sway moves head and gloves together). A calibration offset, not handedness.
+5. **Guard.** Still: never (1.36–1.40 torso from the nose vs `enter` 0.35), live and replay. Guard take: one `GUARD_START` at 2602 ms (live and replay) when the fists arrive (0.24–0.26), held, no flicker. **Defect:** a fist thrown at the face is 0.25–0.37 from the nose, so every no-twist punch fired `GUARD_START` (6 pairs), and in the twist/left takes guard stayed on through the punches.
+
+### Fixed
+
+- **Lean → `DODGE_*` removed for pose players** (`BOXING_GESTURES`; decided by Jorge in the B1 entry). Keyboard/bot dodges unchanged; Skate lanes unchanged.
+- **Guard: a wrist above the nose isn't guard** (`gestureConfig.fists.guard.maxAboveNose` = 0 torso, `fists.ts`). Swept −0.1…Infinity on the capture: at 0, `GUARD_END` lands within 70 ms of 12/12 punch starts in the twist and left takes, the no-twist take's per-punch guard is gone (one flicker while the hands first rise), still and guard takes unchanged. `enter`/`exit` untouched (the data doesn't argue for moving them).
+- **Not changed:** gains, `recoverZ`, lean thresholds (Skate uses them; not tuned on boxing data).
+
+### Tests now on the real recording
+
+- **`src/pose/testdata/real-b1-capture.json`** (378 KB): the 13 landmarks `body.ts` reads, 4 decimals, no world landmarks, live events kept. Loader + `extensions()` + `replayB1()` in `real-b1.ts`. `fixtures/` is human-owned and doesn't exist in this checkout; **Jorge: move the original into `fixtures/pose/boxing/` if you want it there** (the `NO REAL POSE RECORDINGS` banner reads that folder).
+- **New `games/boxing/b1-capture.spec.ts`:** per take, per hand, contact type per punch (6 HIT / HIT·BLOCK×4·HIT / 6 HIT), every false contact by type and glove, no DODGE mapped or logged.
+- **Rewritten on real data:** `handedness.spec` (marker ok / mirrored SWAPPED / landmark 15 at larger x), `fists.spec` (exact guard sequences, punch ends guard, per-hand speed, tracking loss ends guard), `pose-match.spec` (B2 vs the bot, 30 and 15 fps, exact hit counts, no unexplained refill, bot reacts), `body-input.spec` B1a and guard reach, e2e `boxing.smoke` pose replay (still + still + guard + no-twist take through the app; expected events = the same engine offline).
+- **Still synthetic, on purpose (TEMPORARY header says why):** `body-input.spec` BX-CL-1 / BX-CL-7 (controlled rates and sampling phases), lean and body-scan reach, B1b render chain; `body-scan` unit + e2e (no T-pose recorded); 2P replays (no two-person recording).
+- **Mutation checks (each reverted):** LANE→DODGE mapping restored → dodge test fails; `maxAboveNose` Infinity → guard test fails; left glove fed the right wrist → 7 tests fail (b1-capture, body-input); handedness vote sign flipped → 2 fail.
+
+### Verified
+
+- **`PLAYWRIGHT_PORT=5196 pnpm verify` exit 0** (`tmp/verify/verify-b1-capture.log`): vitest 460 passed + 1 skipped (42 files), e2e 35 passed (3.6 min), 6 gates measured.
+- **Every gate reads `lock held · other heavy: 1 CONTENDED`**: pid 22360, the idle VS Code Playwright test-server, as in the previous two verifies. Values match the quiet runs (boxing-1p-face fps 60 / pose-fps min 29; skate-2p pose-fps min 28; latency total 1P p50 38.5 ms, 2P p50 45.5 ms). Not re-measured.
+- The real-data e2e replay on its own: `--project=perf -g "pose replay: the body"` passed (17.8 s).
+
+### Next
+
+- Jorge: (a) twist punches: should a bend lower the gloves? (b) wizard: stop the demo loop at GO? (c) arm gain 1.3 → 1.2 on this evidence, or wait for scanned drills?

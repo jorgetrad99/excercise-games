@@ -1,10 +1,14 @@
 // Piece 4: Boxing through the real shell — menu, keyboard + 1P bot, 2P shared state, the pose path
-// (replay), and screenshot baselines. TEMPORARY(synthetic-fixtures): the replay test uses synthetic
-// boxing poses until a recorded boxing fixture exists.
+// (replay of Jorge's B1 capture), and screenshot baselines. TEMPORARY(synthetic-fixtures): the 2P replay
+// still uses synthetic two-person frames (no two-player recording exists).
 import { expect, test, type Page } from '@playwright/test';
 import { boxingConfig as C } from '../../src/core/boxing/boxing.config';
 import type { BoxingState } from '../../src/core/boxing/types';
-import { CALIBRATE, fixture, script, scriptTwo, type Key } from '../../src/pose/testdata/synthetic';
+import { BOXING_GESTURES } from '../../src/games/boxing/gestures';
+import { createGestureEngine } from '../../src/pose/gestures';
+import { b1Take, B1_VIDEO } from '../../src/pose/testdata/real-b1';
+import { CALIBRATE, fixture, scriptTwo, type Key } from '../../src/pose/testdata/synthetic';
+import type { PoseFrame } from '../../src/pose/types';
 
 /** Not ours: ANGLE's D3D compiler precision warnings; Vite's own logs. */
 const BENIGN = /warning X4122|\[vite\]/;
@@ -101,27 +105,25 @@ test(
   'pose replay: the body drives the gloves into collisions; a held guard goes through the gesture engine',
   { tag: '@realtime' },
   async ({ page }) => {
-    test.setTimeout(60_000);
-    const READY = { fists: 'ready' } as const;
-    const keys: Key[] = [
-      CALIBRATE,
-      { ms: 3500, to: {} }, // intro
-      { ms: 120, to: { punchR: 1 } },
-      { ms: 80, to: { punchR: 1 } },
-      { ms: 250, to: {} },
-      { ms: 600, to: {} },
-      { ms: 120, to: { hookR: 1 } },
-      { ms: 250, to: {} },
-      { ms: 600, to: {} },
-      { ms: 300, to: { fists: 'guard' } },
-      { ms: 800, to: { fists: 'guard' } },
-      { ms: 300, to: {} },
-      { ms: 800, to: {} },
-    ];
-    const fx = fixture(script(keys, { base: READY }));
-    await page.route('**/fixtures/pose/synthetic-boxing.json', (r) => r.fulfill({ json: fx }));
+    test.setTimeout(90_000);
+    // Jorge's B1 capture: still (calibrates), still again (the intro), guard, then 6 right straights.
+    const frames: PoseFrame[] = [];
+    for (const step of ['still', 'still', 'guard', 'square-right-x3'] as const) {
+      const start = (frames.at(-1)?.t ?? 0) + 33;
+      frames.push(...b1Take(step).frames.map((f) => ({ ...f, t: start + f.t })));
+    }
+    // The app runs the same engine on the same frames: its mapped events are the expectation.
+    const engine = createGestureEngine({ video: () => B1_VIDEO });
+    const expected = frames
+      .flatMap((f) => engine.push(f).events)
+      .flatMap((e) => BOXING_GESTURES[e.type] ?? [])
+      .filter((t) => t !== 'JUMP');
+    expect(expected[0]).toBe('GUARD_START'); // the guard take registers …
+    expect(expected.filter((t) => t.startsWith('DODGE'))).toEqual([]); // … and nothing dodges
+    const fx = { ...fixture(frames), video: B1_VIDEO };
+    await page.route('**/fixtures/pose/real-b1.json', (r) => r.fulfill({ json: fx }));
     const problems = watchConsole(page);
-    await page.goto('/?game=boxing&input=replay:synthetic-boxing.json&seed=42');
+    await page.goto('/?game=boxing&input=replay:real-b1.json&seed=42');
     // Every frame: did boxer 0's right glove resolve against boxer 1? A hit or block latches `struck`, a
     // miss latches `spent`. No punch events exist any more: the outcome is the collision's.
     await page.evaluate(() => {
@@ -141,7 +143,7 @@ test(
           .map((e) => e.type)
           .filter((t) => t !== 'JUMP'),
       );
-    await expect.poll(gestures, { timeout: 30_000 }).toEqual(['GUARD_START', 'GUARD_END']);
+    await expect.poll(gestures, { timeout: 60_000 }).toEqual(expected);
     const seen = await page.evaluate(
       () => (window as unknown as { __seen: { resolved: boolean; poseTicks: number } }).__seen,
     );
