@@ -290,7 +290,7 @@ See `AGENTS.md` for the rules; this section lists the *mechanisms* to install in
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| Jump false positives (bouncing while running in place) | High | Velocity gate + cooldown; playtest fixtures; consider requiring both hips to rise |
+| Jump false positives (bouncing while running in place) | High | *Skate Run:* velocity gate + cooldown; playtest fixtures; consider requiring both hips to rise. *Boxing:* running/marching in place is **input**, not noise, in the knockdown state and the corner (PLAN-BOXING §6.3, §9). Detectors are scoped per game and state (PLAN-BOXING §8), so the Skate jump gate is never active there. |
 | Lane hysteresis feels laggy | Medium | Offer absolute-zone mode; tune on real fixtures; render lane preview arrow before commit |
 | Second player detection drops when close | Known | Split-screen with zone guides; pause when < 2 poses; camera 3+ m back, wide FOV |
 | Pose fps dips on integrated GPU laptops | Medium | `lite` model fallback auto-selected when pose-fps < 20 for 3 s |

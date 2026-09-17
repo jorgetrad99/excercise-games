@@ -1,6 +1,6 @@
 # PLAN-BOXING — Boxing spec (control model, authority, knockdown, recovery, movement, trainer)
 
-Status: **DRAFT, awaiting Jorge's sign-off** (2026-09-16). Nothing below is implemented yet.
+Status: **D1–D4 decided by Jorge (2026-09-16); spec text awaiting final sign-off before M7.15.** Nothing below is implemented yet.
 
 ## 0. Scope and precedence
 
@@ -12,7 +12,7 @@ Status: **DRAFT, awaiting Jorge's sign-off** (2026-09-16). Nothing below is impl
   - TKO at 3 knockdowns
   - rounds and the decision
 - **Verification:** each requirement has IDs (`BX-…`). Every test, screenshot and PROGRESS entry for this work cites the ID it verifies.
-- **PLAN.md §6** (human-owned, so not edited here) frames running in place as jump noise. That's now game- and state-dependent: see §8. Proposed wording for Jorge is in §8.3.
+- **PLAN.md §6** used to frame running in place as jump noise. That's now game- and state-dependent (§8). The row was reworded with Jorge's approval (§8.3).
 - **Delivery order:**
   1. control-model inversion (§2–§4)
   2. then, blocked until 1 is merged, knockdown / recovery / movement / trainer (§5–§7, §9)
@@ -68,14 +68,17 @@ Already captured by Piece 4 (research notes in PROGRESS "Phase 2, Piece 4"):
 - **Smoothing:** each channel eases toward its target with today's live-smoother τ (0.08 s, `render/boxing/live-pose.ts`), except where §4 says otherwise.
 - **Anatomical and ring limits** are the only clamps.
 
-### 2.2 Authorized sim overlays (closed list)
+### 2.2 Authorized sim overlays (closed list, D1 decided)
 
-The sim may add to player-owned channels only these, bounded and time-limited. **Needs Jorge's explicit sign-off** (decision D1): the brief's table didn't list them, but without them a hit has no visible effect on the victim's body.
+Authorized by Jorge (D1, 2026-09-16) under the §4.1 rule: each overlay is an **additive offset on top of the player's live pose**, never an override, and bounded in both magnitude and time.
 
-| ID | Overlay | Channels | Bound |
-|---|---|---|---|
-| O1 | Hit reaction: head snap away from the blow (UAL `Hit_Head` track) + root stagger | `head`, `root` | additive; ≤ 0.35 s per hit; head ≤ 0.5 rad; root ≤ 0.08 m |
-| O2 | Stunned degradation (§4 row Stunned) | all body channels | only while `dizzy`, eased in/out τ 0.15 s |
+- **Rig value:** `rig = live(player) + Σ offsets`. Each offset is clamped to its bound.
+- **What's forbidden:** replacing, scaling, freezing or lagging the live value, and zeroing the player's contribution.
+
+| ID | Overlay (additive offset) | Channels | Magnitude bound | Time bound |
+|---|---|---|---|---|
+| O1 | Hit reaction: head snap away from the blow (UAL `Hit_Head` track) + root stagger | `head`, `root` | head ≤ 0.5 rad; root ≤ 0.08 m | ≤ 0.35 s per hit, decays to 0 |
+| O2 | Stunned: wobble + sluggishness offset (§4 row S3) | `hips`, `torso`, `head`, `armL`, `armR`, `root` | torso/hips/head ≤ 0.15 rad; each wrist ≤ 0.10 m; root ≤ 0.10 m | only while `dizzy`; eases in/out τ 0.15 s, 0 within 1 s of dizzy clearing |
 
 ### 2.3 Constraints (not animation, always on)
 
@@ -117,27 +120,28 @@ Additions:
 |---|---|---|---|---|---|---|
 | S1 | **Intro** (`phase 'intro'`) | PLAYER (anchor reset §2.3) | PLAYER | behind-boxer | `phase` becomes `intro` | — (start) |
 | S2 | **Neutral / combat** (`fight`, not dizzy) | PLAYER | PLAYER (+O1) | behind-boxer | `phase` becomes `fight` | BX-H-01 |
-| S3 | **Stunned** (`fight`, `dizzy`) | PLAYER, degraded | PLAYER, degraded (+O1, O2) | behind-boxer + wobble | tick of `DIZZY` | BX-H-02 (in), BX-H-03 (out) |
+| S3 | **Stunned** (`fight`, `dizzy`) | PLAYER (+O2) | PLAYER (+O1, O2) | behind-boxer + wobble | tick of `DIZZY` | BX-H-02 (in), BX-H-03 (out) |
 | S4 | **Falling** (`down`, `phaseT < fallS`) | **SIM** (Death clip) | **SIM** | SIM (§5 fall camera) | tick of `KNOCKDOWN` | BX-H-04 |
 | S5 | **On the canvas** (`down`, `phaseT ≥ fallS`, not rising) | canvas posture from effort (§6.4) | PLAYER | PLAYER head drives look (§5) | first tick with `phaseT ≥ fallS` | BX-H-05 |
 | S6 | **Getting up** (`down.riseT ≠ null`) | blend canvas posture → PLAYER over `riseS` | PLAYER | blend → behind-boxer | tick of `RISE_START` | BX-H-06 |
 | S7 | **Back in the fight** | as S2 | as S2 | behind-boxer | tick of `GET_UP` (`riseT ≥ riseS`) | BX-H-07 |
 | S8 | **Walk to corner** (`break`, `breakT < walkS`) | SCRIPT (path to own corner) | PLAYER | behind-boxer, following | tick of `ROUND_END` (non-final) | BX-H-08 |
 | S9 | **Corner with trainer** (`break`, seated) | SCRIPT (seated) | PLAYER | corner shot (§9) | first tick with `breakT ≥ walkS` | BX-H-09 |
-| S10 | **Walk out** (`break`, last `walkS`) | SCRIPT (path to start mark) | PLAYER | behind-boxer | first tick with `breakT ≥ walkS + cornerS` | BX-H-10 |
-| S11 | **Paused** (`paused`) | frozen at last rendered pose (nobody drives) | frozen | frozen | tick of `PAUSE` | BX-H-11 |
+| S10 | **Walk out** (`break`, walking out) | SCRIPT path to start mark, **paced by the player's march** (§9) | PLAYER | behind-boxer | tick of the boxer's `WALK_OUT` (≥ `cornerMinS` into S9), or first tick with `breakT ≥ walkS + cornerS` | BX-H-10 |
+| S11 | **Paused** (`paused`) | held at last rendered pose: tracking is lost, so no body exists to drive it (not sim ownership) | held | held | tick of `PAUSE` | BX-H-11 |
 | S12 | **Over, winner / decision loser** | PLAYER | PLAYER | behind-boxer | tick of `MATCH_OVER` | BX-H-12 |
 | S13 | **Over, KO/TKO loser** | as S5, recovery disabled | PLAYER | as S5 | tick of `MATCH_OVER` | BX-H-12 |
 
 **Row details:**
 
-- **S3 Stunned, degraded response:**
-  - Live smoothing τ rises from 0.08 s to `stun.tauS` = 0.35 s.
-  - Sway/arm amplitude is scaled by `stun.gain` = 0.6.
-  - Locomotion speed is scaled by `stun.moveGain` = 0.4.
-  - The existing wobble is added on top.
-  - Degradation weight eases in and out with τ 0.15 s, so it fades and doesn't pop. This is today's `dizzyEaseS`, kept.
-  - Punch events are ignored by the sim (existing rule); dodges still score.
+- **S3 Stunned, degraded response (O2, additive only):**
+  - **Sluggishness:** offset = `clamp(slow(live) − live, bound)`, where `slow` eases the live pose with `stun.tauS` = 0.35 s.
+    - The rig trails a fast movement by at most the O2 bound, then catches up.
+    - It is never a scaled or frozen copy of the player: the player always moves the part.
+  - **Wobble:** the existing sway/roll wobble is added on the same channels, inside the same bound.
+  - **Weight:** the O2 weight eases in and out with τ 0.15 s, so it fades and doesn't pop. This is today's `dizzyEaseS`, kept.
+  - **Movement:** locomotion speed isn't scaled in the rig. The dizzy movement penalty is a sim rule (`stun.moveGain` = 0.4 on the `MOVE` walk speed, §7), so it's a consequence, not a rig override.
+  - **Punches:** ignored by the sim (existing rule); dodges still score.
 - **S3 → S2 (clinch break or bell):** the tick `dizzy` becomes false. Degradation eases out from that tick.
 - **S4 Falling:**
   - The **only full-rig SIM state.** The existing Casual_Hoodie `Death` clip plays over `fallS` = 0.7 s.
@@ -149,8 +153,20 @@ Additions:
 - **S6 Getting up:** only the base posture (root height, legs) is timed. The upper body stays the player's throughout.
 - **S8–S10 (SCRIPT):**
   - Only `root` and `legs` are scripted.
-  - The script is an authored path, not a sim outcome. The player's own lateral/forward movement is ignored until S10 ends.
-  - Hops still lift `rootY` (PLAYER).
+  - The script is an authored path, not a sim outcome. `hips`, `torso`, `head` and both arms stay PLAYER (D4); hops still lift `rootY` (PLAYER).
+  - The player's positional offset is ignored until S10 ends.
+  - The player can end S9 early by walking out, and paces S10 (§9, D3).
+
+### 4.1 General rule for sim effects on player-owned parts (Jorge, D1)
+
+**Any sim effect on a player-owned channel, now or in future, must be:**
+1. an **additive offset** on the live value, never an override (no replacing, scaling, freezing, lagging-by-substitution or zeroing)
+2. **bounded in magnitude**
+3. **bounded in time**, ending or decaying to 0
+
+Anything else needs Jorge's explicit sign-off and a new row in §2.2. This is the door the old sim-authoritative model would come back through, so reviews check every new rig write against it.
+
+**No frozen player states (D4):** outside S4, no row may stop a player-owned channel from following the live pose. S11 holds the pose only because no pose exists.
 
 **Global invariants (tested):**
 
@@ -159,6 +175,9 @@ Additions:
 | BX-A-1 | Over a full scripted match covering every row, `boxingAuthority` returns `sim` for **all** channels only in S4, and for no channel outside S4 except O1/O2 overlays. |
 | BX-A-2 | Every handover tick in the table is asserted exactly, both directions where a return exists (BX-H-01 … 12). |
 | BX-A-3 | Same seed + same event log → identical `boxingAuthority` output per tick (determinism). |
+| BX-A-4 | **Player still moves the parts under O1 + O2 at once.** A dizzy boxer takes a clean hit (O1 active, O2 at full weight). During the O1 window, synthetic live head yaw steps +0.6 rad, torso roll +0.4 rad and the left wrist +0.3 m forward. Asserted every tick: `|rig − live| ≤` the summed O1 + O2 bound per channel. After settling (≤ 0.5 s), each rig channel has moved by ≥ step − bound, in the step's direction. |
+| BX-A-5 | **Offsets are time-bounded.** O1 offset is 0 on the first tick ≥ 0.35 s after the hit. O2 offset is < 1 % of its bound 1 s after `dizzy` clears. |
+| BX-A-6 | **Rig writes go through the offset path.** `boxingRig(live, offsets)` is the only function that writes player-owned channels, and it has no branch that ignores `live` (unit test with `live` varied while offsets are held). |
 
 ## 5. R1 — Knockdown from the player's perspective
 
@@ -201,6 +220,8 @@ Today the knocked-down player sees their own boxer fall from the usual behind-th
 - **Cap:** at `phaseT ≥ recovery.maxDownS` = 8.0 s (count 10 at 0.8 s/count), with `RISE_START` not fired → KO. A rise already started completes.
 - **The referee count is display only:** `floor(phaseT / countS)`. It no longer decides anything.
 
+**Tuning flag (Jorge):** at +0.5 per pump, the Wii reference mechanic (arm pumping) is the least efficient way up: 12 pumps vs 3 hops for knockdown 1. That may be intentional. Check it against the real `boxing-arm-pump` / `boxing-hop` recordings before shipping, and don't tune on synthetic poses.
+
 **Expected pacing, for tuning later (not acceptance values):**
 - **Marching at 2 steps/s** (2 pts/s): the 1st knockdown reaches `RISE_START` at `phaseT` ≈ 3.7 s (0.7 s fall + 3.0 s), the 2nd at ≈ 6.7 s. Both are under the 8.0 s cap.
 - **March + arm pumps** (~4 pts/s): the 1st at ≈ 2.2 s (just above the 2.0 s floor), the 2nd at ≈ 3.7 s.
@@ -217,7 +238,10 @@ Today the knocked-down player sees their own boxer fall from the usual behind-th
 
 ### 6.3 Recovery gestures (state-scoped classifier)
 
-- **Where they live:** a Boxing-owned classifier, `src/pose/recovery.ts`, with its own tuning block `gestureConfig.recovery`.
+- **Where they live:**
+  - `MARCH_STEP` comes from a **shared, game-agnostic march classifier**, `src/pose/march.ts`. It emits steps (leg, time) and cadence, and nothing Boxing-specific.
+  - The Skate Run amendment (step propulsion, drafted in another session, not started) consumes the same classifier. Its tuning lives in `gestureConfig.march`; games only choose when it's active (§8).
+  - `HOP` and `ARM_PUMP` live in the Boxing recovery classifier `src/pose/recovery.ts` (`gestureConfig.recovery`). Its `HOP` is separate from Skate Run's `jump` gate (§8).
 - **When it's active:** only while the player's boxer is in S5 (§8). Values below are untuned start values, torso-length units.
 
 | Event | Detection | Refractory |
@@ -263,13 +287,30 @@ The player stands in front of a fixed camera with about ±0.5 m of usable floor.
    - Positional offset is still mirrored but clamped ±0.15 m.
    - You plant your feet to trade punches.
 
-**Sim consequence — decision D2 (needs Jorge):**
-- **(A, recommended)** Positions live in the sim. `MOVE` events are sampled at 10 Hz and quantized to 1 cm, so replays are deterministic.
-  - A punch whose attacker–defender root distance > `move.reachM` = 1.1 m whiffs with no stamina change for either boxer.
-  - The bot gains approach/retreat.
-  - **Trade-off:** movement matters, but it's a real rules change (balance, bot, tests).
-- **(B)** Positions are render-only.
-  - **Trade-off:** cheap, but movement is decoration and punches land from across the ring.
+**Sim consequence — D2 decided: positions live in the sim, and out-of-reach punches whiff** (Jorge, 2026-09-16: player input must have real consequence).
+
+- **Input:**
+  - The pose layer turns §7.1–7.2 into `MOVE { player, offset: {x, z} (cm), walk: {speed (cm/s), heading (deg)} }`.
+  - Sampled at 10 Hz, emitted only on change, quantized to 1 cm, 1 cm/s and 1°, so the event log replays deterministically.
+- **Sim:**
+  - Integrates each boxer's anchor from `walk` every tick and applies `offset`.
+  - Applies §2.3 constraints (ropes, `minSepM`, facing) and the exchange rule (§7.5).
+  - Applies `stun.moveGain` to walk speed while dizzy.
+  - Position is sim state (`boxers[i].pos`).
+- **Render:** the root eases toward the sim position (τ 0.08 s). Added latency ≈ ≤ 100 ms sampling + one tick, measured by the existing camera→glove latency e2e.
+- **Reach rule:**
+  - A punch landing (`travelS` after it's thrown) when attacker–defender distance > `move.reachM` = 1.1 m is a `WHIFF`.
+  - No stamina change for either boxer, and no counter window: the defender didn't dodge.
+- **Keyboard puppet:** `I`/`K` walk toward/away, `J`/`L` strafe (the arrows stay dodges).
+
+**What D2 changes for the bot** (`core/boxing/bot.ts`; still stateless and deterministic, `rngAt` only):
+- **Approach:** the bot moves to `reachM − 0.15` m before punching and punches only inside reach. Walk speed cap `bot.moveMps` = 1.5 m/s, below the player's 2.5 m/s, so a player can out-walk it. It obeys the exchange rule.
+- **Retreat:** when stamina < 3 segments and not dizzy, it backs out to `reachM + 0.3` m and regenerates.
+- **Defence unchanged:** it still reacts to thrown punches 0.08 s after they leave (guard/sway), and doesn't react to punches thrown from out of reach.
+- **Balance risk, kiting:** a player can retreat to regen indefinitely. The small ring (±2.2 m) and the bot's approach limit it. BX-MV-7 measures it, and there's no anti-kite rule until that shows a problem.
+- **Tests to re-baseline, not delete:**
+  - bot-vs-bot match length and result distribution in `sim.spec.ts` (old vs new values recorded in PROGRESS)
+  - the 1P e2e screenshot baselines (boxers no longer at fixed marks)
 
 | ID | Testable behavior |
 |---|---|
@@ -278,7 +319,9 @@ The player stands in front of a fixed camera with about ±0.5 m of usable floor.
 | BX-MV-3 | March at 2 steps/s, torso yaw 0 → anchor advances toward the opponent at 1.2 m/s (±10 %), stopping at `minSepM`. Yaw +30° → circles left. |
 | BX-MV-4 | During an exchange (a fist `out`), locomotion speed = 0 and positional offset ≤ 0.15 m. |
 | BX-MV-5 | Still fixture → root drift < 5 cm over its length. |
-| BX-MV-6 | (If D2 = A) out-of-reach punch → `WHIFF`, both staminas unchanged; determinism test with `MOVE` events green. |
+| BX-MV-6 | Out-of-reach punch (distance 1.2 m) → `WHIFF`, both staminas unchanged, no counter window. The same punch at 1.0 m → `HIT`. Determinism test with a `MOVE`-heavy event log green. |
+| BX-MV-7 | Bot vs scripted kiter (walks away at 2.5 m/s whenever the bot is within 1.3 m): the bot still lands ≥ 1 clean hit per round over seeds 1–20. The value is recorded; below that, the kiting balance question goes to Jorge. |
+| BX-MV-8 | Dizzy boxer: sim walk speed = 0.4 × input speed. Rig root lags the live offset by ≤ the O2 root bound, never more (additive rule, §4.1). |
 
 ## 8. Gesture scoping by game and state
 
@@ -295,7 +338,7 @@ The player stands in front of a fixed camera with about ±0.5 m of usable floor.
 | S1, S2, S3 | fists (punch/guard), dodge (lean vs hips, §7.4), duck, march (locomotion cadence), recalibrate, tracking |
 | S4 | tracking only |
 | S5, S6 | **recovery** (`MARCH_STEP`, `HOP`, `ARM_PUMP`), guard, tracking |
-| S8–S10 | tracking, recalibrate (hops render only) |
+| S8–S10 | march (`WALK_OUT` in S9, pace in S10), tracking, recalibrate (hops render only) |
 | S11 | tracking |
 | S12, S13 | Skate `jump` (play again from the results card, shell rule), tracking |
 
@@ -305,14 +348,21 @@ The player stands in front of a fixed camera with about ±0.5 m of usable floor.
 | BX-GS-2 | The Skate Run jump fixture and tests are unchanged and green (the Skate Run profile doesn't include `recovery`). |
 | BX-GS-3 | The detector set is recomputed on the tick the state changes. The first S5 tick accepts recovery events; the last S4 tick doesn't. |
 
-### 8.3 Proposed PLAN.md §6 wording (for Jorge to apply; the file is human-owned)
+### 8.3 PLAN.md §6 wording (approved by Jorge 2026-09-16, applied to PLAN.md)
 
 > **Jump false positives (bouncing while running in place)** | High | *Skate Run:* velocity gate + cooldown; playtest fixtures; consider requiring both hips to rise. *Boxing:* running/marching in place is **input**, not noise, in the knockdown state (PLAN-BOXING §6.3). Detectors are scoped per game and state (§8), so the Skate jump gate is never active there.
 
 ## 9. R4 — Trainer between rounds
 
-- **Automatic, not player-initiated.** The break is rest for a tired body. Requiring a gesture adds a way to fail, and the stamina refill is a rule, not a choice.
-- **Break length:** `breakS` goes from 4 to 11 s: `walkS` 2.0 → `cornerS` 7.0 → `walkS` 2.0. A full match grows by ~14 s.
+- **Going to the corner is automatic; leaving it is up to the player (D3).** Nothing is required to rest. A player who wants to fight sooner can end the break by walking back out.
+- **Break length:** up to 11 s: `walkS` 2.0 → `cornerS` 7.0 → `walkS` 2.0. It's interruptible, so the real cost is 2.0 + `cornerMinS` + walk-out ≈ 6 s minimum and 11 s maximum per break.
+- **Walking out early (D3):**
+  - **Trigger:** `WALK_OUT` from the shared march classifier (§6.3): cadence ≥ 1.5 steps/s sustained 1.0 s. With knees untracked, a step toward the camera (`body.forward ≥ 0.15`) held 0.5 s.
+  - **Timing:** accepted from `cornerMinS` = 2.0 s into S9 (the trainer beat always plays); earlier `WALK_OUT` is ignored.
+  - **Walk-out pace:** S10 path progress speed = `max(walk.minMps 0.8, player march speed)`, so marching faster gets you out faster and standing still still finishes.
+  - **Next round** starts on the tick the **last** boxer reaches their start mark (2P: both must walk out or time out), or at the 11 s cap, whichever is first.
+  - **1P bot:** it waits and walks out on the same tick as the player, or at the cap.
+  - **Keyboard puppet:** `W` = `WALK_OUT`.
 - **Rules unchanged:** refill and dizzy clear still happen at `ROUND_END`.
 - **Walk to corner (S8):** each boxer's root follows an authored path to its own corner (P1 red, P2 blue) with a walk cycle. The player's torso, head and arms stay live (§4).
 - **Corner (S9):**
@@ -321,16 +371,20 @@ The player stands in front of a fixed camera with about ±0.5 m of usable floor.
   - The own-slot camera is a corner shot: 2.2 m out, eye level, trainer and boxer both framed.
   - The HUD shows "Round N in X s".
   - The player's head and torso move freely on the seated rig.
-- **Walk out (S10):** path back to the start mark. It ends exactly on the tick the next round's `fight` begins.
+- **Walk out (S10):** path back to the start mark, paced as above. The next round's `fight` begins on the tick the last boxer arrives.
 - **Final round:** no corner; `MATCH_OVER` → S12/S13.
 - **Puppets** do the same walk and corner.
 
 | ID | Testable behavior |
 |---|---|
-| BX-TR-1 | `ROUND_END` tick → S8. `breakT = walkS` → S9. `breakT = walkS + cornerS` → S10. `phase 'fight'` tick → S2. Exact ticks. |
+| BX-TR-1 | No walk-out input: `ROUND_END` tick → S8. `breakT = walkS` → S9. `breakT = walkS + cornerS` → S10. `phase 'fight'` tick → S2. Exact ticks. |
 | BX-TR-2 | During S9, a synthetic head yaw of 0.4 rad → the rig head yaw is 0.4 rad (±0.02) after settling. Root doesn't move for synthetic hip shifts. |
-| BX-TR-3 | No corner after the last round. Match length = 3 rounds + 2 × 11 s + intros (asserted in ticks). |
+| BX-TR-3 | No corner after the last round. With no walk-out input, match length = 3 rounds + 2 × 11 s + intros (asserted in ticks). |
 | BX-TR-4 | 2P: each boxer goes to its own corner; roots never cross `minSepM`. |
+| BX-TR-5 | `WALK_OUT` at S9 + 3.0 s → S10 on that exact tick. `fight` begins on the tick the path completes at the paced speed, earlier than the no-input case. |
+| BX-TR-6 | `WALK_OUT` at S9 + 1.9 s is ignored (still S9 at S9 + 2.0 s). A sustained march crossing 2.0 s fires on the first tick ≥ `cornerMinS`. |
+| BX-TR-7 | 2P: P1 walks out at S9 + 2.5 s, P2 doesn't. The round starts only when P2's timed walk-out ends (cap), and P1 waits at the start mark with all channels PLAYER. |
+| BX-TR-8 | Still fixture replayed through a break → no `WALK_OUT`, full 11 s. March fixture → `WALK_OUT` (provisional until the fixture exists). |
 
 **Evidence:** screenshots at S8 mid-walk, S9 seated with the trainer (own slot and 2P), and S10. A video of one full break.
 
@@ -355,26 +409,28 @@ Each is 10–15 s, `?record=1`, full body with knees visible, after calibration:
 - `boxing-arm-pump.json`: pump both arms up and down; count them
 - `boxing-side-step.json`: step left/right and back, no lean (for BX-MV-2)
 
-Until these exist, BX-RG-1…5 and BX-MV-2/5 run on synthetic poses and are marked **provisional** in `features.json`, the same as M7.10.
+Until these exist, BX-RG-1…5, BX-MV-2/5 and BX-TR-8 run on synthetic poses and are marked **provisional** in `features.json`, the same as M7.10. **No threshold is tuned on synthetic poses.**
 
-## 12. Open decisions (need Jorge before the step that uses them)
+These are sustained-posture and gesture classifiers (march, hop, arm pump, side step), so they survive the inversion. The punch thresholds are the ones the inversion removes from the rig path.
 
-| ID | Question | Recommendation |
+## 12. Decisions
+
+| ID | Question | Decision (Jorge, 2026-09-16) |
 |---|---|---|
-| D1 | Authorize overlays O1 (hit reaction) and O2 (stun degradation) on player-owned channels? | Yes. Without O1, being hit is invisible on your own boxer. |
-| D2 | Movement positions in the sim with a reach rule (A), or render-only (B)? | A (§7). |
-| D3 | Break length 11 s (+14 s per match) acceptable? | Yes, or shorten `cornerS` to 4 s (+8 s). |
-| D4 | Arms free during S8–S10 (spec above) or scripted? | Free: it follows "the sim never takes the rig unless authorized". |
+| D1 | Authorize overlays O1 (hit reaction) and O2 (stun degradation) on player-owned channels? | **Yes, as additive, bounded, time-limited offsets only**, with a test that the player still moves the parts (BX-A-4). This becomes the general rule in §4.1. |
+| D2 | Movement positions in the sim with a reach rule (A), or render-only (B)? | **A.** Accept the balance, bot and test cost; bot changes are listed in §7. |
+| D3 | Break length 11 s (+14 s per match) acceptable? | **Keep 11 s, but interruptible:** the player ends the corner early by walking out (§9). |
+| D4 | Arms free during S8–S10 (spec above) or scripted? | **Free.** Any frozen player state is a regression toward sim ownership (§4.1). |
 
 ## 13. Work items (`features.json`)
 
-M7.11 stays **done**: it delivered what it specified. New items:
-- **M7.14** Control-model inversion: player owns the rig (§2–§4). BX-A-*, BX-CAL-*, BX-H-01…03, 11, 12.
+M7.11 stays **done**: it delivered what it specified. IDs follow the renumbering on `feat/player-authority` (mapping in PROGRESS). New items:
+- **M7.15** Control-model inversion: player owns the rig (§2–§4). BX-A-*, BX-CAL-*, BX-H-01…03, 11, 12.
 
-  Note: BX-H-04…07 at M7.14 test today's count get-up; M7.16 re-points them at `RISE_START` / `GET_UP`.
-- **M7.15** Player-perspective knockdown (§5). BX-KD-*, BX-H-04…07.
-- **M7.16** Active recovery by effort (§6, §8). BX-RC-*, BX-RG-*, BX-GS-*.
-- **M7.17** Free movement (§7). BX-MV-*. Blocked on D2.
-- **M7.18** Trainer between rounds (§9). BX-TR-*, BX-H-08…10.
+  Note: BX-H-04…07 at M7.15 test today's count get-up; M7.17 re-points them at `RISE_START` / `GET_UP`.
+- **M7.16** Player-perspective knockdown (§5). BX-KD-*, BX-H-04…07.
+- **M7.17** Active recovery by effort (§6, §8). BX-RC-*, BX-RG-*, BX-GS-*.
+- **M7.18** Free movement with sim positions and reach (§7). BX-MV-*.
+- **M7.19** Trainer between rounds, interruptible (§9). BX-TR-*, BX-H-08…10.
 
-**Order:** M7.14 → merge → M7.15 + M7.16 → M7.17 → M7.18.
+**Order:** M7.15 → merge → M7.16 + M7.17 → M7.18 → M7.19.

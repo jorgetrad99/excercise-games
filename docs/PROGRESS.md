@@ -1653,3 +1653,73 @@ Branch `docs/plan-boxing`, from `feat/visual-expressiveness` (`a68568a`). Docs o
 ### Next
 
 Jorge signs off on the spec (and D1). Then M7.15, the inversion, runs against it.
+
+
+## 2026-09-16 — Spec rebased onto feat/player-authority: D1–D4, PLAN §6, feature renumbering, WIP snapshot
+
+Branch `docs/plan-boxing` in `tmp/plan-boxing-worktree`, rebased onto `feat/player-authority` (`12c1ddf`). Docs only.
+
+### Jorge's decisions, written into PLAN-BOXING
+
+- **D1: overlays only as additive, bounded, time-limited offsets on the live pose.** New §4.1 general rule: any future sim effect on a player-owned part follows it, or needs Jorge's sign-off.
+  - **Conflict found while applying it:** my draft O2 scaled the player's sway/arms by 0.6 and swapped in a slower smoother, which is an override.
+  - **Redefined:** O2 is `clamp(slow(live) − live, bound)` + wobble. The dizzy walk penalty moved into the sim (`MOVE` speed).
+  - **New tests:** BX-A-4 (the player still moves head/torso/wrist while O1 and O2 are both active), BX-A-5 (offsets end in time), BX-A-6 (a single rig-write path that always reads `live`).
+- **D2: positions in the sim, out-of-reach punches whiff.**
+  - `MOVE` events are sampled at 10 Hz and quantized, so replays stay deterministic.
+  - Reach is 1.1 m.
+  - §7 lists what changes for the bot: approach to reach, retreat when low, slower than the player, and the kiting risk measured by BX-MV-7.
+  - Bot-vs-bot baselines get re-baselined, not deleted.
+- **D3: the 11 s break is interruptible.**
+  - `WALK_OUT` (shared march classifier) is accepted after `cornerMinS` = 2 s, and the walk-out is paced by the player's march.
+  - 2P waits for the last boxer.
+  - BX-TR-5…8.
+- **D4:** arms stay free in the corner. No frozen player state outside Falling; Paused only holds the pose because there's no body.
+- **Shared classifier:** `MARCH_STEP` lives in a game-agnostic `src/pose/march.ts` so the queued Skate Run step-propulsion amendment can use it. Session move-arcade-32 confirmed its draft already plans the same file. Not started.
+- **Arm-pump tuning flag** (+0.5 → 12 pumps vs 3 hops) recorded in §6.2. It needs real recordings before shipping.
+- **PLAN.md §6** jump-false-positives row reworded, approved by Jorge. Scoped per game and state; Boxing marching is input.
+
+### Feature ID renumbering (one pass, on the integration branch)
+
+Three branches collided on M7.11+. `feat/player-authority` is the integration point, and its merge `a038c2d` already renumbered the perf branch. Old IDs in earlier entries map as follows:
+
+| Branch / entry | Old ID | New ID |
+|---|---|---|
+| `feat/visual-expressiveness` (Visual expressiveness entry) | M7.11 visual expressiveness | **M7.11** (unchanged) |
+| `feat/perf-diagnosis-and-player-stats` (Perf diagnosis entry) | M7.11 perf diagnosis | **M7.12** |
+| same (Perf diagnosis entry) | M7.12 movement-detection research | **M7.13** |
+| same (Named players entry) | M7.13 named players | **M7.14** |
+| `docs/plan-boxing` draft `5155047` (Boxing spec entry) | M7.14 inversion … M7.18 trainer | **M7.15 … M7.19** |
+
+**No separate merge notes on the old branches:** `feat/visual-expressiveness` and `feat/perf-diagnosis-and-player-stats` are both ancestors of `feat/player-authority`, so neither needs its own merge. This table is the trace.
+
+### Uncommitted inversion WIP secured (not built on)
+
+- **What it was:** `feat/player-authority` had uncommitted `src/core/boxing` work (body, collide, positions, sim/types/config/bot, input, presentation). It was started before this spec existed.
+- **Stopped:** at Jorge's instruction, the owning session (move-arcade-64) stopped: no more src edits, e2e or commits there.
+- **Snapshot:** saved through a temporary index, so that worktree's files, index and branch were untouched. Branch `wip/player-authority-core-snapshot`:
+  - `08a8b42`: first snapshot
+  - `8516c3a`: the owner's last two edits
+- **State reported by the owner:** vitest `src/core` + `src/render/boxing` 270 pass, 1 fail (a chin-zone presentation test), not `pnpm verify`-ed. **Not verified against PLAN-BOXING; don't merge as-is.**
+
+### Incidents
+
+- **Branch moved under another session:** at 22:45:48 session move-arcade-32 created `docs/skate-step-propulsion` in the shared main checkout. My `git rebase` started there 38 s later and landed on that branch.
+  - The tree was clean, so nothing was lost.
+  - I restored it with `git reset --keep 5155047`; the other session confirmed.
+  - My work now lives only in `tmp/plan-boxing-worktree`.
+  - **Lesson:** sessions sharing one checkout is unsafe. Each session gets its own worktree.
+- **The guard hook doesn't protect worktrees:** `.claude/hooks/guard-paths.mjs` makes the target path relative to `CLAUDE_PROJECT_DIR` (the main root). A worktree file becomes `tmp/<wt>/docs/PLAN.md` and doesn't match `^docs/PLAN\.md$`.
+  - So `fixtures/`, `public/models/` and `PLAN.md` are unguarded in every worktree.
+  - This PLAN.md edit was approved, but the guard didn't enforce anything. Hooks unchanged: flagged for Jorge.
+
+### Perf: reclassified, not closed
+
+- **Both failures (2P pose-fps 19; 1080p fps 46) are explained by cross-session interference.**
+  - The other session's verify/e2e ran 22:26–22:34, overlapping both my runs.
+  - It also flagged its own 2P Skate pose-fps min 20 at `12c1ddf` as probably contaminated.
+  - Not a regression.
+- **GPU at the time:** delegate GPU (inference 13.1–13.3 ms). The GPU name wasn't logged by the failing runs.
+- **After-the-fact probe:** RTX 4060 Laptop through Chrome's Direct3D 11 layer, hardware accelerated, in page and worker.
+- **Still open:** the render budget, which Jorge asked for before the chaser and web-swinging get designed. The park biome is 586k triangles.
+- **Next:** an e2e lock so two sessions can't run e2e at once, and the GPU name logged by every perf gate.
