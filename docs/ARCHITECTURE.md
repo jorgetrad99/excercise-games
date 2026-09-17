@@ -54,9 +54,9 @@ getUserMedia 1280x720@30 (camera.ts, ideal constraints, remembered deviceId)
 ## Gestures (M2)
 
 ```
-PoseFrame ─ body.ts: 7 landmarks, visibility ≥ 0.5 (hold ≤ 300 ms), One Euro in pixel space → Measures
+PoseFrame ─ body.ts: 11 landmarks (nose, ears, shoulders, elbows, wrists, hips), visibility ≥ 0.5 (hold ≤ 300 ms), One Euro in pixel space → Measures
           ─ calibration.ts: waiting → calibrating (still + neutral 2 s) → calibrated {shoulderX, hipY, noseY, torsoLen, shoulderWidth}
-          ─ gestures.ts: SignalFrame {leanX, hipRise, hipRiseVel, headDrop, armsUp, tPose, zone, tracking, calibration}
+          ─ gestures.ts: SignalFrame {leanX, hipRise, hipRiseVel, headDrop, armsUp, tPose, zone, tracking, calibration, pose}
                          + GestureEvents (lanes, jump/grab, slide, revive hold, T-pose recalibrate, tracking lost/restored)
 input/pose-source.ts: GestureEvent → core InputEvent via the game's `gestureProfile.toInput` (Skate Run: REVIVE_ACCEPT→REVIVE, TRACKING_LOST→PAUSE, TRACKING_RESTORED→RESUME)
 input/replay.ts: PoseFixture → pose-players (instant: fixture time; realtime: rebased onto performance.now)
@@ -118,6 +118,66 @@ render/boxing: ring + 2 × Casual_Hoodie (SkeletonUtils.clone, arms collapsed, f
 - **1P:** the bot is boxer 1. `?input=bot` / `?autoplay=1` also puts it on boxer 0. **2P:** no bot.
 - **Tuning:** `core/boxing/boxing.config.ts` (rules) and `pose/gestures.config.ts` `fists` (detection, UNTUNED on real video).
 - **Tests:** `core/boxing/sim.spec.ts` covers rules, determinism, frame pacing, bot vs bot and bot reactions. `pose/fists.spec.ts` covers synthetic straight/hook/uppercut/guard/recovery. `tests/e2e/boxing.smoke.spec.ts` covers the menu, 1P keyboard + bot, 2P shared state, pose replay → sim, and screenshot baselines.
+
+## Pose mirroring (continuous body → rig)
+
+Two paths from the same frame, neither replacing the other: the discrete `PUNCH_*`/`GUARD_*`/`DODGE`/`DUCK` events the sim scores, and a continuous `PoseState` a renderer binds bones to every frame (live arm extension included).
+
+```
+gesture engine push(frame) ─ body.ts (One Euro) + calibration ─┬→ SignalFrame {…, pose: PoseState | null} ─→ input/ → main.ts
+                                                               └→ GestureEvents (unchanged)
+main.ts frame loop: view.render(sims, interpolate, poses)   poses[i] = player i's PoseState, or null when
+                    keyboard/bot, not calibrated, tracking lost, or older than trackingLostMs (frozen feed)
+```
+
+**Contract** (`src/pose/pose-state.ts`, re-exported from `src/games/types.ts` as `PoseState`, `ArmState`, `Vec3`, `Quat`):
+
+- **Axes (character frame):** +x = the player's anatomical left, +y = up, +z = forward (toward the camera / opponent). Same frame as the boxer rig (faces +z, its left is +x). `arms[0]` is always the anatomical left arm.
+- **Units:** lengths in calibrated torso lengths (shoulder center to hip center); angles in radians; `Quat` = `[x, y, z, w]` (three.js `Quaternion.fromArray`).
+- **Neutral:** torso/hips/head angles and `body` offsets are deltas from the calibrated stance; arm rotations are swings from an arm hanging straight down `(0, −1, 0)`.
+
+```ts
+interface PoseState {
+  t: number;                                  // frame time (performance.now clock)
+  body: { sway; duck; rise; forward };        // + = player's left / down / up / closer (fraction of distance)
+  torso: { yaw; pitch; roll; rot: Quat };     // Euler 'YXZ': yaw + = turned left, pitch + = bent forward (≥ 0), roll + = left shoulder up
+  hips: { roll; rot: Quat };
+  head: { yaw; roll; rot: Quat };             // relative to the camera, not the chest; 0 without ears
+  arms: [ArmState | null, ArmState | null];   // [left, right]; null = elbow or wrist not tracked
+}
+interface ArmState {
+  upper: Vec3; fore: Vec3;                    // unit bone directions shoulder→elbow, elbow→wrist
+  upperRot: Quat; foreRot: Quat;              // swing from (0,-1,0) to upper / fore, no twist
+  wrist: Vec3;                                // shoulder→wrist in torso lengths: IK target (× rig torso length, m)
+  extension: number;                          // 0 folded … 1 straight (hanging arms read 1)
+  reach: number;                              // 0 … 1 forward reach: live punch progress
+  speed: number;                              // torso/s, = SignalFrame.fistL/fistR
+}
+```
+
+**Binding recipe (three.js, renderer side):** for a limb bone with rest direction `restDir` in its parent's space, `bone.quaternion.setFromUnitVectors(restDir, dirInParentSpace)`, where `dirInParentSpace = arm.upper` transformed by the inverse world rotation of the parent (character root with torso `rot` applied). Or two-bone IK with `wrist` as target and the elbow direction as pole. Torso/hips/head: multiply the rig's neutral quaternion by `rot`. Pose frames arrive at ~20–30 Hz; the renderer should smooth or interpolate on `t`.
+
+**How depth is derived:** MediaPipe's per-landmark z is unusable for bone geometry. On Jorge's real recording, a 3D upper arm measured 1.59 torso lengths at p90 against 0.56 in 2D. Depth comes from bone length instead (`gestureConfig.pose.upperArm/forearm`): a bone whose 2D projection is shorter than its length points at the camera by the difference. The arm sign is always forward.
+
+- **Distance scale:** max(torso ratio, shoulder ratio) against calibration. Bending shrinks only the torso, and turning shrinks only the shoulders.
+- **Torso yaw:** the shoulder foreshortening, weighted by how far the nose left the shoulder center. On the real recording, shoulders alone read ±1 rad while facing the camera.
+
+**World landmarks:** the worker now also sends `PoseFrame.world` (MediaPipe metric 3D) and `?record=1` saves it. Nothing consumes it yet; `pnpm tune:boxing` compares its reach against the bone model on the boxing drills.
+
+**Tests:**
+
+- `pose-state.spec.ts`:
+  - quaternion helpers against three.js
+  - a real excerpt of Jorge's recording (`testdata/real-skate-2-10s.json`): calibration, hanging arms down/straight/no reach with the left arm on +x, forearms up at GRAB, sway sign on LANE_LEFT, small yaw while facing
+  - hand-built guard/punch arm geometry
+- e2e `boxing.smoke` replay: `getSignals().pose` present.
+
+**Detection tuning against real drills:** `pnpm tune:boxing` (`tests/tools/boxing-tune.tool.ts`, not in verify).
+
+- Reads `fixtures/pose/boxing/*.json` with exact expected counts per drill.
+- Checks handedness from a raised-left-hand marker at the start of each file.
+- Reports counts and pose-state channels at each punch.
+- `GRID=1` sweeps `fists` (including `reference: 'nose' | 'shoulder'`).
 
 ## Core sim (M3)
 

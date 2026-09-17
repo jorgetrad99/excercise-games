@@ -2,6 +2,7 @@
 // Units: "torso" = calibrated torso length, "shoulder" = calibrated shoulder width, ms = milliseconds.
 
 export type LaneMode = 'lean' | 'zones';
+export type FistReference = 'nose' | 'shoulder';
 
 export const gestureConfig = {
   /**
@@ -59,7 +60,23 @@ export const gestureConfig = {
     rearmMs: 100,
     maxDown: 0.7,
     zWeight: 1,
+    /** Speed is measured against this point: 'nose' (original) or the arm's own 'shoulder', which
+     *  ignores head bobs, ducks and sways that move both wrists relative to the face at once. */
+    reference: 'nose' as FistReference,
     guard: { enter: 0.35, exit: 0.45 },
+  },
+  /**
+   * Pose mirroring (pose/pose-state.ts). Bone lengths in calibrated torso lengths (shoulder center to
+   * hip center), used to recover depth from 2D. From Jorge's Skate Run recording: median 2D upper arm
+   * 0.49, forearm 0.47 (arms hanging, mostly in the image plane). Too short = arms read as pointing at
+   * the camera; too long = never. Calibrate in the upright stance you play in: torso angles and
+   * body offsets are deltas from it. Re-check with `pnpm tune:boxing` on the boxing fixture.
+   */
+  pose: {
+    upperArm: 0.5,
+    forearm: 0.48,
+    /** Torso yaw counts fully once the nose is this many shoulder widths off the shoulder center. */
+    yawNose: 0.25,
   },
   /**
    * Menu hand cursors (pose/hand-cursor.ts), Kinect-style. Units: shoulder widths, measured on screen

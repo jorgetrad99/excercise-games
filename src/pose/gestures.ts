@@ -5,6 +5,7 @@ import { createBodyTracker, measure, type Measures, type VideoSize } from './bod
 import { createCalibrator, type Calib, type CalibStatus } from './calibration';
 import { detectFists, newFists, trackFists, type Aim } from './fists';
 import { gestureConfig, type GestureConfig } from './gestures.config';
+import { derivePoseState, type PoseState } from './pose-state';
 import type { PoseFrame } from './types';
 
 export type GestureEventType =
@@ -52,6 +53,9 @@ export interface SignalFrame {
   guard: boolean;
   tracking: 'ok' | 'lost';
   calibration: CalibStatus;
+  /** Continuous pose for mirroring onto a rig (pose/pose-state.ts); null until calibrated or while
+   *  shoulders/hips are missing. */
+  pose: PoseState | null;
 }
 
 type Emit = (type: GestureEventType, aim?: Aim) => void;
@@ -268,7 +272,8 @@ export function createGestureEngine({ video, config = gestureConfig }: GestureEn
     const emit: Emit = (type, aim) =>
       events.push(aim ? { t: frame.t, type, aim } : { t: frame.t, type });
     const { width, height } = video();
-    const m = measure(track(frame), width / height, config);
+    const body = track(frame);
+    const m = measure(body, width / height, config);
     // Raw pose presence, not held landmarks: "no pose for 700 ms" shouldn't wait out the 300 ms hold too.
     trackingEvents(frame.t, frame.poses.length > 0 && m !== null, emit);
     if (heldFor(tPose, m?.tPose ?? false, frame.t, config.tPose.holdMs)) {
@@ -282,14 +287,17 @@ export function createGestureEngine({ video, config = gestureConfig }: GestureEn
       // d.zone stays 1 (the sim's start lane): an off-center player gets catch-up LANE events next frame.
       emit('CALIBRATED');
     }
+    const derived = deriveSignals(frame.t, m, calib, d, config);
     const signals: SignalFrame = {
       t: frame.t,
-      ...deriveSignals(frame.t, m, calib, d, config),
+      ...derived,
       armsUp: m?.armsUp ?? false,
       tPose: m?.tPose ?? false,
       zone: d.zone,
       tracking: tracking.state,
       calibration,
+      pose:
+        m && calib ? derivePoseState({ t: frame.t, body, m, calib, signals: derived, cfg: config }) : null,
     };
     if (m && calib && wasCalibrated) detectAll(d, signals, m, config, emit);
     return { signals, events };

@@ -7,6 +7,8 @@ const measures = (dx: number): Measures => ({
   shoulderCenter: { x: 0.5 + dx, y: 0.35 },
   hipCenter: { x: 0.5, y: 0.65 },
   nose: { x: 0.5, y: 0.25 },
+  lShoulder: { x: 0.6 + dx, y: 0.35 },
+  rShoulder: { x: 0.4 + dx, y: 0.35 },
   lWrist: null,
   rWrist: null,
   torsoLen: 0.3,

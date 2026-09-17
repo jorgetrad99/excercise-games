@@ -4,6 +4,7 @@
 // hooks sweep around the head and uppercuts start toward the chin. A fired fist re-arms only when
 // it is back near the face AND has held nearly still for rearmMs (the Wii "wait until the glove
 // stops"), so the retraction can't fire. Guard = both wrists close to the nose, with hysteresis.
+// Speed and aim can be measured against the arm's own shoulder instead (fists.reference).
 // Face zone and guard are 2D: real wrist z sits a person-dependent ~1 torso behind the nose z, so
 // an absolute 3D distance never came back under `rearm` and no punch ever armed. Depth only counts as
 // displacement from where the fist rested when it armed (`restZ`).
@@ -29,8 +30,11 @@ interface Hand {
   stillSince: number | null;
   /** Wrist z (torso) while resting armed: depth is measured from here. */
   restZ: number;
+  /** Wrist relative to the speed reference (fists.reference), newest last. */
   hist: Rel[];
-  /** Latest frame: 2D distance from the nose (torso), speed relative to it (torso/s), direction. */
+  /** Latest wrist position relative to the nose: the face zone, guard and reach are measured here. */
+  pos: Rel | null;
+  /** Latest frame: 2D distance from the nose (torso), speed relative to the reference (torso/s), direction. */
   dist: number;
   speed: number;
   aim: Aim;
@@ -41,6 +45,7 @@ const newHand = (): Hand => ({
   stillSince: null,
   restZ: 0,
   hist: [],
+  pos: null,
   dist: Infinity,
   speed: 0,
   aim: { x: 0, y: 0 },
@@ -73,17 +78,18 @@ function relative(
   };
 }
 
-function updateHand(h: Hand, rel: Rel | null, windowMs: number): void {
-  if (!rel) {
-    Object.assign(h, { hist: [], dist: Infinity, speed: 0 });
+function updateHand(h: Hand, pos: Rel | null, rel: Rel | null, windowMs: number): void {
+  if (!pos || !rel) {
+    Object.assign(h, { hist: [], pos: null, dist: Infinity, speed: 0 });
     return;
   }
+  h.pos = pos;
   let ref: Rel | undefined;
   for (const s of h.hist) if (s.t <= rel.t - windowMs) ref = s;
   ref ??= h.hist[0];
   h.hist.push(rel);
   while (h.hist.length > 0 && h.hist[0]!.t < rel.t - windowMs * 4) h.hist.shift();
-  h.dist = Math.hypot(rel.x, rel.y);
+  h.dist = Math.hypot(pos.x, pos.y);
   if (!ref || rel.t <= ref.t) {
     h.speed = 0;
     return;
@@ -101,13 +107,13 @@ function updateHand(h: Hand, rel: Rel | null, windowMs: number): void {
 export function trackFists(f: Fists, t: number, m: Measures, torso: number, cfg: GestureConfig) {
   const { fists } = cfg;
   const nose = m.nose;
-  [m.lWrist, m.rWrist].forEach((w, i) =>
-    updateHand(
-      f.hands[i]!,
-      nose ? relative(t, w, nose, m, torso, fists.zWeight) : null,
-      fists.velocityWindowMs,
-    ),
-  );
+  const shoulders = [m.lShoulder, m.rShoulder];
+  [m.lWrist, m.rWrist].forEach((w, i) => {
+    const pos = nose ? relative(t, w, nose, m, torso, fists.zWeight) : null;
+    const ref = fists.reference === 'nose' ? nose : shoulders[i]!;
+    const rel = ref && relative(t, w, ref, m, torso, fists.zWeight);
+    updateHand(f.hands[i]!, pos, rel, fists.velocityWindowMs);
+  });
   const [l, r] = f.hands;
   return { fistL: l.speed, fistR: r.speed, guard: Math.max(l.dist, r.dist) < fists.guard.enter };
 }
@@ -116,7 +122,7 @@ export function trackFists(f: Fists, t: number, m: Measures, torso: number, cfg:
 export function detectFists(f: Fists, t: number, cfg: GestureConfig, emit: FistEmit): void {
   const { fists } = cfg;
   f.hands.forEach((h, i) => {
-    const rel = h.hist.at(-1);
+    const rel = h.pos;
     if (!rel) return;
     if (h.dist < fists.rearm && h.speed < fists.rearmSpeed) {
       h.stillSince ??= t;

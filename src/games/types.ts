@@ -8,9 +8,13 @@ import type { GestureMap } from '../input/pose-source';
 import type { Drawn } from '../platform/latency';
 import type { SignalFrame } from '../pose/gestures';
 import type { GestureConfig } from '../pose/gestures.config';
+import type { PoseState } from '../pose/pose-state';
 import type { FaceFeed } from '../render/big-head';
 import type { HudExtras } from '../render/hud';
 import type { RenderStats } from '../render/view';
+
+/** Per-frame mirroring pose (pose/pose-state.ts, docs/ARCHITECTURE.md "Pose mirroring"). */
+export type { ArmState, PoseState, Quat, Vec3 } from '../pose/pose-state';
 
 /** The numeric SignalFrame channels a game can depend on. */
 export type SignalId = {
@@ -49,8 +53,14 @@ export interface RunSummary {
 export interface GameView<S extends GameSim> {
   /** Draw one slot per player side by side (1 = full screen); a shared sim appears once per player,
    *  so slot i can be drawn from player i's point of view. `interpolate` false = exact tick (manual
-   *  clock). Returns what P1's slot drew, for judder tracking, or null when nothing moves. */
-  render: (sims: readonly S[], interpolate: boolean) => Drawn | null;
+   *  clock). `poses[i]`: player i's live body for mirroring onto their character (pose/replay input,
+   *  calibrated); null = no body (keyboard, bot, not calibrated, tracking lost): animate from the sim.
+   *  Returns what P1's slot drew, for judder tracking, or null when nothing moves. */
+  render: (
+    sims: readonly S[],
+    interpolate: boolean,
+    poses: readonly (PoseState | null)[],
+  ) => Drawn | null;
   stats: () => RenderStats;
 }
 

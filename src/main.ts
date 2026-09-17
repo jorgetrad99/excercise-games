@@ -16,6 +16,7 @@ import { createHandCursors } from './pose/hand-cursor';
 import { gestureConfig } from './pose/gestures.config';
 import { createRate } from './platform/rate';
 import type { SignalFrame } from './pose/gestures';
+import type { PoseState } from './pose/pose-state';
 import { mountPosePanel } from './pose/pose-panel';
 import type { PoseFixture } from './pose/recorder';
 import { mountSignalHud } from './pose/signal-hud';
@@ -190,6 +191,12 @@ function trackingLabel({ signals }: Player): { tracking: string; trackingOk: boo
   return { tracking: '📷 tracking', trackingOk: true };
 }
 
+/** A player's mirroring pose, or null once it is stale: with no frames arriving the signals freeze
+ *  (worker restarting, replay over), and a frozen body must hand the character back to the sim. */
+function livePose({ signals: s }: Player, now: number, staleMs: number): PoseState | null {
+  return s?.pose && s.tracking === 'ok' && now - s.pose.t <= staleMs ? s.pose : null;
+}
+
 let last = performance.now();
 
 /** "Play again" = jump (PLAN §2.1), only for jumps made after the results were up for 1 s. */
@@ -231,6 +238,7 @@ function frame(now: number): void {
     view?.render(
       players.map((p) => p.sim),
       !manualClock,
+      players.map((p) => livePose(p, now, g.gestureProfile.config.trackingLostMs)),
     ) ?? null;
   latency.rendered(performance.now(), drawn);
   if (applied.some((a) => a.length > 0)) latencyOverlay?.onEventRendered(now);

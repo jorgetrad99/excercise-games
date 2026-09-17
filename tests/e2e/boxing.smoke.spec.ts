@@ -131,6 +131,10 @@ test('pose replay: punches and guard go through the gesture engine into the sim'
   const s = await state(page);
   expect(s.tick).toBeGreaterThan(0); // calibration opened the gate
   expect(s.boxers[0].fists[1].phase).toBe('ready');
+  // The continuous mirroring pose rides along with the discrete events.
+  const pose = await page.evaluate(() => window.__game.getSignals()?.pose ?? null);
+  expect(pose?.arms[0]?.upperRot).toHaveLength(4);
+  expect(pose?.arms[1]?.reach).toBeGreaterThanOrEqual(0);
   expect(problems).toEqual([]);
 });
 

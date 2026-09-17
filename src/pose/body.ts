@@ -13,8 +13,12 @@ export interface Point {
 /** MediaPipe pose landmark indices we use. l/r = the PERSON's left/right. */
 const PARTS = {
   nose: 0,
+  lEar: 7,
+  rEar: 8,
   lShoulder: 11,
   rShoulder: 12,
+  lElbow: 13,
+  rElbow: 14,
   lWrist: 15,
   rWrist: 16,
   lHip: 23,
@@ -83,6 +87,8 @@ export interface Measures {
   shoulderCenter: Point;
   hipCenter: Point;
   nose: Point | null;
+  lShoulder: Point;
+  rShoulder: Point;
   /** The person's left / right wrist (boxing fists). */
   lWrist: Point | null;
   rWrist: Point | null;
@@ -114,6 +120,8 @@ export function measure(body: Body, aspect: number, cfg: GestureConfig): Measure
     shoulderCenter,
     hipCenter,
     nose,
+    lShoulder,
+    rShoulder,
     lWrist,
     rWrist,
     torsoLen,

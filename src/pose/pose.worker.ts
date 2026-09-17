@@ -47,10 +47,10 @@ addEventListener('message', (e: MessageEvent<WorkerIn>) => {
     const start = performance.now();
     const result = landmarker.detectForVideo(msg.bitmap, msg.t);
     // Copy to plain objects: only x/y/z/visibility cross the thread boundary.
-    const poses = result.landmarks.map((pose) =>
-      pose.map(({ x, y, z, visibility }) => ({ x, y, z, visibility })),
-    );
-    post({ type: 'pose', frame: { t: msg.t, poses }, inferMs: performance.now() - start });
+    const plain = (lms: typeof result.landmarks) =>
+      lms.map((pose) => pose.map(({ x, y, z, visibility }) => ({ x, y, z, visibility })));
+    const frame = { t: msg.t, poses: plain(result.landmarks), world: plain(result.worldLandmarks) };
+    post({ type: 'pose', frame, inferMs: performance.now() - start });
   } catch (err) {
     post({ type: 'fatal', message: `detect: ${String(err)}` });
   } finally {

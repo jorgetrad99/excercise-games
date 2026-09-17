@@ -13,6 +13,10 @@ export interface Landmark {
 export interface PoseFrame {
   t: number;
   poses: Landmark[][];
+  /** MediaPipe world landmarks, same order as `poses`: meters, origin at the hip midpoint, y down,
+   *  x toward image right. Live frames and fixtures recorded after 2026-09-16 carry them; nothing
+   *  consumes them yet (the boxing tuning tool compares their depth against the 2D bone model). */
+  world?: Landmark[][];
   /** Live pipeline timestamps (performance.now ms) for latency measurement; absent in fixtures. */
   timing?: FrameTiming;
 }

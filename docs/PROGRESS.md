@@ -1047,3 +1047,148 @@ The break was in the gesture engine, `pose/fists.ts`, **before any event existed
 
 - `pnpm verify` → exit 0: vitest 314 passed + 1 skipped (20 files); playwright smoke 22/22.
 - One earlier run failed the 2P Skate Run perf test: a single pose-fps sample of 16 while 3 new GPU pages ran in parallel. The rerun alone had min 23, and the next full verify was green (min 21). Watch it.
+
+## 2026-09-16 — Pose mirroring (M7.10): continuous PoseState, handedness, boxing tuning harness
+
+Branch `feat/pose-mirroring`. Upstream of rendering only: no files under `src/render/` or `assets/` were touched. Codex binds the rig on `feat/visual-expressiveness`.
+
+### 1. Continuous pose for mirroring (`src/pose/pose-state.ts`)
+
+**Research:** the standard approach is rotation retargeting. Kalidokit, three-mediapipe-rig and three-vrm all take bone directions from landmark pairs and rotate the rig's rest bones onto them (`Quaternion.setFromUnitVectors`), or use two-bone IK on the wrists. I output both forms in the rig's own axes, so the renderer needs no pose-layer knowledge.
+
+**Contract:** `SignalFrame.pose: PoseState | null` every frame. The shell passes `poses[i]` as the new 3rd argument of `GameView.render(sims, interpolate, poses)`; the type is re-exported from `games/types.ts`. Full shape, axes, units and binding recipe: `docs/ARCHITECTURE.md` "Pose mirroring". Summary:
+
+- **Axes:** +x = player's left, +y up, +z forward (the boxer rig's frame).
+- **Lengths:** torso lengths.
+- **Rotations:**
+  - `torso`/`hips`/`head`: Euler YXZ + quaternion, as deltas from the calibrated stance.
+  - `arms[0|1]`: `upper`/`fore` unit directions, `upperRot`/`foreRot` swings from a hanging arm, and `wrist` as the IK target.
+- **Live punch channel:** `extension` (0 folded … 1 straight), `reach` (0 … 1 forward) and `speed`, continuous next to the unchanged `PUNCH_*` events.
+- **Null** when not calibrated, tracking is lost, or the pose is older than `trackingLostMs` (the renderer falls back to sim animation).
+
+**Found on real data (Jorge's Skate Run recording):**
+
+- **MediaPipe z is unusable for bone geometry.** A 3D upper arm reads 1.59 torso lengths at p90 (0.56 in 2D), and straight hanging arms read 70–87 % straight. Depth is reconstructed from bone lengths instead: `gestureConfig.pose.upperArm 0.5 / forearm 0.48`, from the recording's median 2D lengths.
+- **Torso yaw from shoulder width alone was wrong:** ±1 rad, sign flipping every frame while facing the camera. It is now weighted by the nose's sideways offset (`pose.yawNose`). Result: median |yaw| < 0.2 while facing; the two real turns read −1.10 / +1.14, agreeing in sign with the head (±1.57).
+- **Torso roll read ±π through a turn** (atan2 on a flipped line). It now uses the vertical drop over the calibrated width.
+- **World landmarks** (`PoseFrame.world`, metric 3D) are now sent by the worker and saved by `?record=1`, so your boxing recording lets the tool compare them against the bone model.
+
+### 2. Handedness: what the real data says
+
+- **Checked:** MediaPipe's left labels sit at larger raw x (`lShoulder` median x 0.524 vs `rShoulder` 0.373). This matches the anatomy for an unmirrored camera and every left/right convention in the code (fists aim, lean, cursor, synthetic poses, boxer rig: left glove on +x = screen-left from behind).
+- **My first hypothesis, rejected:** MediaPipe swapping left/right labels, which would call for a "force shoulder order" fix. In the recording, the 24 frames with swapped shoulder order are a real 180° body turn at 18.5–20 s. Wrists stay continuous, and path length is 31.23 raw vs 31.37 "fixed". Wrist-only swaps by elbow proximity: 2/569 frames. **So no label canonicalization was added**; it would have broken real turns.
+- **Remaining candidates** (none can be proven without a boxing recording):
+  - (a) Body motion leaks into both wrists' speed, which is measured against the nose (head bobs, ducks, sways). There is now `fists.reference: 'nose' | 'shoulder'`. The default stays `nose` (no behaviour change): both give the identical single `PUNCH_RIGHT` at 14.2 s on the Skate recording, so that data can't choose.
+  - (b) A driver-mirrored camera would swap every punch. Each drill below starts with a raised-left-hand marker, and the tool reports `hand ok | SWAPPED`.
+  - (c) Rendering, out of my scope. Reading `boxer.ts`, the self-view left glove is on screen-left, which looks right.
+- **Not verified on real punches.** There is no boxing recording yet, so true-positive rate and hand confusion are still unmeasured.
+
+### 3. Tuning harness: `pnpm tune:boxing`
+
+`tests/tools/boxing-tune.tool.ts`, not in verify.
+
+- **Input:** `fixtures/pose/boxing/<drill>.json`, with the exact counts per drill encoded in `DRILLS`.
+- **Per-drill output:**
+  - events got vs expected, and the count error
+  - the handedness marker
+  - world landmarks present?
+  - at each punch: aim, bone-model `reach`/`extension`, world-landmark reach
+- **Also:** the Skate recording as a no-boxing false-positive check.
+- **`GRID=1`:** 1080 `fists` sets (reference × speed × rearm × zWeight × velocityWindowMs × rearmMs) ranked by total count error; about 4 s per drill file. Writes `tmp/tune/boxing-<LABEL>.json`.
+- **Smoke-tested only** on a throwaway synthetic `straight-right.json` in `tmp/` (8/8). Nothing was tuned on it.
+
+### Boxing fixture protocol (for Jorge)
+
+**Setup:** `http://localhost:5173/?game=boxing&debug=1&record=1`, default model (full), normal room light.
+
+- Stand **2.5 m** from the camera, whole body in frame **including hips** (hips out of frame = no tracking).
+- The recorder keeps the **last 30 s**: do the drill, then press `R` (or the button) right away.
+- Save each file under the exact name below into `fixtures/pose/boxing/`.
+
+**Every file starts the same way:**
+
+1. **LEFT hand straight overhead for 2 s**, right hand down (handedness marker).
+2. Drop into your normal upright boxing stance and **hold still 3 s** (calibration; the stance you calibrate in is the mirroring neutral).
+3. The drill, with fists back to your chin and **still for ~0.5 s between punches**, unless the drill says otherwise.
+
+| File | Drill | Count |
+| --- | --- | --- |
+| `idle-stance.json` | Stance, light bounce, small fidgets, no punches | 20 s |
+| `straight-left.json` | Left straights (jab) at head height | **8** |
+| `straight-right.json` | Right straights | **8** |
+| `hook-left.json` | Left hooks | **6** |
+| `hook-right.json` | Right hooks | **6** |
+| `uppercut-left.json` | Left uppercuts | **6** |
+| `uppercut-right.json` | Right uppercuts | **6** |
+| `alternating.json` | L, R, L, R … straights, ~1 s apart | **5 L + 5 R** |
+| `both-hands.json` | Both fists together | **5** |
+| `guard.json` | Fists at chin 3 s → relaxed stance 2 s | **4 cycles** |
+| `sway.json` | Lean left 1 s → center → lean right 1 s → center | **4 each side** |
+| `duck.json` | Quick duck (~0.5 s down) | **5** |
+| `forward-back.json` | Step forward ~50 cm, back, guard up | **4 round trips** |
+| `close-alternating.json` | Same as alternating at **~1.8 m** | **5 L + 5 R** |
+
+- If a count comes out different (you threw 7), tell me the real number; the tool's table is the ground truth.
+- **Optional:** a ~10 s phone video of the alternating drill, for a fake-camera e2e: `ffmpeg -i in.mp4 -t 10 -vf scale=1280:720,fps=30 -q:v 5 -f mjpeg fixtures/video/boxing-alternating.mjpeg`.
+
+**Then:** `pnpm tune:boxing` (current config), then `GRID=1 LABEL=grid pnpm tune:boxing`. Paste me the table, or leave the `tmp/tune/*.json` files.
+
+### What changed
+
+- **New:** `pose/pose-state.ts` (+ spec), `pose/testdata/real-skate-2-10s.json` (8 s excerpt of your recording, 11 landmarks, 4 decimals, 54 KB), `tests/tools/boxing-tune.tool.ts`, `pnpm tune:boxing`.
+- **`body.ts`:** tracks ears and elbows too; `Measures` gains `lShoulder`/`rShoulder`.
+- **`fists.ts`:** zone/guard/reach stay nose-relative; speed/aim use `fists.reference`.
+- **`gestures.ts`:** `SignalFrame.pose`.
+- **`gestures.config.ts`:** `fists.reference`, `pose.{upperArm, forearm, yawNose}`.
+- **Worker / recorder / types:** `PoseFrame.world`.
+- **`games/types.ts`:** `GameView.render(…, poses)` + type re-exports.
+- **`main.ts`:** passes live, non-stale poses to `render`.
+- **e2e `boxing.smoke` replay:** asserts `getSignals().pose` is present.
+- **Docs:** ARCHITECTURE "Pose mirroring", features.json M7.10.
+
+### Verified
+
+- **`pnpm verify` → exit 0** (`tmp/verify-pose-3.log`): tsc, eslint, vitest 322 passed + 1 skipped (21 files), playwright smoke 22/22. 2P perf pose-fps 23–30, render 60.
+- **Two earlier red runs, both perf gates only:**
+  - `verify-pose-1`: pose smoke 18.5 pose-fps, 2P render 51 fps.
+  - `verify-pose-2`: one 2P pose-fps sample of 19.
+  - Both ran while the machine sat at 74 % CPU with Codex's worktree active. The same pose test passed alone, then run 3 was green.
+  - An A/B on the 2P perf test with vs. without the world-landmark copy was inconclusive: the run *without* it dropped to 0–11 pose-fps. The added per-frame work is two landmark-array copies and arithmetic, far below inference cost. Watch this gate.
+- **`src/pose/pose-state.spec.ts` (8 tests):**
+  - three.js equivalence of the quaternion helpers
+  - the **real-recording excerpt**: calibrates; pose null before, non-null after; hanging arms upper.y < −0.8, extension > 0.9, reach < 0.1, left arm upper.x > +0.2 / right < −0.2; forearms fore.y > 0.5 at GRAB; LANE_LEFT sway > 0.3; median |yaw| < 0.2
+  - hand-built guard (reach < 0.05) / straight at the camera (reach > 0.99) / halfway
+- **Probe** of the full real recording through the engine (every 0.5 s): numbers quoted in §1.
+- **`pnpm tune:boxing`:** runs with no drills (lists missing files, no-boxing check: nose 1 / shoulder 1 punch). With a throwaway synthetic drill it gave 8/8 and a 1080-set grid in 4.6 s.
+- **Not verified:**
+  - real punch detection rate, hand confusion, and the `reference`/threshold choice (needs the drills)
+  - world-landmark quality (needs a new recording)
+  - how the pose looks on a rig (Codex)
+
+### Known gaps
+
+- `fists` thresholds stay synthetic-tuned (TEMPORARY). Tuning is one `GRID=1` run once the drills exist.
+- **Arm depth sign is always forward** (`ponytail:` in `pose-state.ts`): a hook wind-up behind the shoulder mirrors in front.
+- Head pitch isn't estimated.
+- A simultaneous torso bend + turn under-reads both.
+- **Calibration stance = mirroring neutral.** Calibrating bent over (as in the Skate recording at 4 s) skews the torso angles.
+- No smoothing on PoseState beyond the landmark One Euro filter; the renderer should interpolate on `t` (~20–30 Hz input).
+
+### For Codex (render binding)
+
+Consume `poses[i]` in `GameView.render`. Your `render/boxing/pose-state.ts` adapter maps 1:1:
+
+| Adapter field | PoseState source |
+| --- | --- |
+| `torso` | `torso.rot` |
+| `hips` | `hips.rot` |
+| `head` | `head.rot` |
+| `shoulderL` | `arms[0].upperRot` |
+| `elbowL` | `arms[0].foreRot` |
+| `wrists[0]` | `arms[0].wrist` × rig torso length (m) |
+
+The same axes: +x left, +y up, +z forward. Arm quats are swings from a hanging arm, not from a T-pose. Null = use the gameplay animation.
+
+### Next
+
+Jorge records the 14 drills → `pnpm tune:boxing` + `GRID=1` → set `fists` (and `reference`), `pose.upperArm/forearm` from the drills. Then rewire the TEMPORARY synthetic fist tests to the drills.

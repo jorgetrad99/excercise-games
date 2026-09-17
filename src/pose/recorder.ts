@@ -28,7 +28,11 @@ export function createRecorder(windowMs = RECORD_WINDOW_MS) {
         version: 1,
         recordedAt: recordedAt.toISOString(),
         ...meta,
-        frames: frames.map((f) => ({ t: Math.round((f.t - t0) * 10) / 10, poses: f.poses })),
+        frames: frames.map((f) => ({
+          t: Math.round((f.t - t0) * 10) / 10,
+          poses: f.poses,
+          ...(f.world ? { world: f.world } : {}),
+        })),
       };
     },
   };
