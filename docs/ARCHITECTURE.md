@@ -11,7 +11,7 @@ Agent-maintained module map. The spec lives in `docs/PLAN.md` §3; this file rec
 | `src/pose/`            | M1 pipeline, M2 gestures | Camera manager, worker bridge, One Euro filter, signals, gesture engine, debug HUD. See "Pose pipeline (M1)" and "Gestures (M2)" below. |
 | `src/render/`          | M4 view + HUD; `boxing/` | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD. `boxing/` = ring view, boxer figure, boxing HUD. |
 | `src/net/`             | —                      | Colyseus client + room protocol (M6).                                                   |
-| `src/platform/`        | `rate`, `latency`, `menu`, `profile-store`, `stats-view`, `line-chart`, `gpu` | Profile store (named players' match history), game-select menu + "Who's playing?" + Stats pages (DOM), software-WebGL detection. See "Players & match history". |
+| `src/platform/`        | `rate`, `latency`, `menu` | Profile store, settings, debug bridge (`window.__game`), game-select menu (DOM, unstyled). |
 | `src/games/`           | `types.ts`, `registry.ts`, `skate-run/`, `boxing/` | `types.ts` = the `MiniGame` contract (PLAN §2.6) + `defineGame()`. `registry.ts` = `GAMES` in menu order (the only importer of game folders). One `MiniGame` per `<id>/` folder, default-exported through `defineGame`; each wraps its `core/` + `render/` modules and owns its gesture→input map and keys. |
 | `src/main.ts`          | game-agnostic shell    | Boot: `?game=<id>` launches that MiniGame, otherwise the menu; URL params → sim (`?seed`, `?tokens`), inputs (`?input=pose|keyboard|bot|replay:<fixture>`, keyboard always on), rAF loop (sim.step → view.render → HUD; `?clock=manual` for screenshots), calibration gate for pose/replay, restart on JUMP after game over, `window.__game`. |
 | `src/debug-bridge.d.ts`| `Window.__game` type   | Debug bridge contract shared by app and Playwright tests.                               |
@@ -179,31 +179,6 @@ interface ArmState {
 - Reports counts and pose-state channels at each punch.
 - `GRID=1` sweeps `fists` (including `reference: 'nose' | 'shoulder'`).
 
-## Boxing visual expressiveness (render only)
-
-- `render/boxing/presentation.ts` observes each boxer's clean-hit counter and current punch aims. It owns bounded left/right/chin bruises, hit age, zero-stamina fall timing and count recovery. Repeated split-screen draws are idempotent; a new sim or rewind resets damage. Blocks and regeneration do not create/heal bruises. Core scoring and phases are unchanged: zero stamina starts the visual fall, the next clean hit still starts the official count.
-- `render/boxing/animation.ts` samples the existing CC0 Casual_Hoodie Death clip over the fall, holds the floor pose, and blends through a crouch during the final part of a recoverable count. KO/TKO stays down; a decision loser stays standing. Head snap uses a locally vendored UAL `Hit_Head` quaternion track, with a directional stagger. Animation clocks pause with the match.
-- `render/big-head.ts` hides the complete `Casual_Head` mesh group. A rounded replacement is 2.6 times the proportional radius, follows the Head bone position AND orientation, and carries a private copy of the existing `FaceFeed` crop. `render/boxing/face-damage.ts` composites redness, bruises and swelling highlights on that copy. No camera capture, inference or pose-layer dependency is added. With no camera, a procedural face provides the same large-head silhouette and damage feedback.
-- `render/boxing/visual.config.ts` holds visual tuning. `public/assets/quaternius/boxing/hit-head.json` is baked by `scripts/vendor-boxing-reaction.mjs` from Quaternius UAL Standard's `Hit_Head`; provenance and the unchanged CC0 license are in CREDITS.
-- Tests: `presentation.spec.ts`, `live-pose.spec.ts`, and `tests/e2e/boxing-visual.smoke.spec.ts`. The browser harness loads the shipping GLB and renderer, steps the real boxing sim, and inspects head transforms and texture pixels. Screenshots and fake-camera performance samples are under `tmp/visual-expressiveness/`.
-
-### Live pose in Boxing (render/boxing/live-pose.ts)
-
-The shell's per-frame `GameView.render(sims, interpolate, poses)` feeds it. The Boxing view maps `poses[i]` to boxer i (in 1P, boxer 1 is the bot and gets null). `LivePose` is a structural subset of `PoseState` because render may not import pose/. `tsc` checks the view's `render` against `GameView<BoxingSim>`, so a contract change that breaks it fails to compile.
-
-**The sim is authoritative for anything scored.** Live pose only adds expression within what the sim shows:
-
-| Channel | Live effect | Sim precedence |
-| --- | --- | --- |
-| `body.sway/duck/rise` (torso units × 0.5 m), `body.forward` (fraction of camera distance × 2.5 m) | whole-boxer lean, clamped to ±6 cm | scaled by 1 − the sim dodge amount; a sim dodge replaces it, and no live-only dodge can show (a dodge is 35 cm) |
-| `torso/hips/head.rot` | absolute character-frame turns on top of the animation, clamped 0.35 / 0.2 / 0.5 rad | off while falling, down or rising |
-| `arms[i].upperRot/foreRot` (swings from a hanging arm) | wrist = swing·(0,−1,0)·upper arm + swing·(0,−1,0)·forearm; offset from the sim's rest glove, clamped ±12 cm | only for a fist at rest; a thrown or retracting punch is placed by the sim |
-
-- **Smoothing:** exponential easing (τ 0.08 s) on the render clock, since poses arrive at 20–30 Hz.
-- **Tracking loss:** null eases back to neutral, and below weight 0.001 no live math runs.
-- **Arm bones:** stay collapsed (armless gloves); arm swings move the gloves only.
-- **Tests:** `live-pose.spec.ts` covers units, the arm read, clamps and smoothing. The `boxing-visual` e2e covers live lean < 8 cm, a sim dodge replacing it, and live reach ≤ 12 cm on real transforms.
-
 ## Core sim (M3)
 
 ```
@@ -250,14 +225,6 @@ render/hud.ts:       DOM overlay; writes only changed HTML
 - **Render:** `render/interp.ts` extrapolates the last tick's velocity by `alpha`, clamped at the target lane and the ground. `GameSim.previous()` is the pre-tick pose. This removes 120 Hz stepping judder without adding a tick of delay.
 - **Tools** (on demand, not in verify): `pnpm latency:gestures | latency:judder | latency:pipeline` write `tmp/latency/*.json`.
 
-## Players & match history
-
-- **Identity is a name, bound to a screen side for one session.** Menu → game → "Who's playing?": one slot per player (1P "Player", 2P "Left player" P1 / "Right player" P2). Each slot's name buttons only answer to that side's hand cursor (the same screen-half split as 2P games); mouse and keyboard work everywhere, and new names are typed. 1P preselects the last P1; 2P always claims explicitly (people swap sides). `?game=` links skip the screen: names come from `?names=A,B`, else the last session, else "Player N".
-- **`MiniGame.matchStats(sim, player)`** → `{ result: win|loss|draw|null, stats: { camelCaseKey: number } }`. The shell records it once per player when `summary().over` first turns true (not for `?input=bot`), with the opponent's name (2P), "CPU" (1P shared sim) or null.
-- **`platform/profile-store.ts`**: `localStorage['move-arcade.profile']`, `{ version: 1, players: { [name]: { matches[] } }, lastNames }`. `migrate()` upgrades older shapes; data from a newer version makes the store read-only; corrupt JSON is copied to `move-arcade.profile.corrupt-<ms>` before starting fresh. 1000 matches per player.
-- **Stats page** (`stats-view.ts`): player × game → W–L–D and win rate, last-20 result chips (letter + colour), one hand-drawn canvas line chart per stat key (`line-chart.ts`, no dependency), and the latest 10 matches as a table.
-- Boxing HUD labels show the names (`HudExtras.names`).
-
 ## Frame pipeline (target, PLAN §3)
 
 ```
@@ -269,7 +236,7 @@ camera 720p30 → worker (640x360, PoseLandmarker) → PoseFrame
 
 ## Harness
 
-- Hooks (`.claude/settings.json`, scripts in `.claude/hooks/`): guard human-owned paths (PreToolUse), prettier + `tsc --incremental` on `.ts` edits (PostToolUse), PROGRESS.md reminder (Stop).
+- Hooks (`.claude/settings.json`, scripts in `.claude/hooks/`): guard human-owned paths, resolved against the checkout that contains the file (PreToolUse); prettier + `tsc --incremental` on `.ts` edits, waiting for the perf lock (PostToolUse); PROGRESS.md reminder (Stop).
 - Commands: `/verify`, `/playtest <seed> <input>`, `/milestone-check <M>`. Subagents: `reviewer`, `perf`.
-- `pnpm verify` = `tsc --noEmit` → `eslint .` → `vitest run` → `playwright test --project=smoke --project=perf` (`@perf` fps gates and `@realtime` replays run after smoke on one worker).
-- Perf diagnosis (not in verify): `node scripts/perf-probe.mjs [--only …] [--angle d3d11-warp] [--no-draw]` → `tmp/perf/probe-<label>.json`; works against older commits' dev servers (`--base`).
+- `pnpm verify` = `tsc --noEmit` → `eslint .` → `vitest run` → `playwright test --project=smoke --project=perf` (`@perf` gates and `@realtime` replays after smoke, one worker).
+- **Perf lock** (`scripts/e2e-lock.mjs`, lockfile in the git common dir, shared by every worktree): the Playwright run and `scripts/perf-probe.mjs` hold it; typecheck, lint, vitest and the tsc hook wait for it. Every perf gate logs its GPU and the machine state it observed to `tmp/verify/gates.jsonl` (`tests/e2e/gates.ts`, `machine-state.ts`). AGENTS §4.

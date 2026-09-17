@@ -17,7 +17,8 @@ export default defineConfig({
   testDir: 'tests/e2e',
   globalSetup: './tests/e2e/global-setup.ts',
   outputDir: 'tmp/test-results',
-  reporter: 'list',
+  // gate-coverage fails a run whose perf gates were all provisional (nothing measured).
+  reporter: [['list'], ['./tests/e2e/gate-coverage-reporter.ts']],
   use: { baseURL: BASE_URL },
   webServer: {
     command: `pnpm exec vite --port ${PORT} --strictPort`,

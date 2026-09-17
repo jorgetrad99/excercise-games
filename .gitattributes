@@ -1,0 +1,14 @@
+# LF in the index AND the working tree, whatever core.autocrlf says: several sessions write files on
+# Windows, and CRLF/LF churn turns small edits into whole-file diffs.
+* text=auto eol=lf
+
+# Binary assets: never convert, never diff as text.
+*.png binary
+*.jpg binary
+*.mjpeg binary
+*.y4m binary
+*.glb binary
+*.gltf -text
+*.bin binary
+*.task binary
+*.wasm binary
