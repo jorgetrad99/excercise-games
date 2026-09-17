@@ -2877,3 +2877,95 @@ node scripts/cpu-contention-sweep.mjs --label cpu-sweep-unplugged
 ```
 
 About 32 min for 3 passes. Then report Q2 (the CPU trigger) and the scatter correlation.
+
+## 2026-09-17 — Consolidation: everything real onto main, branches deleted, statuses corrected
+
+Jorge's call after the inventory: no new work until the repo state is honest. One session, six items.
+
+### 1. Merged into main (three merges, in this order)
+
+| From | How | What it brought |
+| --- | --- | --- |
+| `fix/boxing-phase0` (35 commits) | fast-forward, no conflicts | Control inversion (authority, collision scoring at 120 Hz), knee/hip calibration, body scan (stored, not applied), prediction, capture wizard, the B1 capture and its 5 specs, visual expressiveness (falls, head snap, face swelling), named players + stats |
+| `docs/plan-boxing` | `--no-ff`, 4 conflicts | The perf harness main never had: CPU-contention sweep, provisional/contended gates, GPU thermals and per-process GPU use, `docs/RENDER-BUDGET-MEASUREMENT.md`, `pnpm machine:state` |
+| `docs/skate-step-propulsion` | `--no-ff`, 5 conflicts | The PLAN step-propulsion amendment (D1–D4) and M8. Docs only — there is still no step-propulsion code |
+
+**Conflict resolutions:** `PROGRESS.md` union (both histories kept, chronological); `ARCHITECTURE.md`
+main's side (the `plan-boxing` side was the pre-inversion text); `PLAN.md` the amendment's side (it
+rewrote the step-vs-jump and fatigue risk rows); `PLAN-BOXING.md` main's 636-line version over the
+early draft; `package.json` kept `machine:state`, dropped `tune:boxing` (its tool is deleted).
+
+### 2. M7 numbering collision, resolved
+
+Four branches used M7.11–M7.14 for different things. **The `fix/boxing-phase0` sequence won**,
+because it is the one the code matches. What moved:
+
+| Item | Was (plan-boxing / skate) | Was (perf branch) | Was (old main) | **Now** |
+| --- | --- | --- | --- | --- |
+| Boxing visual expressiveness | M7.11 | — | *absent* | **M7.11** |
+| Perf diagnosis + software WebGL | M7.12 | M7.11 | M7.11 | **M7.12** |
+| Movement-detection research | M7.13 | — | M7.12 | **M7.13** |
+| Named players + stats | M7.14 | M7.13 | *absent* | **M7.14** |
+| Control-model inversion | M7.14 | — | — | **M7.15** |
+| Knockdown / recovery / movement / trainer | M7.15–M7.18 | — | — | **M7.16–M7.19** |
+
+### 3. Branches and worktrees
+
+Deleted (all fully contained in main): `fix/boxing-phase0`, `feat/player-authority`,
+`docs/plan-boxing`, `docs/skate-step-propulsion`, `chore/perf-lock`, `docs/no-recordings`,
+`feat/pose-mirroring`, `feat/perf-diagnosis-and-player-stats`, `feat/visual-expressiveness`.
+
+Two branches were NOT contained and were tagged before deletion, so nothing is lost:
+`archive/wip-player-authority-snapshot` and `archive/visual-expressiveness-codex-handoff` (the
+pre-rebase Codex handoff that only existed on origin). Tags are pushed.
+
+All `tmp/` worktrees removed. The `tmp/perf-lock-worktree` had 4 uncommitted files whose content was
+byte-identical to `1612791` on `docs/plan-boxing`; discarded on Jorge's instruction, nothing lost.
+
+### 4. Statuses corrected against the code (new status: `unverified`)
+
+- **M4.3** "procedural skater" — it is Quaternius `Casual_Hoodie`, rigged, with clips. Only the board
+  is procedural. Text and note fixed; ADR-005 is the reason.
+- **M4.4** "Kenney kits" — no Kenney file exists in `public/assets` or `CREDITS.md`. Quaternius.
+- **M4.D2** → `unverified`: the fps half is real, the "with keyboard input" half is not (the test runs
+  `?input=bot`; pure keyboard with no presses crashes at ~7 s). Fix the DoD line or the test.
+- **M0.4** → `unverified`: whether the LSP server answers is a per-session runtime fact.
+- **M1.3** checked and **correct as written**: camera/pose/render fps all exist (`pose-panel.ts:107`).
+- **M1.5** → `in_progress`: two real recordings now exist, neither per-gesture.
+- **M8** added, every task `todo`, with the perf precondition and the missing recordings named.
+
+### 5. Silently-skipping tests
+
+- `gestures.spec.ts`'s `combined-raw.json` block **had never run**. Jorge's 26 s mixed recording is now
+  committed at `fixtures/pose/combined-raw.json` and the block passes (verbose reporter confirms the
+  line, not a skip).
+- `boxing-tune.tool.ts` needed drills that do not exist; `fix/boxing-phase0` had already deleted it, so
+  the merge removed it along with `pnpm tune:boxing`. `punch-sampling.tool.ts` went the same way.
+
+### 6. Real recordings committed
+
+`fixtures/pose/combined-raw.json` (was only in Downloads) and
+`fixtures/pose/boxing/b1-capture-2026-09-17.json` (was untracked at the repo root). The
+`NO REAL POSE RECORDINGS` warning is quiet. `fixtures/README.md` now says what exists, what does not,
+and that everything else is synthetic; `docs/FIXTURES-README-AMENDMENT.md` deleted.
+
+**Both guarded paths (`AGENTS.md`, `fixtures/`) were written on Jorge's explicit instruction**, after
+he was told the guard hook blocks them. AGENTS.md took the one-line body-scan correction from his
+`AGENTS-AMENDMENT.md` (stored, not applied to reach — BX-CAL-6).
+
+### Verified
+
+`PLAYWRIGHT_PORT=5195 pnpm verify` exit 0 (`tmp/verify/consolidation-verify.log`): 469 unit tests in
+44 files, 33 e2e passed, 3 skipped. **Gate values not usable:** 3 of 6 gates PROVISIONAL (external CPU
+2.07 cores — Spotify, VS Code, WmiPrvSE), which is the contention machinery merged from
+`docs/plan-boxing` working as designed. The 3 that measured: `skate-1p-1080p-bot` 59–60 fps,
+`pose-1p-5s` 29.8 pose-fps, `boxing-1p-1080p-face` 60 fps / 29.6 pose-fps, RTX 4060, lock held.
+
+### Known gaps / next
+
+- **Still synthetic:** every gesture count test, the 2P tests, the menu cursor, Boxing thresholds
+  beyond what B1 settles. `combined-raw.json` is a sanity check, not labelled counts.
+- **Skate M8 has no code and no data.** Boxing has real data (B1) and unfinished spec items
+  (M7.16–M7.19). Jorge's read: finish Boxing first.
+- `origin/main` and both archive tags pushed; the repo is no longer single-machine.
+- The M4.D2 DoD line still contradicts its test. Decide which one changes.
