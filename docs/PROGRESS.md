@@ -1941,3 +1941,80 @@ Branch `chore/perf-lock` (`tmp/perf-lock-worktree`). Three items, committed on J
 
 - **External GPU ≤ 10 % → measured; above → provisional: approved.** The 2P pose-fps min 19 read as "quiet" had dwm at 20.6 %, so it was taken under load and isn't a real red.
 - **External CPU threshold: not approved.** VS Code, Defender and dwm (~4.8 cores idle) are the machine's steady state, not contention, and gates must measure the machine as developed on. Derive it from measurement: if external CPU doesn't move pose-fps, report it in the machine line without making results provisional; if it does, set the threshold where pose-fps degrades. One session measures it (coordinated with `move-arcade-bd`).
+
+## 2026-09-17 — M7.15 Boxing control-model inversion: the player owns the rig, the sim resolves consequences
+
+Branch `feat/player-authority`. Spec: PLAN-BOXING §2–§4 with D1 (overlays O1 + O2) and D5 (collision scoring, prediction instead of easing, body scan, 120 Hz).
+
+### Headline: latency
+
+Camera → drawn glove, measured by `tests/e2e/boxing-latency.smoke.spec.ts` on every verify run. The 12c1ddf baseline and this run were both on a quiet machine (lock held, other heavy: none).
+
+| | Before (12c1ddf) | Now |
+|---|---|---|
+| Rig response (90 % of a move drawn) | 200 ms | **16.7 ms** (one tick at 120 Hz) |
+| Camera → drawn glove, p50, 1P | 223 ms | **37.8 ms** |
+| Camera → drawn glove, p50, 2P | 236 ms | **45.8 ms** |
+
+The core requirement of the brief is met and measured.
+
+### What changed
+
+- **The body drives the rig 1:1 and continuously.** A `BODY` event per pose frame carries head and gloves (boxer-local m) from `PoseState`. No 6 cm / 12 cm caps and no 0.08 s easing. The only additions are the authorized overlays (O1 hit snap, O2 stun), bounded in size and time (`render/boxing/rig.ts`).
+- **Collision instead of detection.** Pose punch detection is deleted: `fists.ts` keeps the wrist-speed signal and guard posture only. Hits, blocks and whiffs are swept glove spheres at 120 Hz on observed samples. Damage scales with impact speed.
+- **Prediction for drawing only:** ≤ 50 ms along the latest velocity; collision never uses it (PLAN-BOXING §2.5, "drawn ahead, scored on what was seen").
+- **Authority:** `boxingAuthority(state, boxer)` gives the state (S1–S6, S11–S13, BREAK, PUPPET), per-channel owner and allowed overlays. The sim owns channels only in S4 (the fall).
+- **Wrist filter:** elbows and wrists are unfiltered (`armLagMax: 0`); head and torso keep One Euro. Rule in PLAN-BOXING §2.1: any stage that smooths, eases or averages the pose pipeline is suspect until proven not to clip peaks.
+  - **What the filter protected against:** glove jitter on the real recording, 2nd difference p50/p90 0.036/0.116 m filtered vs 0.041/0.127 m raw (≈ 10 %).
+  - **What it cost:** a half-extension jab's peak depth, 30/20/15/10 fps: 0.964/0.953/0.933/0.900 m filtered vs 1.016/0.989/0.985/0.934 m unfiltered. Head contact is at 0.99 m, so hits became misses.
+  - **What regresses:** forearm per-frame direction noise p50 0.110 → 0.118 rad, p90 0.359 → 0.378 rad. Still guard glove z sd 4.0 → 5.4 cm (synthetic). `pose-state.spec` hanging-arms frame moved t 8750 → 8717 ms (one frame: the removed lag), same thresholds.
+  - **Tests:** BX-CL-7 (pipeline peak = unfiltered peak ± 2 mm, every sampling phase, 30 and 15 fps); BX-CL-1 end to end with no pause in the jab. Both fail on the old filter.
+- **Calibration:** knees + hip centre (BX-CAL-1); "step back so your knees are visible" (BX-CAL-2); recalibration ignored while down (BX-CAL-4); **Menu → Body scan** saves arm lengths per name in `ProfileStore` v2 with v0/v1 migration (BX-CAL-6).
+- **Idle bob off for pose-driven boxers:** it moved the drawn head up to 1.2 cm from the real one. Kept for keyboard/bot boxers, which have no body.
+- **Startup check:** Playwright global setup fails with a clear message when `public/models/` is missing.
+
+### Defects the inversion exposed vs caused
+
+- **Exposed (existed before, hidden by the old model):**
+  - **A guard raised onto a glove already on its way in let the punch through.** The glove started the next tick inside the guard sphere, and the swept test ignores contacts that begin inside. The old rising punch path only avoided it by luck of height: its glove was still below the guard when the guard appeared. Fixed in `collide.ts` (glove targets only). Regression test: guard raised on tick 10/11/12 → `BLOCK`, no `HIT`; fails without the fix (tick 11 hits).
+  - **Arm filter clipping punch peaks** (above): invisible while punches were threshold-detected, decisive once the glove has to reach the head.
+- **Caused (by moving puppets onto collision), fixed:**
+  - **Keyboard/bot straights scored as chin hits:** from low ready hands the path rose into the head from below. Now a straight reaches face height in the first half of its depth. Uppercuts are untouched and low hands still block them. Test: right → left cheek (zone 0), left → right cheek (zone 1).
+  - Earlier in this branch: symmetric glove–glove double blocks, several outcomes per extension, early whiffs, phantom hits from extrapolation, uppercuts hitting the torso. Each has a BX-CL test.
+
+### Screenshot baselines (reviewed by Jorge before commit)
+
+`tests/e2e/boxing.smoke.spec.ts-snapshots/*`. Comparison sheets (old / new / diff): `tmp/baseline-review/*-compare.png`; mid-punch 2P frames: `tmp/baseline-review/midpunch/`.
+
+- **From the rig (intended):** your own gloves are drawn in full at ready stance, not cut off at the bottom edge. 2P check: 50 px clearance above the opponent's guard; nothing above the waist covered. Mid-punch: your own punch covers the opponent's hip briefly; an incoming punch stays visible, also with your guard up.
+- **Not from the rig:**
+  - The 8 s frame shows a different moment of the bot-vs-bot fight (collision scoring changes the fight).
+  - The knockdown capture moved 35.5 s → 52.5 s: seed 42 now has boxer 1 down 51.3–58.5 s.
+  - **HUD labels "You / Opponent" → "Player 1 / CPU" come from the player-names commit (bfe56fa)**, which landed after the baselines were last taken.
+
+### Test changes (premises corrected, no thresholds loosened)
+
+- **Body scan acceptance 5:** the draft expected long scanned arms to reach less. Wrong: depth comes from foreshortening against bone length, and the synthetic figure's arms really are 0.71 torso lengths vs 0.50/0.48 defaults. Scanned peak glove z 1.29 m vs 1.04 m default (contact 0.99 m); the test asserts scanned > default + 0.1 m.
+- **Rig follows the body:** sends the far pose twice (a 0.5 m jump in one 8 ms tick is 60 m/s; the second identical sample has no velocity).
+- **Head turn clears:** compared on the same tick with a no-step `turn()` redraw, precision 6 kept.
+- **2P damage** expects speed-scaled drain; **player-stats** expects profile v2; **pose replay** asserts a hit/block/whiff latch on the player's glove plus `GUARD_START/END`, not punch events.
+- **Removed with the detector:** `tests/tools/boxing-tune.tool.ts`, `punch-sampling.tool.ts`, `pnpm tune:boxing`.
+
+### Verified
+
+- **`PLAYWRIGHT_PORT=5191 pnpm verify` on 3157d58's tree: exit 0, no retries.** tsc clean, eslint clean, vitest 402 passed + 1 skipped (34 files), e2e 33/33 (3.3 min). Log: `tmp/verify/verify-m715.log`.
+- **GATE lines (checked first): values are NOT usable from this run.** Four of six gates read `CONTENDED`: other hook processes (`run-main.mjs` launchers) and a node/vite process outside the run. `pose-1p-5s` and `skate-1p-1080p-pose` read `other heavy: none` on one line and contended on another sample. Values for the record only: boxing-1p-1080p-face fps 60 / pose-fps 30; skate-2p-1080p pose-fps min 29; latency total 1P p50 38.4 ms, 2P p50 51.7 ms, rig response 16.7 ms.
+- **The latency headline above comes from the earlier quiet-machine run** (`lock held · other heavy: none`, cpu 50 %, gpu 17 %): 1P p50 37.8 ms, 2P p50 45.8 ms, rig 16.7 ms. The contended verify run agrees within 1 ms on 1P and rig response.
+- **1080p fps and pose-fps figures are provisional** until the contention rule is settled (Jorge's display routing check, or its replacement).
+- **Verify window 00:32–00:36:46 local may have overlapped Jorge's fixture recording.** Jorge had said to proceed; a relayed "wait until he's off the machine" arrived after the run started. **Check drills recorded in that window for dropped pose frames.**
+- **Merge 0a49beb (main e83c45b) is committed but NOT verified:** conflicts resolved (PROGRESS / ARCHITECTURE kept both sides, features.json and the Boxing e2e kept this branch, Playwright reporter took main's gate-coverage reporter, `punch-sampling.tool.ts` deleted again: it measured the removed punch detector). Re-verify after the session restart, with the zero-gates reporter present.
+
+### Known gaps / playtest note for Jorge
+
+- **Nothing here has seen a real camera doing boxing.** Gains (`body.armGainM`, `leanGainM`), zone thresholds and the bot are tuned on synthetic poses.
+- **Playtest:** `pnpm dev` → `http://localhost:5173/?game=boxing&debug=1` (menu → Body scan first, then Boxing with the same name). Check: a short jab that reaches the face scores; the glove feels attached to the hand; a guard raised late still blocks; your gloves at ready don't hide the opponent.
+- **Prediction overshoot (watch for it in the playtest):** the drawn lead is capped in time (50 ms), not distance. Bound: at most one frame's displacement at ≥ 20 pose-fps (the supported floor), ×1/2 at 10 fps, for at most one frame interval. At 20 pose-fps a 10 m/s jab that stops dead can draw up to **0.5 m** past its real stop for ≤ 50 ms. **Hits still use only positions a camera saw** (`collideGlove` reads observed samples; `predictPose` is render-only; BX-CL-2 pins it). **Proposed fix, written and ready: BX-PRED-1** (PLAN-BOXING §2.5): cap the drawn lead at 15 cm. Measured on synthetic motion it never engages on jabs or leans, engages on 4 % of full-straight frames at 20 fps where it lowers the error, and bounds any overshoot at 15 cm. It's provisional until the drills (synthetic glove speeds are low). Awaiting your approval.
+- **Body scan and `armGainM` (found while measuring; affects your playtest if you scanned):** on the whole path main.ts runs, longer scanned arms always read deeper. With the synthetic figure's true arm lengths (0.71), **a guard alone reads z 1.23 m, past the 0.99 m head contact.** Either `armGainM.forward` 1.3 is too high for an accurately scanned player (it was chosen with default bone lengths on a figure whose arms are really 0.71), or the synthetic guard is unrealistic. Only the drills can tell. If a scanned player's guard scores hits, this is why; a name with no scan plays with the defaults. PLAN-BOXING BX-CAL-6.
+- **Pending test fix:** `body-input.spec` "body scan changes reach" varies only the `BODY` normalisation, not the engine's bone lengths, so it asserts "longer arms reach less", the opposite of what the app does. The whole-path version (engine `setArms` + `bodyFromPose`, longer → deeper by > 0.1 m) is written but not applied: the Edit tool was blocked by the fail-closed hook launcher until the merge, and after it a `.ts` edit would have run tsc during the other sessions' quiet window. Next session, first thing.
+- **1080p fps and pose-fps gate values are provisional** until the display/contention rule is settled (Jorge's display routing change, or its replacement).
+- **Next:** merge main at e83c45b (launcher hooks, zero-gates reporter), restart the session, re-run verify on the merged tree. Then M7.16–M7.19 are unblocked.
