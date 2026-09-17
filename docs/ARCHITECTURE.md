@@ -179,6 +179,20 @@ interface ArmState {
 - Reports counts and pose-state channels at each punch.
 - `GRID=1` sweeps `fists` (including `reference: 'nose' | 'shoulder'`).
 
+## Boxing visual expressiveness (render only)
+
+- `render/boxing/presentation.ts` observes each boxer's clean-hit counter and current punch aims. It owns bounded left/right/chin bruises, hit age, zero-stamina fall timing and count recovery. Repeated split-screen draws are idempotent; a new sim or rewind resets damage. Blocks and regeneration do not create/heal bruises. Core scoring and phases are unchanged: zero stamina starts the visual fall, the next clean hit still starts the official count.
+- `render/boxing/animation.ts` samples the existing CC0 Casual_Hoodie Death clip over the fall, holds the floor pose, and blends through a crouch during the final part of a recoverable count. KO/TKO stays down; a decision loser stays standing. Head snap uses a locally vendored UAL `Hit_Head` quaternion track, with a directional stagger. Animation clocks pause with the match.
+- `render/big-head.ts` hides the complete `Casual_Head` mesh group. A rounded replacement is 2.6 times the proportional radius, follows the Head bone position AND orientation, and carries a private copy of the existing `FaceFeed` crop. `render/boxing/face-damage.ts` composites redness, bruises and swelling highlights on that copy. No camera capture, inference or pose-layer dependency is added. With no camera, a procedural face provides the same large-head silhouette and damage feedback.
+- `render/boxing/visual.config.ts` holds visual tuning. `public/assets/quaternius/boxing/hit-head.json` is baked by `scripts/vendor-boxing-reaction.mjs` from Quaternius UAL Standard's `Hit_Head`; provenance and the unchanged CC0 license are in CREDITS.
+- Tests: `presentation.spec.ts`, `pose-state.spec.ts`, and `tests/e2e/boxing-visual.smoke.spec.ts`. The browser harness loads the shipping GLB and renderer, steps the real boxing sim, and inspects head transforms and texture pixels. Screenshots and fake-camera performance samples are under `tmp/visual-expressiveness/`.
+
+### Pose-mirroring render adapter
+
+The parallel producer's `PoseState` is consumed structurally, without a render→pose import. `createBoxingView(canvas, faces?, poses?)` accepts an optional `BoxingPoseFeed` whose `pose(player)` returns a `TrackedBoxerPose` or null. The game shell can supply each player's current signal pose after the branches merge; this branch does not change the shell or input pipeline.
+
+`TrackedBoxerPose` matches the producer fields: `body {sway, duck, rise, forward}`, `torso.rot`, `hips.rot`, `head.rot`, and `arms [left, right]` with `upperRot`, `foreRot`, and shoulder-relative `wrist {x,y,z}`. Quaternions are `[x,y,z,w]`, in character axes (+x anatomical left, +y up, +z forward). Lengths are torso units. Null arms use the existing glove animation. `adaptBoxerPose` converts lengths to metres; the animation layer treats head/torso/hips rotations as absolute character-frame deltas so the head does not inherit the torso turn twice. Fall/get-up takes precedence over live pose; hit reactions compose afterward. Passing null on tracking loss restores animation defaults.
+
 ## Core sim (M3)
 
 ```

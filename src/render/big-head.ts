@@ -1,67 +1,92 @@
-// "Cabezota": a character's head blown up past realistic proportions, with the player's live face
-// (a camera crop, see pose/face-crop.ts) wrapped on its front as a sphere cap. Works on any
-// Quaternius rig with a 'Head' bone; the cap is placed at the bone each frame but keeps the
-// character's facing, so the face stays readable through the idle bob.
 import {
   CanvasTexture,
+  Group,
   Mesh,
   MeshBasicMaterial,
+  MeshStandardMaterial,
+  Quaternion,
   SphereGeometry,
   SRGBColorSpace,
   Vector3,
-  type Bone,
   type Object3D,
 } from 'three';
+import { paintFace } from './boxing/face-damage';
+import type { FaceDamage } from './boxing/presentation';
+import { boxingVisual as V } from './boxing/visual.config';
 
-/** Live face crops per player: a square canvas each (transparent outside the face oval). */
+/** Existing exact-frame live-crop pipeline; render never captures video or runs inference. */
 export interface FaceFeed {
   canvas(player: number): HTMLCanvasElement | null;
-  /** 0 = no face yet; changes whenever the canvas was redrawn. */
   version(player: number): number;
 }
+export const HEAD_SCALE = V.headScale;
 
-/** Head bone scale: realistic is 1. */
-export const HEAD_SCALE = 1.8;
-/** Face cap sphere radius, m (the scaled head is ≈ 0.2 m wide). */
-const CAP_R = 0.2;
-/** Cap center relative to the Head bone, character-local m: up into the head, out in front. */
-const CAP_UP = 0.17;
-const CAP_FORWARD = 0.12;
+function headMeshes() {
+  const radius = V.headRadius * HEAD_SCALE;
+  const object = new Group();
+  object.name = 'ReplacementHead';
+  const shell = new Mesh(
+    new SphereGeometry(radius, 32, 24),
+    new MeshStandardMaterial({ color: '#edb98d', roughness: 0.85 }),
+  );
+  shell.scale.set(1, 1.12, 0.85);
+  shell.castShadow = true;
+  const canvas = Object.assign(document.createElement('canvas'), { width: 192, height: 192 });
+  const ctx = canvas.getContext('2d')!;
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  const face = new Mesh(
+    new SphereGeometry(radius * 1.015, 32, 24, Math.PI / 2 - 1.05, 2.1, Math.PI / 2 - 1.1, 2.2),
+    new MeshBasicMaterial({ map: texture, alphaTest: 0.05 }),
+  );
+  face.name = 'LiveFace';
+  face.scale.copy(shell.scale);
+  object.add(shell, face);
+  return { object, ctx, texture };
+}
 
 export function createBigHead(body: Object3D, parent: Object3D) {
-  const head = body.getObjectByName('Head') as Bone | undefined;
-  const material = new MeshBasicMaterial({ alphaTest: 0.5 });
-  // A front patch of a sphere: ±0.8 rad around +z sideways, ±0.85 rad around the equator vertically.
-  const cap = new Mesh(
-    new SphereGeometry(CAP_R, 24, 16, Math.PI / 2 - 0.8, 1.6, Math.PI / 2 - 0.85, 1.7),
-    material,
-  );
-  cap.visible = false;
-  parent.add(cap);
-  let texture: CanvasTexture | null = null;
-  let seen = 0;
-  const at = new Vector3();
-
+  const head = body.getObjectByName('Head');
+  // The asset has separate skin/hair/eye primitives beneath this group. Hide ALL of them.
+  const original = body.getObjectByName('Casual_Head');
+  if (original) original.visible = false;
+  const { object, ctx, texture } = headMeshes();
+  parent.add(object);
+  body.updateWorldMatrix(true, true);
+  const bind = head?.getWorldQuaternion(new Quaternion()).invert() ?? new Quaternion();
+  const parentQ = new Quaternion(),
+    headQ = new Quaternion(),
+    at = new Vector3();
+  let seen = -1,
+    lastCanvas: HTMLCanvasElement | null = null,
+    lastDamage = '';
   return {
-    /** Call after the rig is posed. `visible` false = the owner's own first-person view. */
-    update(faces: FaceFeed | null, player: number, visible: boolean): void {
-      head?.scale.setScalar(HEAD_SCALE);
-      const canvas = faces?.canvas(player) ?? null;
-      const version = faces?.version(player) ?? 0;
-      cap.visible = visible && !!head && !!canvas && version > 0;
-      if (!cap.visible) return;
-      if (texture?.image !== canvas) {
-        texture?.dispose();
-        texture = new CanvasTexture(canvas!);
-        texture.colorSpace = SRGBColorSpace;
-        material.map = texture;
-        material.needsUpdate = true;
+    object,
+    update(
+      faces: FaceFeed | null,
+      player: number,
+      visible: boolean,
+      damage: FaceDamage = [0, 0, 0],
+    ): void {
+      object.visible = visible && !!head;
+      if (!head) return;
+      const source = (faces?.version(player) ?? 0) > 0 ? faces!.canvas(player) : null;
+      const version = faces?.version(player) ?? 0,
+        key = damage.join(',');
+      if (version !== seen || source !== lastCanvas || key !== lastDamage) {
+        paintFace(ctx, source, damage);
+        texture.needsUpdate = true;
+        seen = version;
+        lastCanvas = source;
+        lastDamage = key;
       }
-      if (version !== seen) texture.needsUpdate = true;
-      seen = version;
-      parent.updateMatrixWorld(true);
-      parent.worldToLocal(head!.getWorldPosition(at));
-      cap.position.set(at.x, at.y + CAP_UP, at.z + CAP_FORWARD);
+      parent.updateWorldMatrix(true, true);
+      parent.worldToLocal(head.getWorldPosition(at));
+      parent.getWorldQuaternion(parentQ).invert();
+      object.quaternion.copy(parentQ.multiply(head.getWorldQuaternion(headQ)).multiply(bind));
+      object.position
+        .copy(at)
+        .add(new Vector3(0, V.headLift, 0).applyQuaternion(object.quaternion));
     },
   };
 }

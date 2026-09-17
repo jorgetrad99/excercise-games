@@ -1,21 +1,16 @@
 // A boxer: the Casual_Hoodie rig (CC0, shared with the skater) with its arms collapsed and two floating
-// gloves, like Wii Sports' armless Miis. Everything is a pure function of BoxingState + sim time, so
-// screenshots at a given tick are reproducible. Local frame: the boxer faces +z, its left is +x.
-import {
-  Group,
-  Mesh,
-  MeshStandardMaterial,
-  SphereGeometry,
-  Vector3,
-  type Bone,
-  type Object3D,
-} from 'three';
+// gloves. Clip times follow the sim; presentation history keeps per-boxer bruises and fall timing.
+// Repeated draws at one tick are stable. Local frame: the boxer faces +z, its left is +x.
+import { Group, Mesh, MeshStandardMaterial, SphereGeometry, Vector3 } from 'three';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { boxingConfig as C } from '../../core/boxing/boxing.config';
 import type { Boxer, BoxerId, BoxingState, Fist } from '../../core/boxing/types';
 import { createBigHead, type FaceFeed } from '../big-head';
 import type { LoadedModel } from '../models';
 import { rig } from '../skater';
+import { createBoxerAnimation, type HeadReaction } from './animation';
+import { createPresentation } from './presentation';
+import type { BoxerPoseState } from './pose-state';
 
 const HEIGHT = 1.75;
 type V3 = readonly [number, number, number];
@@ -40,6 +35,7 @@ export interface BoxerView {
     who: BoxerId,
     self: boolean,
     face?: { feed: FaceFeed; player: number },
+    live?: BoxerPoseState | null,
   ): void;
   /** Eye position behind this boxer's head, world space (the player's camera). */
   eye(out: Vector3): Vector3;
@@ -78,55 +74,64 @@ function stars(): Group {
   return g;
 }
 
-export function createBoxer(model: LoadedModel, color: string): BoxerView {
-  const object = new Group();
-  const body = rig({ scene: clone(model.scene), animations: model.animations });
-  const figure = new Group(); // scales/turns the character without touching the rig's own root
-  figure.add(body.body);
-  const arms = ['UpperArmL', 'UpperArmR']
-    .map((n) => body.body.getObjectByName(n) as Bone | undefined)
-    .filter((b): b is Bone => !!b);
+function createGloves(color: string): Mesh[] {
   const gloveMat = new MeshStandardMaterial({ color, roughness: 0.45 });
-  const gloves = [0, 1].map(() => {
+  return [0, 1].map(() => {
     const m = new Mesh(new SphereGeometry(0.12, 16, 12), gloveMat);
     m.castShadow = true;
     return m;
   });
+}
+
+export function createBoxer(model: LoadedModel, color: string, reaction: HeadReaction): BoxerView {
+  const object = new Group();
+  const body = rig({ scene: clone(model.scene), animations: model.animations });
+  const figure = new Group();
+  figure.add(body.body);
+  const animate = createBoxerAnimation(body, reaction);
+  const presentation = createPresentation();
+  const gloves = createGloves(color);
   const dizzy = stars();
   object.add(figure, ...gloves, dizzy);
   const bigHead = createBigHead(body.body, object);
+  let floor = 0;
 
   return {
     object,
-    update(s, who, self, face) {
+    update(s, who, self, face, live) {
       const b = s.boxers[who];
       const t = s.t;
+      const visual = presentation(s, who);
+      floor = visual.floor;
       figure.scale.setScalar(HEIGHT / 1.83);
       figure.position.set(0, 0, 0);
       figure.rotation.set(0, 0, 0);
       figure.visible = !self;
-      pose(s, who, t, body, figure);
-      for (const arm of arms) arm.scale.setScalar(0.001); // armless, like a Mii
+      animate(s, who, visual, figure, live);
       // Sway and duck move the whole boxer (gloves too).
-      const dodgeK = dodgeAmount(b);
+      const dodgeK = live?.position || floor > 0 ? 0 : dodgeAmount(b);
       const side = b.dodge === 'left' ? 1 : b.dodge === 'right' ? -1 : 0;
-      const down = s.phase === 'down' && s.down?.boxer === who;
-      const lost = s.phase === 'over' && s.winner !== null && s.winner !== who;
-      const floored = down || lost;
+      const floored = visual.floor > 0;
       placeGloves(gloves, b, self, floored);
-      const recoil = Math.max(0, 1 - (t - b.hitT) / 0.25);
+      if (live?.wrists && !floored)
+        gloves.forEach((g, i) => {
+          const wrist = live.wrists![i];
+          if (wrist) g.position.fromArray(wrist);
+        });
+      const recoil = floored ? 0 : Math.max(0, 1 - visual.hitAge / 0.44);
       object.position.set(
-        side * 0.35 * dodgeK,
+        side * 0.35 * dodgeK - visual.hitSide * 0.12 * recoil,
         b.dodge === 'duck' ? -0.35 * dodgeK : 0,
         -0.12 * recoil,
       );
       object.rotation.set(
         -0.15 * recoil,
         0,
-        -side * 0.25 * dodgeK + (b.dizzy ? Math.sin(t * 5) * 0.08 : 0),
+        -side * 0.25 * dodgeK + visual.hitSide * 0.12 * recoil,
       );
+      if (live?.position && !floored) object.position.add(new Vector3().fromArray(live.position));
       if (b.dodge === 'duck') for (const g of gloves) g.position.y -= 0.1 * dodgeK;
-      bigHead.update(face?.feed ?? null, face?.player ?? 0, !self); // after object moved
+      bigHead.update(face?.feed ?? null, face?.player ?? 0, !self, visual.damage);
       dizzy.visible = b.dizzy && !floored;
       dizzy.children.forEach((star, i) => {
         const a = t * 4 + (i * Math.PI * 2) / 3;
@@ -134,7 +139,7 @@ export function createBoxer(model: LoadedModel, color: string): BoxerView {
       });
     },
     eye(out) {
-      return object.localToWorld(out.set(0, 1.62, -0.35));
+      return object.localToWorld(out.set(0, 1.62 - floor * 1.2, -0.35));
     },
   };
 }
@@ -158,30 +163,4 @@ function dodgeAmount(b: Boxer): number {
   if (b.dodge === 'none') return 0;
   const elapsed = C.dodge.activeS - b.dodgeT;
   return Math.min(1, elapsed / 0.1, b.dodgeT / 0.1);
-}
-
-function pose(
-  s: Readonly<BoxingState>,
-  who: BoxerId,
-  t: number,
-  r: ReturnType<typeof rig>,
-  figure: Object3D,
-): void {
-  const b = s.boxers[who];
-  if (
-    (s.phase === 'down' && s.down?.boxer === who) ||
-    (s.phase === 'over' && s.winner !== null && s.winner !== who)
-  ) {
-    r.show('Death', r.duration('Death') * 0.95);
-    return;
-  }
-  if (s.phase === 'over' && s.winner === who) {
-    r.show('Wave', t % r.duration('Wave'));
-    return;
-  }
-  r.show('Idle_Neutral', t % r.duration('Idle_Neutral'));
-  // Boxer's bounce: knees bent, chest forward; deeper on a duck.
-  const duck = b.dodge === 'duck' ? dodgeAmount(b) : 0;
-  r.bend(0.35 + duck * 0.9, 0.7 + duck * 1.3, 0.2 + duck * 0.4);
-  figure.position.y = -0.06 + Math.sin(t * 7) * 0.012 - duck * 0.15;
 }
