@@ -1530,3 +1530,25 @@ Branch `chore/perf-lock`, commit `13df045`, fast-forwarded to `main`. Jorge exte
 
 - A branch that keeps its own `AGENTS.md` edits (e.g. `docs/plan-boxing`'s §4 bullets) will warn "human-owned — restore" after merging main, until Jorge lands that text on main. That's intended.
 - Only sessions started after a merge get the new guard. Restart after merging (rule, deliberately untested).
+
+---
+
+## 2026-09-17 — Session ↔ branch map; `feat/visual-expressiveness` is superseded
+
+Docs only. For the next coordination round, so messages go to one session instead of a broadcast.
+
+| Branch | Worktree | Session | Has main `ec9ba77` |
+| --- | --- | --- | --- |
+| `chore/perf-lock` → `main` | `tmp/perf-lock-worktree` | `move-arcade-32` | is main |
+| `docs/skate-step-propulsion` | main checkout | `move-arcade-32` | yes (`44e2162`) |
+| `docs/plan-boxing` | `tmp/plan-boxing-worktree` | `move-arcade-bd` | yes (`7ba0a05`) |
+| `feat/player-authority` | `tmp/player-authority-worktree` | `move-arcade-64` | yes (`6d7dd46`) |
+| `feat/visual-expressiveness` | `tmp/visual-expressiveness-worktree` | **none** | **no** |
+
+- **`feat/visual-expressiveness` is unmerged and unclaimed on purpose (Jorge, 2026-09-17).** It was superseded: the inversion work moved to `feat/player-authority`, and the visual work it carried is in that branch's history. It isn't pending work. Don't merge main into it or pick it up; its Stop hook will keep reporting drift from main.
+- **Restarts:** sessions pick up the new hooks (A + B) at restart. Restart at a clean stopping point, not mid-task. It only matters before the next real gate run.
+- **AGENTS.md drift still open:**
+  - `docs/plan-boxing` differs from main by the §4 contention bullets and the `?names=` line in §5.
+  - `feat/player-authority` differs by `786cd25` (Body scan entry, pose-Boxing input notes).
+  - Jorge applies these by hand in one pass.
+- **Hold on step-propulsion constants (Skate M8):** `move-arcade-64` found that with a body scan applied, a plain guard reads 1.23 m forward against a 0.99 m touch threshold. Scan-derived reach is disabled until it's diagnosed against Jorge's drill recordings. The same gesture pipeline feeds step propulsion, so no Skate constants get built on scan-calibrated arm or leg proportions until that diagnosis lands.
