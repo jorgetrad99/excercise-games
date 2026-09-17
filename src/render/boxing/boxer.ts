@@ -10,6 +10,7 @@ import type { LoadedModel } from '../models';
 import { rig } from '../skater';
 import { createBoxerAnimation, type HeadReaction } from './animation';
 import { createPresentation } from './presentation';
+import { boxingVisual as V } from './visual.config';
 import type { LiveExpression } from './live-pose';
 
 const HEIGHT = 1.75;
@@ -116,7 +117,7 @@ export function createBoxer(model: LoadedModel, color: string, reaction: HeadRea
       const floored = visual.floor > 0;
       const liveK = floored || !live ? 0 : 1 - dodgeK;
       placeGloves(gloves, b, self, floored, liveK > 0 ? live!.gloves : null);
-      const recoil = floored ? 0 : Math.max(0, 1 - visual.hitAge / 0.44);
+      const recoil = floored ? 0 : Math.max(0, 1 - visual.hitAge / V.hitS);
       object.position.set(
         side * 0.35 * dodgeK - visual.hitSide * 0.12 * recoil,
         b.dodge === 'duck' ? -0.35 * dodgeK : 0,
@@ -125,12 +126,15 @@ export function createBoxer(model: LoadedModel, color: string, reaction: HeadRea
       object.rotation.set(
         -0.15 * recoil,
         0,
-        -side * 0.25 * dodgeK + visual.hitSide * 0.12 * recoil,
+        -side * 0.25 * dodgeK +
+          visual.hitSide * 0.12 * recoil +
+          Math.sin(t * 5) * 0.08 * visual.dizzy, // dizzy wobble: the boxer is still standing
       );
       if (liveK > 0) object.position.addScaledVector(live!.lean, liveK);
       if (b.dodge === 'duck') for (const g of gloves) g.position.y -= 0.1 * dodgeK;
       bigHead.update(face?.feed ?? null, face?.player ?? 0, !self, visual.damage);
-      dizzy.visible = b.dizzy && !floored;
+      dizzy.visible = visual.dizzy > 0.01;
+      dizzy.scale.setScalar(visual.dizzy);
       dizzy.children.forEach((star, i) => {
         const a = t * 4 + (i * Math.PI * 2) / 3;
         star.position.set(Math.cos(a) * 0.22, 1.95, Math.sin(a) * 0.22);

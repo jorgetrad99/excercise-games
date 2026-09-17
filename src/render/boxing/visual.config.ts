@@ -6,7 +6,10 @@ export const boxingVisual = {
   headLift: 0.23,
   fallS: 0.7,
   riseS: 0.9,
+  /** Hit recoil and head kick length, s. */
   hitS: 0.44,
+  /** Dizzy wobble fade in/out time constant, s. */
+  dizzyEaseS: 0.15,
   bruisePerHit: 0.24,
   /** Live pose expressiveness. Clamps keep it well below a sim dodge (0.35 m) or punch (0.73 m). */
   live: {

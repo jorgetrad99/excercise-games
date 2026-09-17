@@ -84,6 +84,8 @@ export async function createVisualHarness() {
         originalVisible: boxer.object.getObjectByName('Casual_Head')!.visible,
         center: head.getWorldPosition(new Vector3()).toArray(),
         rotation: head.quaternion.toArray(),
+        /** Where the face points, boxer-local (+x = the boxer's left, +y up, +z forward). */
+        faceDir: new Vector3(0, 0, 1).applyQuaternion(head.quaternion).toArray(),
         gloves: ['GloveL', 'GloveR'].map((n) =>
           boxer.object.getObjectByName(n)!.position.toArray(),
         ),

@@ -1255,3 +1255,34 @@ Jorge records the 14 drills → `pnpm tune:boxing` + `GRID=1` → set `fists` (a
 ### Next
 
 Item 1: map the sim state to fall/get-up (dizzy ≠ down).
+
+### Knockdown and hit reactions (step 3c)
+
+- **Floor state now follows the sim** (`presentation.ts` `flooredBy`):
+  - Dizzy is standing: the sim still lets a dizzy boxer dodge and be hit. It shows as an eased wobble (τ 0.15 s) plus stars scaled by the same weight, so a clinch break that clears dizzy fades out instead of popping.
+  - The fall starts with the referee count (`phase 'down'`, from `now − phaseT`) or a TKO.
+  - The rise ends exactly when the count reaches `getUpAt` and the sim resumes.
+  - **Fixed a second Codex bug:** a KO boxer fell twice. It stood back up when the phase became `over`, because `terminalAt` restarted the fall. The fall start now carries over from the count.
+- **Head-snap direction (measured on the rig before the fix, not assumed):**
+  - UAL `Hit_Head` always turned the face toward the boxer's left (+x), and Codex's yaw kick had its sign flipped. A left-cheek hit turned the face 0.47 *into* the punch.
+  - Now a left-cheek hit mirrors the clip across the sagittal plane, a chin shot keeps only the clip's pitch, and the kick yaws away from the blow.
+- `hitS` from config replaces the 0.44 literals.
+
+### Verified
+
+- `presentation.spec.ts` (7 tests), all on real sim flows:
+  - dizzy stays standing and wobbles; cleared dizzy still > 0.5 one tick later and < 0.01 after 1 s
+  - a real punch on a dizzy boxer → `down` → floor > 0.95 → monotonic rise → < 0.05 on the last counted frame → 0 at `fight`
+  - a KO holds floor = 1 on every tick through `over`
+  - a TKO falls from < 0.2 to 1
+  - pause freezes presentation
+- `boxing-visual` e2e on the real rig:
+  - the head stays up while dizzy (`tmp/visual-expressiveness/dizzy-standing.png`)
+  - new test "head snaps away from the blow": left cheek Δx < −0.15, right cheek Δx > +0.15, uppercut Δy > +0.1 with |Δx| < 0.1
+- **`pnpm verify` → exit 0** (`tmp/verify-ve-item1.log`): vitest 334 + 1 skipped, playwright 27/27. The existing Boxing baselines still match.
+- **Not verified:** whether the fall/get-up timing and snap strength *feel* right. Playtest: `/?game=boxing&seed=42` (keyboard, bot): drain the bot to dizzy (it should wobble, not fall), land one more punch (fall, count, get up on the count), then hook each side (head turns away).
+- **Not done:** no UAL body-hit clip (body hits don't exist in the sim).
+
+### Next
+
+Item 3: real swelling.

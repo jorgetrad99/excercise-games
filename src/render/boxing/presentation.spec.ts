@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { initBoxing, tickBoxing } from '../../core/boxing/sim';
+import { initBoxing, tickBoxing, type BoxingInput } from '../../core/boxing/sim';
+import type { BoxingState } from '../../core/boxing/types';
 import { createPresentation, impactZone } from './presentation';
+
+/** `n` sim ticks, reading the presentation after each like the renderer does. */
+function run(
+  s: BoxingState,
+  read: ReturnType<typeof createPresentation>,
+  n: number,
+  events: BoxingInput[] = [],
+): void {
+  for (let i = 0; i < n; i++) {
+    tickBoxing(s, i === 0 ? events : []);
+    read(s, 1);
+  }
+}
 
 describe('boxing presentation', () => {
   it('maps hook sides and uppercuts in defender coordinates', () => {
@@ -35,29 +49,80 @@ describe('boxing presentation', () => {
     expect(read(s, 1).damage).toEqual([0.24, 0, 0]);
     expect(read(initBoxing({ seed: 42 }), 1).damage).toEqual([0, 0, 0]);
   });
-  it('falls at zero, stays down for KO, rises before a recoverable count ends', () => {
+  it('dizzy stays standing and wobbles; a cleared dizzy fades instead of popping', () => {
     const s = initBoxing({ seed: 42, skipIntro: true }),
       read = createPresentation();
     read(s, 1);
-    s.boxers[1].dizzy = true;
-    s.boxers[1].stamina = 0;
-    tickBoxing(s, []);
+    Object.assign(s.boxers[1], { stamina: 0, dizzy: true });
+    run(s, read, 30);
+    expect(read(s, 1)).toMatchObject({ stage: 'standing', floor: 0 });
+    expect(read(s, 1).dizzy).toBeGreaterThan(0.9);
+    s.boxers[1].dizzy = false; // e.g. the sim's clinch break
+    run(s, read, 1);
+    expect(read(s, 1).dizzy).toBeGreaterThan(0.5);
+    expect(read(s, 1).floor).toBe(0);
+    run(s, read, 60);
+    expect(read(s, 1).dizzy).toBeLessThan(0.01);
+  });
+
+  it('a real knockdown falls with the count and is back up when the sim resumes the fight', () => {
+    const s = initBoxing({ seed: 42, skipIntro: true }),
+      read = createPresentation();
     read(s, 1);
-    for (let i = 0; i < 25; i++) tickBoxing(s, []);
-    expect(read(s, 1).stage).toBe('fall');
-    s.phase = 'down';
-    s.down = { boxer: 1, getUpAt: 5 };
-    s.phaseT = 3.5;
-    tickBoxing(s, []);
-    expect(read(s, 1).stage).toBe('rise');
-    s.down.getUpAt = 10;
-    tickBoxing(s, []);
+    Object.assign(s.boxers[1], { stamina: 0, dizzy: true });
+    run(s, read, 1, [{ type: 'PUNCH_LEFT' }]);
+    for (let i = 0; i < 60 && s.phase === 'fight'; i++) run(s, read, 1);
+    expect(s.phase).toBe('down');
+    expect(read(s, 1).floor).toBeLessThan(0.2);
+    const floors: number[] = [];
+    while (s.phase === 'down') {
+      run(s, read, 1);
+      floors.push(read(s, 1).floor);
+    }
+    expect(Math.max(...floors)).toBeGreaterThan(0.95);
+    const peak = floors.indexOf(Math.max(...floors));
+    floors
+      .slice(peak)
+      .forEach((f, i, a) => i > 0 && expect(f).toBeLessThanOrEqual(a[i - 1]! + 1e-9));
+    expect(floors.at(-2)!).toBeLessThan(0.05); // the last counted frame is already nearly up
+    expect(read(s, 1)).toMatchObject({ stage: 'standing', floor: 0 });
+  });
+
+  it('a KO stays down without falling twice; a TKO falls from standing; pause freezes it', () => {
+    const s = initBoxing({ seed: 42, skipIntro: true }),
+      read = createPresentation();
+    read(s, 1);
+    Object.assign(s, { phase: 'down', phaseT: 0, down: { boxer: 1, getUpAt: 10 } });
+    run(s, read, 60);
     expect(read(s, 1).floor).toBe(1);
-    s.phase = 'paused';
-    s.pausedFrom = 'down';
-    const paused = structuredClone(read(s, 1));
-    for (let i = 0; i < 100; i++) tickBoxing(s, []);
-    expect(read(s, 1)).toEqual(paused);
+    for (let i = 0; i < 600 && s.phase === 'down'; i++) {
+      run(s, read, 1);
+      expect(read(s, 1).floor).toBe(1);
+    }
+    expect([s.phase, s.result]).toEqual(['over', 'KO']);
+    run(s, read, 30);
+    expect(read(s, 1)).toMatchObject({ stage: 'down', floor: 1 });
+
+    const t = initBoxing({ seed: 42, skipIntro: true }),
+      tko = createPresentation();
+    tko(t, 1);
+    Object.assign(t.boxers[1], { stamina: 0, dizzy: true, knockdowns: 2 });
+    run(t, tko, 1, [{ type: 'PUNCH_LEFT' }]);
+    for (let i = 0; i < 60 && t.phase === 'fight'; i++) run(t, tko, 1);
+    expect([t.phase, t.result]).toEqual(['over', 'TKO']);
+    expect(tko(t, 1).floor).toBeLessThan(0.2);
+    run(t, tko, 60);
+    expect(tko(t, 1).floor).toBe(1);
+
+    const u = initBoxing({ seed: 42, skipIntro: true }),
+      paused = createPresentation();
+    paused(u, 1);
+    Object.assign(u, { phase: 'down', phaseT: 0, down: { boxer: 1, getUpAt: 5 } });
+    run(u, paused, 20);
+    Object.assign(u, { phase: 'paused', pausedFrom: 'down' });
+    const frozen = structuredClone(paused(u, 1));
+    run(u, paused, 100);
+    expect(paused(u, 1)).toEqual(frozen);
   });
 
   it('places simultaneous left/right hits on separate cheeks', () => {

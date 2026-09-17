@@ -63,7 +63,11 @@ test('replacement head, rig following, clean-hit damage, fall and count recovery
         { type: i % 2 ? 'PUNCH_LEFT' : 'PUNCH_RIGHT', aim: { x: i % 2 ? -1 : 1, y: 0 } },
       ]);
   });
-  await page.screenshot({ path: `${ROOT}/knockdown-fall.png` });
+  // Dizzy is still standing in the sim (it can dodge and be hit): the head stays up.
+  expect(await page.evaluate(() => window.__boxingVisual.state().boxers[1].dizzy)).toBe(true);
+  const dizzy = await page.evaluate(() => window.__boxingVisual.inspect());
+  expect(dizzy.center[1]!).toBeGreaterThan(neutral.center[1]! - 0.15);
+  await page.screenshot({ path: `${ROOT}/dizzy-standing.png` });
   await page.evaluate(() => window.__boxingVisual.step(0.5, [{ type: 'PUNCH_RIGHT' }]));
   const count = await page.evaluate(() => window.__boxingVisual.state().down);
   expect(count).not.toBeNull();
@@ -88,6 +92,32 @@ test('replacement head, rig following, clean-hit damage, fall and count recovery
     neutral.facePixels,
   );
   expect(errors).toEqual([]);
+});
+
+test('head snaps away from the blow: left cheek turns right, right cheek left, chin tips up', async ({
+  page,
+}) => {
+  await harness(page);
+  const neutral = await page.evaluate(() => window.__boxingVisual.inspect());
+  // Boxer 0 punches boxer 1. A straight right lands on the left cheek, a straight left on the right
+  // cheek, an uppercut on the chin (presentation.impactZone). Sample the peak of the snap.
+  const peak = (type: 'PUNCH_LEFT' | 'PUNCH_RIGHT', aim: { x: number; y: number }) =>
+    page.evaluate(
+      ([type, aim]) => {
+        const h = window.__boxingVisual;
+        h.restart();
+        h.step(0.3, [{ type, aim }]);
+        return h.inspect().faceDir;
+      },
+      [type, aim] as const,
+    );
+  const left = await peak('PUNCH_RIGHT', { x: 0, y: 0 });
+  const right = await peak('PUNCH_LEFT', { x: 0, y: 0 });
+  const chin = await peak('PUNCH_RIGHT', { x: 0, y: 1 });
+  expect(left[0]! - neutral.faceDir[0]!).toBeLessThan(-0.15);
+  expect(right[0]! - neutral.faceDir[0]!).toBeGreaterThan(0.15);
+  expect(chin[1]! - neutral.faceDir[1]!).toBeGreaterThan(0.1);
+  expect(Math.abs(chin[0]! - neutral.faceDir[0]!)).toBeLessThan(0.1);
 });
 
 test('same-tick redraws are stable; live head rotation composes and clears', async ({ page }) => {

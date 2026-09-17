@@ -3,6 +3,7 @@ import type { BoxingState, BoxerId } from '../../core/boxing/types';
 import type { Rig } from '../skater';
 import type { LiveExpression } from './live-pose';
 import type { Presentation } from './presentation';
+import { boxingVisual as V } from './visual.config';
 
 export interface HeadReaction {
   duration: number;
@@ -26,13 +27,21 @@ function rotate(root: Object3D, bone: Object3D, delta: Quaternion): void {
   bone.quaternion.premultiply(turn);
 }
 
-function reactionAt(clip: HeadReaction, age: number): Quaternion {
-  if (age < 0 || age >= clip.duration) return new Quaternion();
+const Y = new Vector3(0, 1, 0);
+const snap = new Quaternion();
+const mirrored = new Quaternion();
+const kickQ = new Quaternion();
+
+/** UAL `Hit_Head` turns the head toward the character's left (+x), as from a blow to the right cheek
+ * (measured on the rig). A blow to the left cheek (`hitSide` +1) mirrors it across the sagittal plane;
+ * a chin shot keeps only its pitch (halfway between both sides). */
+function reactionAt(clip: HeadReaction, age: number, hitSide: number, out: Quaternion): Quaternion {
+  if (age < 0 || age >= clip.duration) return out.identity();
   const k = (age / clip.duration) * (clip.times.length - 1),
     i = Math.floor(k);
-  return new Quaternion()
-    .fromArray(clip.values, i * 4)
-    .slerp(new Quaternion().fromArray(clip.values, (i + 1) * 4), k - i);
+  out.fromArray(clip.values, i * 4).slerp(snap.fromArray(clip.values, (i + 1) * 4), k - i);
+  mirrored.set(out.x, -out.y, -out.z, out.w);
+  return hitSide > 0 ? out.copy(mirrored) : hitSide === 0 ? out.slerp(mirrored, 0.5) : out;
 }
 
 export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
@@ -79,14 +88,11 @@ export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
     });
     if (live && live.weight > 1e-3 && v.floor === 0) applyLive(r.body, live);
     if (head && v.floor === 0) {
-      rotate(r.body, head, reactionAt(reaction, v.hitAge));
-      const kick = Math.sin(Math.min(1, v.hitAge / 0.44) * Math.PI) * Math.exp(-v.hitAge * 3);
+      rotate(r.body, head, reactionAt(reaction, v.hitAge, v.hitSide, kickQ));
+      const kick = Math.sin(Math.min(1, v.hitAge / V.hitS) * Math.PI) * Math.exp(-v.hitAge * 3);
+      // Turn away from the blow: a hit on the left cheek (+1) yaws the face toward -x.
       if (Number.isFinite(kick))
-        rotate(
-          r.body,
-          head,
-          new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), v.hitSide * kick * 0.4),
-        );
+        rotate(r.body, head, kickQ.setFromAxisAngle(Y, -v.hitSide * kick * 0.4));
     }
     for (const name of ['UpperArmL', 'UpperArmR'])
       r.body.getObjectByName(name)?.scale.setScalar(0.001);
