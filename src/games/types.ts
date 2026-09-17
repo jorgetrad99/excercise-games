@@ -14,6 +14,10 @@ import type { FaceFeed } from '../render/big-head';
 import type { HudExtras } from '../render/hud';
 import type { RenderStats } from '../render/view';
 
+/** A player's arm proportions from the body scan, torso lengths (PLAN-BOXING BX-CAL-6). */
+export type { ArmLengths } from '../pose/gestures';
+import type { ArmLengths } from '../pose/gestures';
+
 /** Per-frame mirroring pose (pose/pose-state.ts, docs/ARCHITECTURE.md "Pose mirroring"). */
 export type { ArmState, PoseState, Quat, Vec3 } from '../pose/pose-state';
 
@@ -84,6 +88,15 @@ export interface MiniGame<S extends GameSim = GameSim> {
   /** Draws players' live camera faces: the shell then crops them and passes them to createView. */
   faces?: boolean;
   gestureProfile: GestureProfile;
+  /** Continuous body input (Boxing, PLAN-BOXING §2.5): called once per new calibrated pose frame of
+   *  `player`; its event goes to that player's queue like any other input. `arms`: the player's body
+   *  scan (torso lengths), null = defaults. */
+  poseInput?: (pose: PoseState, player: number, arms: ArmLengths | null) => InputEvent;
+  /** False while `player` may not recalibrate (T-pose or C), e.g. Boxing while their boxer is down
+   *  (PLAN-BOXING BX-CAL-4). Absent = always allowed. */
+  canRecalibrate?: (sim: S, player: number) => boolean;
+  /** Calibration asks the player to show their knees (PLAN-BOXING BX-CAL-2). */
+  needsKnees?: boolean;
   /** Keyboard fallback keys; absent = Skate Run's. */
   keys?: KeyMap;
   /** Fixed tick length, s: window.__game.advance() steps whole ticks. */

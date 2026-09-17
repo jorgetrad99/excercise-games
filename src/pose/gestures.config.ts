@@ -12,6 +12,13 @@ export const gestureConfig = {
    * false events (0 at 1×/2×/4× that noise over 60 s). Pixel-space beta 0.007 ≈ 5 here.
    */
   filter: { minCutoff: 1.0, beta: 30, dCutoff: 1.0 },
+  /**
+   * Elbows and wrists: the filtered point never trails the raw landmark by more than this, image heights
+   * (x × aspect). One Euro only relaxes for fast IMAGE motion, and a punch at the camera has little: its
+   * reach is foreshortening. Unbounded, the filter clipped a half-extension jab's glove depth from 1.039
+   * to 0.97–1.01 m (a miss). Infinity = the plain filter. Chosen from tmp/filter-sweep (see PROGRESS).
+   */
+  armLagMax: 0,
   /** Landmarks below this MediaPipe visibility are ignored. */
   visibilityMin: 0.5,
   /** An ignored landmark keeps its last value this long (ms), then counts as lost. */
@@ -43,22 +50,13 @@ export const gestureConfig = {
   /** Both wrists above the nose, held this long (ms) → REVIVE_ACCEPT. */
   reviveHoldMs: 1000,
   /**
-   * Boxing fists (pose/fists.ts). Distances in torso lengths from the nose, speeds in torso/s of the
-   * wrist relative to the nose (measured over velocityWindowMs).
-   * PUNCH when an armed wrist has reached beyond `rearm` (2D from the nose, plus depth from where it
-   * rested) and moves faster than `speed`, and not mostly downward (aim.y > −maxDown). A wrist arms
-   * after staying within `rearm` (2D) and slower than `rearmSpeed` for `rearmMs`.
-   * zWeight scales MediaPipe's noisy depth (0 = ignore it; straight punches then rely on 2D drift).
-   * GUARD_START when both wrists are within guard.enter (2D); GUARD_END when either passes guard.exit.
-   * UNTUNED: set from synthetic poses only; needs a real-camera playtest.
+   * Boxing fists (pose/fists.ts): no punch thresholds (punches are glove collisions, PLAN-BOXING §2.5).
+   * Wrist speed signal in torso/s over velocityWindowMs; zWeight scales MediaPipe's noisy depth in it.
+   * Guard posture: GUARD_START when both wrists are within guard.enter of the nose (2D, torso lengths);
+   * GUARD_END when either passes guard.exit. UNTUNED: synthetic poses only.
    */
   fists: {
-    speed: 2.5,
     velocityWindowMs: 70,
-    rearm: 0.6,
-    rearmSpeed: 1,
-    rearmMs: 100,
-    maxDown: 0.7,
     zWeight: 1,
     /** Speed is measured against this point: 'nose' (original) or the arm's own 'shoulder', which
      *  ignores head bobs, ducks and sways that move both wrists relative to the face at once. */

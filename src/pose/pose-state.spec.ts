@@ -67,7 +67,10 @@ describe('pose state — real recording (Jorge, Skate Run session)', () => {
   });
 
   it('hanging arms point down, straight, no reach; the anatomical left arm hangs on +x', () => {
-    const p = at(8750);
+    // Was 8750. The arm landmarks are unfiltered now (PLAN-BOXING §2.1): the same hanging, no-reach pose
+    // reads one frame earlier (t 8716.6), because the old One Euro lag had shifted it by a frame (33 ms). By 8750
+    // the GRAB raise has started (right forearm y −0.68, −0.44 at 8800). Same thresholds.
+    const p = at(8710);
     const [l, r] = p.arms;
     for (const a of [l!, r!]) {
       expect(a.upper.y).toBeLessThan(-0.8);
@@ -97,7 +100,15 @@ describe('pose state — real recording (Jorge, Skate Run session)', () => {
 describe('pose state — hand-built arm geometry (bone-length depth)', () => {
   // Unit image (aspect 1), torso 0.3 tall, shoulders 0.2 wide, calibrated at this size: 1 torso = 0.3.
   const T = 0.3;
-  const calib = { shoulderX: 0.5, hipY: 0.6, noseY: 0.2, torsoLen: T, shoulderWidth: 0.2 };
+  const calib = {
+    shoulderX: 0.5,
+    hipX: 0.5,
+    hipY: 0.6,
+    noseY: 0.2,
+    torsoLen: T,
+    shoulderWidth: 0.2,
+    kneeY: null,
+  };
   const cfg = gestureConfig;
   const [lSh, rSh] = [
     { x: 0.6, y: 0.3 },
@@ -115,6 +126,8 @@ describe('pose state — hand-built arm geometry (bone-length depth)', () => {
     rWrist: { x: 0.4, y: 0.3 + (cfg.pose.upperArm + cfg.pose.forearm) * T },
     lHip: { x: 0.56, y: 0.6 },
     rHip: { x: 0.44, y: 0.6 },
+    lKnee: null,
+    rKnee: null,
   });
   const state = (b: Body) =>
     derivePoseState({

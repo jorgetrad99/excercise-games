@@ -26,61 +26,31 @@ const punch = (to: Key['to']): Key[] => [
   hold(400),
 ];
 
-describe('boxing fists — TEMPORARY synthetic event-sequence tests', () => {
+describe('boxing fists (guard posture + speed signal) — TEMPORARY synthetic event-sequence tests', () => {
   it('idle in the ready stance with jitter: nothing', () => {
     expect(types([hold(5000)])).toEqual([]);
   });
 
-  it('one straight = one PUNCH from that fist, aimed roughly straight', () => {
-    const events = after(punch({ punchR: 1 }));
-    expect(events.map((e) => e.type)).toEqual(['PUNCH_RIGHT']);
-    expect(Math.abs(events[0]!.aim!.x)).toBeLessThan(0.5);
-    expect(Math.abs(events[0]!.aim!.y)).toBeLessThan(0.5);
-    expect(types(punch({ punchL: 1 }))).toEqual(['PUNCH_LEFT']);
-  });
-
-  it('recovery: a second punch before the fist came back to the face does not fire', () => {
-    // Out, half back (still beyond `rearm`), out again, then home.
+  // PLAN-BOXING §2.5: punches are glove collisions in the sim; the pose layer emits no punch events.
+  it('no punch events from any arm motion: straights, hooks, uppercuts, flurries', () => {
     const flurry: Key[] = [
-      { ms: 120, to: { punchR: 1 } },
-      { ms: 150, to: { punchR: 0.5 } },
-      { ms: 120, to: { punchR: 1 } },
-      { ms: 250, to: {} },
-      hold(400),
+      ...punch({ punchR: 1 }),
+      ...punch({ punchL: 1 }),
+      ...punch({ hookR: 1 }),
+      ...punch({ upperL: 1 }),
+      { ms: 60, to: { punchR: 1 } },
+      { ms: 60, to: {} },
     ];
-    expect(types(flurry)).toEqual(['PUNCH_RIGHT']);
-    // The same two punches with a full return in between: two events.
-    expect(types([...punch({ punchR: 1 }), ...punch({ punchR: 1 })])).toEqual([
-      'PUNCH_RIGHT',
-      'PUNCH_RIGHT',
-    ]);
-    // Alternating fists are independent.
-    expect(
-      types([
-        { ms: 120, to: { punchR: 1 } },
-        { ms: 120, to: { punchL: 1 } },
-        { ms: 300, to: {} },
-        hold(400),
-      ]),
-    ).toEqual(['PUNCH_RIGHT', 'PUNCH_LEFT']);
+    expect(types(flurry).filter((e) => e !== 'GUARD_START' && e !== 'GUARD_END')).toEqual([]);
   });
 
-  it('slow reaches and dropping the hands do not punch', () => {
-    expect(
-      types([
-        { ms: 1200, to: { punchR: 1 } },
-        { ms: 1200, to: {} },
-      ]),
-    ).toEqual([]);
-  });
-
-  it('direction falls out of the vector: a right hook sweeps left, a left uppercut goes up', () => {
-    const hook = after(punch({ hookR: 1 }));
-    expect(hook.map((e) => e.type)).toEqual(['PUNCH_RIGHT']);
-    expect(hook[0]!.aim!.x).toBeLessThan(-0.5); // toward the puncher's left
-    const upper = after(punch({ upperL: 1 }));
-    expect(upper.map((e) => e.type)).toEqual(['PUNCH_LEFT']);
-    expect(upper[0]!.aim!.y).toBeGreaterThan(0.5);
+  it('wrist speed is still reported as a signal (PoseState arms[].speed)', () => {
+    const engine = createGestureEngine({ video });
+    const frames = script([CALIBRATE, { ms: 300, to: {} }, { ms: 120, to: { punchR: 1 } }], {
+      base: READY,
+    });
+    const speeds = frames.map((f) => engine.push(f).signals.fistR);
+    expect(Math.max(...speeds)).toBeGreaterThan(1);
   });
 
   it('losing tracking while guarding ends the guard (never leaves the sim stuck guarding)', () => {

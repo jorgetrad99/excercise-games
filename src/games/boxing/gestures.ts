@@ -1,10 +1,9 @@
-// Boxing's gesture → input mapping and keyboard fallback. Dodges reuse the lean and slide detectors.
+// Boxing's gesture → input mapping and keyboard fallback. Pose punches aren't gestures: the player's
+// gloves reach the sim as BODY input (body-input.ts). Guard/dodge/duck are posture classifiers.
 import type { KeyMap } from '../../input/keyboard';
 import type { GestureMap } from '../../input/pose-source';
 
 export const BOXING_GESTURES: GestureMap = {
-  PUNCH_LEFT: 'PUNCH_LEFT',
-  PUNCH_RIGHT: 'PUNCH_RIGHT',
   GUARD_START: 'GUARD_START',
   GUARD_END: 'GUARD_END',
   LANE_LEFT: 'DODGE_LEFT', // lean (leanX) = sway

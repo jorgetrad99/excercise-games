@@ -3,6 +3,7 @@ import type { InputEvent, InputEventType } from '../core/input';
 import type { VideoSize } from '../pose/body';
 import {
   createGestureEngine,
+  type ArmLengths,
   type GestureEvent,
   type GestureEventType,
   type SignalFrame,
@@ -19,6 +20,8 @@ export interface PoseSource extends InputSource {
   onSignals(cb: (s: SignalFrame) => void): () => void;
   /** Keyboard `C` → forget calibration. */
   recalibrate(t: number): void;
+  /** Body scan arm lengths for the depth model (null = defaults). */
+  setArms(arms: ArmLengths | null): void;
 }
 
 export interface PoseSourceOptions {
@@ -28,6 +31,8 @@ export interface PoseSourceOptions {
   now?: () => number;
   /** How often to check for tracking loss when no frames arrive; 0 = never (replay). */
   tickMs?: number;
+  /** False = ignore recalibration now (PLAN-BOXING BX-CAL-4). */
+  canRecalibrate?: () => boolean;
 }
 
 export function createPoseSource({
@@ -36,8 +41,13 @@ export function createPoseSource({
   config,
   now = () => performance.now(),
   tickMs = 100,
+  canRecalibrate,
 }: PoseSourceOptions): PoseSource {
-  const engine = createGestureEngine(config ? { video, config } : { video });
+  const engine = createGestureEngine({
+    video,
+    ...(config ? { config } : {}),
+    ...(canRecalibrate ? { canRecalibrate } : {}),
+  });
   const events = createListeners<InputEvent>();
   const signals = createListeners<SignalFrame>();
   let running = false;
@@ -47,7 +57,7 @@ export function createPoseSource({
     if (!running) return;
     for (const g of gestures) {
       const type = toInput[g.type];
-      if (type) events.emit(g.aim ? { t: g.t, type, aim: g.aim } : { t: g.t, type });
+      if (type) events.emit({ t: g.t, type });
     }
   };
 
@@ -69,5 +79,6 @@ export function createPoseSource({
       emit(r.events);
     },
     recalibrate: (t) => emit(engine.recalibrate(t)),
+    setArms: engine.setArms,
   };
 }

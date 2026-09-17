@@ -1,22 +1,13 @@
-// Boxing fists (Piece 4): each wrist on its own. A punch is the wrist's 3D speed relative to the
-// face (torso lengths/s) above a threshold once the fist has left the face zone; the event carries the
-// motion's direction as `aim` instead of a punch-type classifier. Radial speed alone was rejected:
-// hooks sweep around the head and uppercuts start toward the chin. A fired fist re-arms only when
-// it is back near the face AND has held nearly still for rearmMs (the Wii "wait until the glove
-// stops"), so the retraction can't fire. Guard = both wrists close to the nose, with hysteresis.
-// Speed and aim can be measured against the arm's own shoulder instead (fists.reference).
-// Face zone and guard are 2D: real wrist z sits a person-dependent ~1 torso behind the nose z, so
-// an absolute 3D distance never came back under `rearm` and no punch ever armed. Depth only counts as
-// displacement from where the fist rested when it armed (`restZ`).
+// Boxing fists: per-wrist speed signals and the guard posture. There is no punch detector: under player
+// authority (PLAN-BOXING §2.5) a punch is the player's glove reaching the opponent, scored by collision
+// in the sim. What stays here is a sustained-posture classifier (guard: both wrists near the nose, with
+// hysteresis) and the wrist speed that PoseState reports (fistL / fistR).
+// Guard is 2D: real wrist z sits a person-dependent ~1 torso behind the nose z (Jorge's recording).
+// Speed can be measured against the arm's own shoulder instead of the nose (fists.reference).
 import type { Measures, Point } from './body';
 import type { GestureConfig } from './gestures.config';
 
-export interface Aim {
-  x: number;
-  y: number;
-}
-
-/** Wrist relative to the nose: torso lengths, x aspect-corrected, z on the same scale. */
+/** Wrist relative to a reference point: torso lengths, x aspect-corrected, z on the same scale. */
 interface Rel {
   t: number;
   x: number;
@@ -25,46 +16,26 @@ interface Rel {
 }
 
 interface Hand {
-  armed: boolean;
-  /** When the wrist was last seen entering "near the face and slow" (null = not there now). */
-  stillSince: number | null;
-  /** Wrist z (torso) while resting armed: depth is measured from here. */
-  restZ: number;
   /** Wrist relative to the speed reference (fists.reference), newest last. */
   hist: Rel[];
-  /** Latest wrist position relative to the nose: the face zone, guard and reach are measured here. */
-  pos: Rel | null;
-  /** Latest frame: 2D distance from the nose (torso), speed relative to the reference (torso/s), direction. */
+  /** Latest 2D distance from the nose (torso), and speed relative to the reference (torso/s). */
   dist: number;
   speed: number;
-  aim: Aim;
 }
 
-const newHand = (): Hand => ({
-  armed: false,
-  stillSince: null,
-  restZ: 0,
-  hist: [],
-  pos: null,
-  dist: Infinity,
-  speed: 0,
-  aim: { x: 0, y: 0 },
-});
+const newHand = (): Hand => ({ hist: [], dist: Infinity, speed: 0 });
 
 export function newFists() {
   return { hands: [newHand(), newHand()] as [Hand, Hand], guard: false };
 }
 export type Fists = ReturnType<typeof newFists>;
 
-export type FistEmit = (
-  type: 'PUNCH_LEFT' | 'PUNCH_RIGHT' | 'GUARD_START' | 'GUARD_END',
-  aim?: Aim,
-) => void;
+export type FistEmit = (type: 'GUARD_START' | 'GUARD_END') => void;
 
 function relative(
   t: number,
   wrist: Point | null,
-  nose: Point,
+  ref: Point,
   m: Measures,
   torso: number,
   zWeight: number,
@@ -72,35 +43,27 @@ function relative(
   if (!wrist) return null;
   return {
     t,
-    x: ((wrist.x - nose.x) * m.aspect) / torso,
-    y: (wrist.y - nose.y) / torso,
-    z: (((wrist.z ?? 0) - (nose.z ?? 0)) * m.aspect * zWeight) / torso,
+    x: ((wrist.x - ref.x) * m.aspect) / torso,
+    y: (wrist.y - ref.y) / torso,
+    z: (((wrist.z ?? 0) - (ref.z ?? 0)) * m.aspect * zWeight) / torso,
   };
 }
 
 function updateHand(h: Hand, pos: Rel | null, rel: Rel | null, windowMs: number): void {
   if (!pos || !rel) {
-    Object.assign(h, { hist: [], pos: null, dist: Infinity, speed: 0 });
+    Object.assign(h, { hist: [], dist: Infinity, speed: 0 });
     return;
   }
-  h.pos = pos;
   let ref: Rel | undefined;
   for (const s of h.hist) if (s.t <= rel.t - windowMs) ref = s;
   ref ??= h.hist[0];
   h.hist.push(rel);
   while (h.hist.length > 0 && h.hist[0]!.t < rel.t - windowMs * 4) h.hist.shift();
   h.dist = Math.hypot(pos.x, pos.y);
-  if (!ref || rel.t <= ref.t) {
-    h.speed = 0;
-    return;
-  }
-  const [dx, dy, dz] = [rel.x - ref.x, rel.y - ref.y, rel.z - ref.z];
-  const len = Math.hypot(dx, dy, dz);
-  h.speed = len / ((rel.t - ref.t) / 1000);
-  if (len === 0) return;
-  // Image x grows toward the person's LEFT (unmirrored camera) and y grows down: flip both, so
-  // +x = the puncher's right and +y = up.
-  h.aim = { x: -dx / len, y: -dy / len };
+  h.speed =
+    ref && rel.t > ref.t
+      ? Math.hypot(rel.x - ref.x, rel.y - ref.y, rel.z - ref.z) / ((rel.t - ref.t) / 1000)
+      : 0;
 }
 
 /** Per frame (calibrated only): update both wrists; returns the signal values. */
@@ -118,32 +81,13 @@ export function trackFists(f: Fists, t: number, m: Measures, torso: number, cfg:
   return { fistL: l.speed, fistR: r.speed, guard: Math.max(l.dist, r.dist) < fists.guard.enter };
 }
 
-/** Edge-triggered punch and guard events from the state trackFists left this frame. */
-export function detectFists(f: Fists, t: number, cfg: GestureConfig, emit: FistEmit): void {
-  const { fists } = cfg;
-  f.hands.forEach((h, i) => {
-    const rel = h.pos;
-    if (!rel) return;
-    if (h.dist < fists.rearm && h.speed < fists.rearmSpeed) {
-      h.stillSince ??= t;
-      if (t - h.stillSince >= fists.rearmMs) h.armed = true;
-      if (h.armed) h.restZ = rel.z;
-    } else h.stillSince = null;
-    const reach = Math.hypot(rel.x, rel.y, rel.z - h.restZ);
-    // Dropping the hands fast is not a punch: mostly-downward motion never fires.
-    if (h.armed && reach > fists.rearm && h.speed > fists.speed && h.aim.y > -fists.maxDown) {
-      h.armed = false;
-      emit(i === 0 ? 'PUNCH_LEFT' : 'PUNCH_RIGHT', {
-        x: Math.round(h.aim.x * 100) / 100,
-        y: Math.round(h.aim.y * 100) / 100,
-      });
-    }
-  });
+/** Edge-triggered guard events from the state trackFists left this frame (posture, with hysteresis). */
+export function detectGuard(f: Fists, cfg: GestureConfig, emit: FistEmit): void {
   const far = Math.max(f.hands[0].dist, f.hands[1].dist);
-  if (!f.guard && far < fists.guard.enter) {
+  if (!f.guard && far < cfg.fists.guard.enter) {
     f.guard = true;
     emit('GUARD_START');
-  } else if (f.guard && far > fists.guard.exit) {
+  } else if (f.guard && far > cfg.fists.guard.exit) {
     f.guard = false;
     emit('GUARD_END');
   }

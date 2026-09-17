@@ -21,7 +21,10 @@ export type InputEventType =
   | 'GUARD_END'
   | 'DODGE_LEFT'
   | 'DODGE_RIGHT'
-  | 'DUCK';
+  | 'DUCK'
+  | 'BODY';
+
+type P3 = [number, number, number];
 
 /** Unit direction of a punch's motion in the puncher's frame: +x = puncher's right, +y = up.
  *  (0, 0) = straight at the opponent. */
@@ -35,6 +38,8 @@ export interface InputEvent {
   type: InputEventType;
   /** Punches only; absent = straight. */
   aim?: Aim;
+  /** BODY only: the player's body this pose frame, in the game's character frame (Boxing: boxer-local m). */
+  body?: { head: P3; gloves: [P3, P3] };
   /** Which player produced it (shared-sim games); absent = P1. */
   player?: number;
 }

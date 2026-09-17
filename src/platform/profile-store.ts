@@ -4,7 +4,7 @@
 // overwritten: corrupt data is copied to a backup key first, newer data makes the store read-only.
 
 export const STORAGE_KEY = 'move-arcade.profile';
-export const PROFILE_VERSION = 1;
+export const PROFILE_VERSION = 2;
 /** Matches kept per player (oldest dropped first); ~200 B each keeps a full profile well under 1 MB. */
 export const MAX_MATCHES = 1000; // ponytail: flat cap; aggregate old matches if players ever hit it
 
@@ -36,9 +36,25 @@ export interface ProfileV1 {
   lastNames: string[];
 }
 
-export type Profile = ProfileV1;
+/** A player's body scan (PLAN-BOXING BX-CAL-6): arm proportions in torso lengths, from a T-pose. */
+export interface BodyScan {
+  upperArm: number;
+  forearm: number;
+  shoulderWidth: number;
+  /** ISO time of the scan. */
+  at: string;
+}
 
-export const emptyProfile = (): Profile => ({ version: 1, players: {}, lastNames: [] });
+/** v2 (BX-CAL-6): a player may carry a body scan. */
+export interface ProfileV2 {
+  version: 2;
+  players: Record<string, { matches: MatchRecord[]; body?: BodyScan }>;
+  lastNames: string[];
+}
+
+export type Profile = ProfileV2;
+
+export const emptyProfile = (): Profile => ({ version: 2, players: {}, lastNames: [] });
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -49,18 +65,22 @@ export function migrate(raw: unknown): Profile | null {
   // Version 0 = before this store: only a bare "players" map of match arrays may exist.
   const version = typeof raw.version === 'number' ? raw.version : 0;
   if (version > PROFILE_VERSION) return null;
+  let v1: ProfileV1;
   if (version === 0) {
     const players = isRecord(raw.players) ? raw.players : {};
-    return {
+    v1 = {
       version: 1,
       players: Object.fromEntries(
         Object.entries(players).map(([name, m]) => [name, { matches: Array.isArray(m) ? m : [] }]),
       ) as ProfileV1['players'],
       lastNames: [],
     };
+  } else {
+    if (!isRecord(raw.players)) return null;
+    v1 = { ...emptyProfile(), ...(raw as Partial<ProfileV1>), version: 1 } as ProfileV1;
   }
-  if (!isRecord(raw.players)) return null;
-  return { ...emptyProfile(), ...(raw as Partial<ProfileV1>), version: 1 } as Profile;
+  // v1 → v2: shape-compatible; players simply have no body scan yet.
+  return { ...(v1 as unknown as Omit<ProfileV2, 'version'>), version: 2 };
 }
 
 /** Trim and collapse whitespace; empty and over-long names are rejected (null). */
@@ -139,6 +159,12 @@ export function createProfileStore(storage: StorageLike | null = defaultStorage(
       const p = (profile.players[name] ??= { matches: [] });
       p.matches.push(match);
       if (p.matches.length > MAX_MATCHES) p.matches.splice(0, p.matches.length - MAX_MATCHES);
+      save();
+    },
+    /** The player's body scan (BX-CAL-6), or null: games use default proportions then. */
+    body: (name: string): BodyScan | null => profile.players[name]?.body ?? null,
+    setBody(name: string, body: BodyScan): void {
+      (profile.players[name] ??= { matches: [] }).body = body;
       save();
     },
     /** A player's matches, oldest first, optionally of one game. */

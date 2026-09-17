@@ -82,7 +82,10 @@ test('2P: one shared match state; each player drives their own boxer; no bot', a
   await seek(page, C.phases.introS + 1);
   let p1 = await state(page, 0);
   expect(await state(page, 1)).toEqual(p1); // the same state from both players' side
-  expect(p1.boxers[0].stamina).toBeCloseTo(10 - C.stamina.clean);
+  // Damage scales with the glove's impact speed (PLAN-BOXING §2.3), read from the hit itself.
+  const hit = p1.boxers[0].hits.at(-1)!;
+  const mult = Math.min(C.impact.maxMult, hit.speed / C.impact.refSpeedMps);
+  expect(p1.boxers[0].stamina).toBeCloseTo(10 - C.stamina.clean * mult);
   expect(p1.boxers[1].landed).toBe(1);
 
   await page.keyboard.press('z'); // keyboard = P1 = boxer 0
@@ -95,7 +98,7 @@ test('2P: one shared match state; each player drives their own boxer; no bot', a
 });
 
 test(
-  'pose replay: punches and guard go through the gesture engine into the sim',
+  'pose replay: the body drives the gloves into collisions; a held guard goes through the gesture engine',
   { tag: '@realtime' },
   async ({ page }) => {
     test.setTimeout(60_000);
@@ -119,29 +122,41 @@ test(
     await page.route('**/fixtures/pose/synthetic-boxing.json', (r) => r.fulfill({ json: fx }));
     const problems = watchConsole(page);
     await page.goto('/?game=boxing&input=replay:synthetic-boxing.json&seed=42');
-    const punches = () =>
+    // Every frame: did boxer 0's right glove resolve against boxer 1? A hit or block latches `struck`, a
+    // miss latches `spent`. No punch events exist any more: the outcome is the collision's.
+    await page.evaluate(() => {
+      const seen = { resolved: false, poseTicks: 0 };
+      Object.assign(window, { __seen: seen });
+      const tick = () => {
+        const b = window.__game.getState<BoxingState>()?.boxers?.[0];
+        if (b?.body.source === 'pose') seen.poseTicks++;
+        if (b && (b.gloves[1].struck || b.gloves[1].spent)) seen.resolved = true;
+        requestAnimationFrame(tick);
+      };
+      tick();
+    });
+    const gestures = () =>
       page.evaluate(() =>
-        (window.__game.getEvents() as { type: string; aim?: { x: number; y: number } }[]).filter(
-          (e) => e.type !== 'JUMP',
-        ),
+        (window.__game.getEvents() as { type: string }[])
+          .map((e) => e.type)
+          .filter((t) => t !== 'JUMP'),
       );
-    await expect
-      .poll(async () => (await punches()).map((e) => e.type), { timeout: 30_000 })
-      .toEqual(['PUNCH_RIGHT', 'PUNCH_RIGHT', 'GUARD_START', 'GUARD_END']);
-    const [straight, hook] = await punches();
-    expect(Math.abs(straight!.aim!.x)).toBeLessThan(0.5);
-    expect(hook!.aim!.x).toBeLessThan(-0.5);
+    await expect.poll(gestures, { timeout: 30_000 }).toEqual(['GUARD_START', 'GUARD_END']);
+    const seen = await page.evaluate(
+      () => (window as unknown as { __seen: { resolved: boolean; poseTicks: number } }).__seen,
+    );
+    expect(seen.poseTicks).toBeGreaterThan(0);
+    expect(seen.resolved).toBe(true);
     const s = await state(page);
     expect(s.tick).toBeGreaterThan(0); // calibration opened the gate
-    expect(s.boxers[0].fists[1].phase).toBe('ready');
-    // The continuous mirroring pose rides along with the discrete events.
+    expect(s.boxers[0].body.source).toBe('pose');
+    // The continuous mirroring pose rides along with the body input.
     const pose = await page.evaluate(() => window.__game.getSignals()?.pose ?? null);
     expect(pose?.arms[0]?.upperRot).toHaveLength(4);
     expect(pose?.arms[1]?.reach).toBeGreaterThanOrEqual(0);
     expect(problems).toEqual([]);
   },
 );
-
 test(
   '2P pose replay: one body missing > 2 s pauses the shared match; both back resumes it',
   { tag: '@realtime' },
@@ -188,7 +203,7 @@ test.describe('boxing renderer', () => {
     await boot(page, 'input=bot&seed=42&clock=manual');
     await seek(page, 8.2);
     await expect(page).toHaveScreenshot('boxing-seed42-t8.png', { maxDiffPixelRatio: 0.01 });
-    await seek(page, 35.5); // boxer 1 is down, count running (seed 42)
+    await seek(page, 52.5); // boxer 1 is down, count running (seed 42: down 51.3–58.5 s under collision scoring)
     expect((await state(page)).phase).toBe('down');
     await expect(page).toHaveScreenshot('boxing-seed42-down.png', { maxDiffPixelRatio: 0.01 });
     const stats = await page.evaluate(() => window.__game.getRenderStats()!);

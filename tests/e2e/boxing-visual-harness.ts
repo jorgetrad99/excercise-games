@@ -10,16 +10,14 @@ import {
   SphereGeometry,
   Vector3,
 } from 'three';
-import { createBoxer } from '../../src/render/boxing/boxer';
+import { createBoxer, type LiveTurns } from '../../src/render/boxing/boxer';
 import type { HeadReaction } from '../../src/render/boxing/animation';
 import { loadModel } from '../../src/render/models';
 import { createRenderer } from '../../src/render/renderer';
+import { predictPose } from '../../src/core/boxing/body';
+import { boxingConfig as C } from '../../src/core/boxing/boxing.config';
 import { initBoxing, tickBoxing, type BoxingInput } from '../../src/core/boxing/sim';
-import {
-  createLiveSmoother,
-  type LiveExpression,
-  type LivePose,
-} from '../../src/render/boxing/live-pose';
+import { boxingAuthority } from '../../src/games/boxing/authority';
 
 export async function createVisualHarness() {
   const canvas = document.createElement('canvas');
@@ -52,14 +50,24 @@ export async function createVisualHarness() {
   ctx.fillRect(80, 132, 35, 8);
   const feed = { canvas: () => crop, version: () => 1 };
   let state = initBoxing({ seed: 42, skipIntro: true });
-  const smoother = createLiveSmoother();
-  let live: LiveExpression = smoother(null, 0);
+  let turns: LiveTurns | null = null;
   const render = () => {
-    boxer.update(state, 1, false, { feed, player: 0 }, live);
+    boxer.update(
+      state,
+      1,
+      false,
+      { feed, player: 0 },
+      {
+        authority: boxingAuthority(state, 1),
+        body: predictPose(state.boxers[1].body),
+        turns: state.boxers[1].body.source === 'pose' ? turns : null,
+        dtS: C.fixedDt,
+      },
+    );
     renderer.render(scene, camera);
   };
   const step = (seconds: number, events: BoxingInput[] = []) => {
-    for (let i = 0; i < Math.round(seconds * 60); i++) {
+    for (let i = 0; i < Math.round(seconds / C.fixedDt); i++) {
       tickBoxing(state, i === 0 ? events : []);
       render();
     }
@@ -95,9 +103,15 @@ export async function createVisualHarness() {
     },
     step,
     render,
-    /** Settle the smoother on `pose` (10 s of easing), then draw. */
-    live(pose: LivePose | null) {
-      live = smoother(pose, 10);
+    /** Boxer 1's player body for one tick: a BODY sample (head/gloves, boxer-local m) plus live turns. */
+    live(body: NonNullable<BoxingInput['body']>, liveTurns: LiveTurns | null = null) {
+      turns = liveTurns;
+      tickBoxing(state, [{ type: 'BODY', player: 1, t: state.t * 1000, body }]);
+      render();
+    },
+    /** Redraws the same tick with different live turns (no sim step, so nothing else moves). */
+    turn(liveTurns: LiveTurns | null) {
+      turns = liveTurns;
       render();
     },
     restart() {
@@ -118,6 +132,8 @@ export async function createVisualHarness() {
           boxer.object.getObjectByName(n)!.position.toArray(),
         ),
         size: new Box3().setFromObject(head).getSize(new Vector3()).toArray(),
+        /** Drawn head and glove centres, world m (the harness boxer stands at the origin facing +z). */
+        rig: boxer.probe(),
         /** Largest face-cap radius, m: grows as swelling bulges the surface. */
         faceRadius: (() => {
           const p = face.geometry.getAttribute('position');

@@ -3,7 +3,7 @@
 // (e.g. REVIVE_ACCEPT mid-run), which keeps this module testable from pose data alone.
 import { createBodyTracker, measure, type Measures, type VideoSize } from './body';
 import { createCalibrator, type Calib, type CalibStatus } from './calibration';
-import { detectFists, newFists, trackFists, type Aim } from './fists';
+import { detectGuard, newFists, trackFists } from './fists';
 import { gestureConfig, type GestureConfig } from './gestures.config';
 import { derivePoseState, type PoseState } from './pose-state';
 import type { PoseFrame } from './types';
@@ -20,16 +20,12 @@ export type GestureEventType =
   | 'CALIBRATED'
   | 'TRACKING_LOST'
   | 'TRACKING_RESTORED'
-  | 'PUNCH_LEFT'
-  | 'PUNCH_RIGHT'
   | 'GUARD_START'
   | 'GUARD_END';
 
 export interface GestureEvent {
   t: number;
   type: GestureEventType;
-  /** Punches: direction of the fist's motion, puncher's frame (+x = their right, +y = up). */
-  aim?: Aim;
 }
 
 export interface SignalFrame {
@@ -46,11 +42,13 @@ export interface SignalFrame {
   tPose: boolean;
   /** zones mode: 0 left, 1 center, 2 right (mirrored). */
   zone: number;
-  /** Left / right wrist speed relative to the face, torso lengths/s (boxing punches). */
+  /** Left / right wrist speed relative to the face, torso lengths/s (a signal; nothing gates on it). */
   fistL: number;
   fistR: number;
   /** Both wrists near the face (boxing guard, without the detector's hysteresis). */
   guard: boolean;
+  /** Both knees tracked this frame (PLAN-BOXING BX-CAL-2: "step back so your knees are visible"). */
+  knees: boolean;
   tracking: 'ok' | 'lost';
   calibration: CalibStatus;
   /** Continuous pose for mirroring onto a rig (pose/pose-state.ts); null until calibrated or while
@@ -58,7 +56,7 @@ export interface SignalFrame {
   pose: PoseState | null;
 }
 
-type Emit = (type: GestureEventType, aim?: Aim) => void;
+type Emit = (type: GestureEventType) => void;
 
 function initialDetectors() {
   return {
@@ -182,6 +180,14 @@ function detectSlide(d: Detectors, s: SignalFrame, cfg: GestureConfig, emit: Emi
 export interface GestureEngineOptions {
   video: () => VideoSize;
   config?: GestureConfig;
+  /** False = recalibration (T-pose hold or keyboard C) is ignored right now (PLAN-BOXING BX-CAL-4). */
+  canRecalibrate?: () => boolean;
+}
+
+/** A player's body scan (torso lengths): replaces the default bone lengths of the depth model. */
+export interface ArmLengths {
+  upperArm: number;
+  forearm: number;
 }
 
 function detectAll(
@@ -194,14 +200,14 @@ function detectAll(
   detectLanes(d, s, m, config, emit);
   detectJumpAndGrab(d, s, config, emit);
   detectSlide(d, s, config, emit);
-  detectFists(d.fists, s.t, config, emit);
+  detectGuard(d.fists, config, emit);
   if (heldFor(d.revive, s.armsUp, s.t, config.reviveHoldMs)) emit('REVIVE_ACCEPT');
 }
 
 /** Runs `fn` with an emitter stamped at `t` and returns what it emitted. */
 function collect(t: number, fn: (emit: Emit) => void): GestureEvent[] {
   const events: GestureEvent[] = [];
-  fn((type, aim) => events.push(aim ? { t, type, aim } : { t, type }));
+  fn((type) => events.push({ t, type }));
   return events;
 }
 
@@ -244,13 +250,50 @@ function updateTracking(
   return 'lost';
 }
 
-export function createGestureEngine({ video, config = gestureConfig }: GestureEngineOptions) {
+/** Tracking loss/restore events; returns the detectors (reset on loss, so nothing stays held). */
+function trackingChange(
+  tracking: Tracking,
+  d: Detectors,
+  t: number,
+  seen: boolean,
+  lostMs: number,
+  emit: Emit,
+): Detectors {
+  const change = updateTracking(tracking, t, seen, lostMs);
+  if (change === 'restored') emit('TRACKING_RESTORED');
+  if (change !== 'lost') return d;
+  if (d.sliding) emit('SLIDE_END');
+  if (d.fists.guard) emit('GUARD_END');
+  emit('TRACKING_LOST');
+  return { ...initialDetectors(), zone: d.zone };
+}
+
+/** One calibration step; CALIBRATED on the frame it completes. */
+function calibrate(
+  calibrator: ReturnType<typeof createCalibrator>,
+  t: number,
+  m: Measures | null,
+  emit: Emit,
+) {
+  const wasCalibrated = calibrator.status().state === 'calibrated';
+  const calibration = calibrator.update(t, m);
+  const calib = calibration.state === 'calibrated' ? calibration.calib : null;
+  // d.zone stays 1 (the sim's start lane): an off-center player gets catch-up LANE events next frame.
+  if (calib && !wasCalibrated) emit('CALIBRATED');
+  return { calibration, calib, wasCalibrated };
+}
+
+export function createGestureEngine({
+  video,
+  config: base = gestureConfig,
+  canRecalibrate = () => true,
+}: GestureEngineOptions) {
+  let config = base;
   const track = createBodyTracker(config, video);
   const calibrator = createCalibrator(config);
   let d = initialDetectors();
   const tracking: Tracking = { state: 'lost', lastSeenT: -Infinity, everOk: false };
   const tPose = newHold();
-
   const reset = (emit: Emit): void => {
     calibrator.reset();
     if (d.sliding) emit('SLIDE_END'); // never leave the sim stuck sliding
@@ -258,41 +301,28 @@ export function createGestureEngine({ video, config = gestureConfig }: GestureEn
     d = initialDetectors();
   };
   const trackingEvents = (t: number, seen: boolean, emit: Emit): void => {
-    const change = updateTracking(tracking, t, seen, config.trackingLostMs);
-    if (change === 'restored') emit('TRACKING_RESTORED');
-    if (change !== 'lost') return;
-    if (d.sliding) emit('SLIDE_END');
-    if (d.fists.guard) emit('GUARD_END');
-    d = { ...initialDetectors(), zone: d.zone };
-    emit('TRACKING_LOST');
+    d = trackingChange(tracking, d, t, seen, config.trackingLostMs, emit);
   };
-
   function push(frame: PoseFrame): { signals: SignalFrame; events: GestureEvent[] } {
     const events: GestureEvent[] = [];
-    const emit: Emit = (type, aim) =>
-      events.push(aim ? { t: frame.t, type, aim } : { t: frame.t, type });
+    const emit: Emit = (type) => events.push({ t: frame.t, type });
     const { width, height } = video();
     const body = track(frame);
     const m = measure(body, width / height, config);
     // Raw pose presence, not held landmarks: "no pose for 700 ms" shouldn't wait out the 300 ms hold too.
     trackingEvents(frame.t, frame.poses.length > 0 && m !== null, emit);
-    if (heldFor(tPose, m?.tPose ?? false, frame.t, config.tPose.holdMs)) {
+    if (heldFor(tPose, m?.tPose ?? false, frame.t, config.tPose.holdMs) && canRecalibrate()) {
       reset(emit);
       emit('RECALIBRATE');
     }
-    const wasCalibrated = calibrator.status().state === 'calibrated';
-    const calibration = calibrator.update(frame.t, m);
-    const calib = calibration.state === 'calibrated' ? calibration.calib : null;
-    if (calib && !wasCalibrated) {
-      // d.zone stays 1 (the sim's start lane): an off-center player gets catch-up LANE events next frame.
-      emit('CALIBRATED');
-    }
+    const { calibration, calib, wasCalibrated } = calibrate(calibrator, frame.t, m, emit);
     const derived = deriveSignals(frame.t, m, calib, d, config);
     const signals: SignalFrame = {
       t: frame.t,
       ...derived,
       armsUp: m?.armsUp ?? false,
       tPose: m?.tPose ?? false,
+      knees: m?.knees != null,
       zone: d.zone,
       tracking: tracking.state,
       calibration,
@@ -302,12 +332,15 @@ export function createGestureEngine({ video, config = gestureConfig }: GestureEn
     if (m && calib && wasCalibrated) detectAll(d, signals, m, config, emit);
     return { signals, events };
   }
-
   return {
     push,
     /** Call periodically: tracking can be lost with no frames arriving at all (worker restarting). */
     tick: (t: number) => collect(t, (emit) => trackingEvents(t, false, emit)),
-    /** Keyboard `C`: forget calibration; the player stands still again. */
-    recalibrate: (t: number) => collect(t, reset),
+    /** Keyboard `C`: forget calibration; the player stands still again (unless the game forbids it now). */
+    recalibrate: (t: number) => collect(t, (emit) => canRecalibrate() && reset(emit)),
+    /** Use this player's scanned arm lengths (null = the defaults) for depth reconstruction. */
+    setArms(arms: ArmLengths | null): void {
+      config = { ...config, pose: { ...config.pose, ...(arms ?? base.pose) } };
+    },
   };
 }

@@ -33,7 +33,7 @@ test('2P match: both names get a record; reload; Stats shows record, charts and 
   const profile = await saved(page);
   const ana = profile.players.Ana.matches[0];
   const beto = profile.players.Beto.matches[0];
-  expect(profile.version).toBe(1);
+  expect(profile.version).toBe(2);
   expect(ana).toMatchObject({ game: 'boxing', players: 2, opponent: 'Beto' });
   expect(beto).toMatchObject({ opponent: 'Ana' });
   expect(ana.stats.cleanHits).toBe(s.boxers[0].landed);

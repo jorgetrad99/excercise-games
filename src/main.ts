@@ -58,6 +58,12 @@ const renderRate = createRate();
 let game: RegisteredGame | null = null;
 let players: Player[] = [];
 let view: GameView<OpaqueSim> | null = null;
+/** The launched game's recalibration gate for `player` (PLAN-BOXING BX-CAL-4). */
+const canRecalibrate = (player: number): boolean => {
+  const p = players[player];
+  return !p || !game?.canRecalibrate || game.canRecalibrate(p.sim, player);
+};
+
 /** Pose/replay runs wait for calibration; any keyboard input also opens the gate (fallback). */
 let keyboardUsed = false;
 /** Results stay up at least this long, so a late dodge-jump doesn't skip them, ms. */
@@ -104,8 +110,9 @@ let pushing: FrameTiming | null = null;
 function record(e: InputEvent, player = 0): void {
   const p = players[player];
   if (!p) return; // menu still up, or no such player
-  if (player === 0) latency.event(e, pushing, performance.now()); // latency/judder track P1 only
   p.queue.push({ ...e, player }); // a shared sim needs to know whose event it is
+  if (e.type === 'BODY') return; // one per pose frame: continuous input, not a gesture to log
+  if (player === 0) latency.event(e, pushing, performance.now()); // latency/judder track P1 only
   events.push(e);
   if (events.length > 200) events.shift();
   if (player === 0) signalHud?.event(e);
@@ -117,8 +124,13 @@ let keyboard: ReturnType<typeof createKeyboardSource> | null = null;
 
 function attach(source: PosePlayers): void {
   source.onEvent((e) => record(e, e.player));
+  names.forEach((name, i) => source.setArms(i, profiles.body(name)));
   source.onSignals((s) => {
     const p = players[s.player];
+    const pose = s.pose;
+    // A new calibrated pose frame (signals also refresh without one): the game's continuous body input.
+    if (p && pose && pose.t !== p.signals?.pose?.t && game?.poseInput)
+      record(game.poseInput(pose, s.player, profiles.body(names[s.player] ?? '')), s.player);
     if (p) p.signals = s;
     if (s.player === 0) signalHud?.signals(s);
   });
@@ -158,7 +170,13 @@ function startInput({
   keyboard.onEvent(() => (keyboardUsed = true));
   keyboard.start();
   if (input === 'pose') {
-    const source = createPosePlayers({ players: playerCount, video: videoSize, toInput, config });
+    const source = createPosePlayers({
+      players: playerCount,
+      video: videoSize,
+      toInput,
+      config,
+      canRecalibrate,
+    });
     pose?.setNumPoses(playerCount);
     if (usesFaces) {
       const crops = (faces = createFaceCrops(playerCount));
@@ -175,7 +193,7 @@ function startInput({
   } else if (input.startsWith('replay:')) {
     // replay:jump.json → /fixtures/pose/jump.json; anything with a slash is used as the URL as-is.
     const name = input.slice('replay:'.length);
-    const opts = { toInput, config, players: playerCount };
+    const opts = { toInput, config, players: playerCount, canRecalibrate };
     fetch(name.includes('/') ? name : `/fixtures/pose/${name}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${name}: HTTP ${r.status}`))))
       .then((fx: PoseFixture) => attach(createReplaySource(fx, opts)))
@@ -191,7 +209,9 @@ function trackingLabel({ signals }: Player): { tracking: string; trackingOk: boo
     return { tracking: '📷 step back into frame', trackingOk: false };
   if (c.state !== 'calibrated') {
     const pct = c.state === 'calibrating' ? ` ${Math.round(c.progress * 100)}%` : '';
-    return { tracking: `📷 calibrating${pct}: stand still`, trackingOk: false };
+    // BX-CAL-2: calibration still completes without knees; the player just can't march then.
+    const knees = game?.needsKnees && !signals.knees ? ' · step back so your knees are visible' : '';
+    return { tracking: `📷 calibrating${pct}: stand still${knees}`, trackingOk: false };
   }
   return { tracking: '📷 tracking', trackingOk: true };
 }
@@ -370,10 +390,12 @@ else {
     players: playerCount,
     dwellMs: gestureConfig.cursor.dwellMs,
     profiles,
+    video: videoSize,
   });
   const cursors = createHandCursors(gestureConfig);
   frameSink = (f) => {
     const { width, height } = videoSize();
     menu.hover(cursors(f, width / height), f.t);
+    menu.frame(f);
   };
 }

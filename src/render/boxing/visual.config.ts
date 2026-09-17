@@ -4,10 +4,8 @@ export const boxingVisual = {
   /** Proportional radius before headScale, metres. */
   headRadius: 0.12,
   headLift: 0.23,
-  fallS: 0.7,
-  riseS: 0.9,
-  /** Hit recoil and head kick length, s. */
-  hitS: 0.44,
+  /** Hit reaction (overlay O1) length, s: PLAN-BOXING §2.2 bounds it to ≤ 0.35 s. */
+  hitS: 0.35,
   /** Dizzy wobble fade in/out time constant, s. */
   dizzyEaseS: 0.15,
   bruisePerHit: 0.24,

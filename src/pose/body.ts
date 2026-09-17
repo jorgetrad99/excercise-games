@@ -23,10 +23,18 @@ const PARTS = {
   rWrist: 16,
   lHip: 23,
   rHip: 24,
+  lKnee: 25,
+  rKnee: 26,
 } as const;
 type Part = keyof typeof PARTS;
 export type Body = Record<Part, Point | null>;
 const PART_NAMES = Object.keys(PARTS) as Part[];
+/** Arm joints: their small image motion carries a punch's depth (bone foreshortening), see armLagMax. */
+const ARM_PARTS: ReadonlySet<Part> = new Set(['lElbow', 'rElbow', 'lWrist', 'rWrist']);
+
+/** `smoothed` pulled back to within `max` of `raw` (per axis): smoothing can't trail the signal further. */
+const bounded = (raw: number, smoothed: number, max: number): number =>
+  raw + Math.max(-max, Math.min(max, smoothed - raw));
 
 export interface VideoSize {
   width: number;
@@ -68,10 +76,15 @@ export function createBodyTracker(cfg: GestureConfig, video: () => VideoSize) {
           tr.fy = createOneEuro(cfg.filter);
           tr.fz = createOneEuro(cfg.filter);
         }
+        // Arms: One Euro removes jitter, but never lags the landmark by more than armLagMax, or it
+        // clips the peak of a punch aimed at the camera (PLAN-BOXING §2.1, "smoothing is suspect").
+        const max = ARM_PARTS.has(part) ? cfg.armLagMax : Infinity;
+        const x = lm.x * aspect;
+        const z = lm.z * aspect; // z shares x's scale
         tr.value = {
-          x: tr.fx(lm.x * aspect, frame.t) / aspect,
-          y: tr.fy(lm.y, frame.t),
-          z: tr.fz(lm.z * aspect, frame.t) / aspect, // z shares x's scale
+          x: bounded(x, tr.fx(x, frame.t), max) / aspect,
+          y: bounded(lm.y, tr.fy(lm.y, frame.t), max),
+          z: bounded(z, tr.fz(z, frame.t), max) / aspect,
         };
         tr.seenT = frame.t;
       } else if (frame.t - tr.seenT > cfg.holdLandmarkMs) {
@@ -98,13 +111,15 @@ export interface Measures {
   aspect: number;
   armsUp: boolean;
   tPose: boolean;
+  /** Both knees tracked (PLAN-BOXING BX-CAL-1/2: marching needs them); null when either isn't. */
+  knees: [Point, Point] | null;
 }
 
 const mid = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
 /** Null when shoulders or hips are missing: without them there is no scale reference. */
 export function measure(body: Body, aspect: number, cfg: GestureConfig): Measures | null {
-  const { lShoulder, rShoulder, lHip, rHip, nose, lWrist, rWrist } = body;
+  const { lShoulder, rShoulder, lHip, rHip, nose, lWrist, rWrist, lKnee, rKnee } = body;
   if (!lShoulder || !rShoulder || !lHip || !rHip) return null;
   const dist = (a: Point, b: Point) => Math.hypot((a.x - b.x) * aspect, a.y - b.y);
   const shoulderCenter = mid(lShoulder, rShoulder);
@@ -129,5 +144,6 @@ export function measure(body: Body, aspect: number, cfg: GestureConfig): Measure
     aspect,
     armsUp: !!(nose && lWrist && rWrist && lWrist.y < nose.y && rWrist.y < nose.y),
     tPose: extended(lWrist, lShoulder) && extended(rWrist, rShoulder),
+    knees: lKnee && rKnee ? [lKnee, rKnee] : null,
   };
 }

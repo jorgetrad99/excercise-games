@@ -15,18 +15,48 @@ import {
   Vector3,
   type Object3D,
 } from 'three';
+import { predictPose } from '../../core/boxing/body';
+import { boxingConfig as C } from '../../core/boxing/boxing.config';
 import type { BoxingSim } from '../../core/boxing/sim';
-import type { BoxerId } from '../../core/boxing/types';
+import type { BoxerId, BoxingState } from '../../core/boxing/types';
 import type { FaceFeed } from '../big-head';
 import { loadModel } from '../models';
 import { createRenderer } from '../renderer';
 import { useSlot, type RenderStats } from '../view';
-import { createBoxer } from './boxer';
+import { createBoxer, type BoxerFrame, type LiveTurns } from './boxer';
 import type { HeadReaction } from './animation';
-import { createLiveFeed, type LivePose } from './live-pose';
+import type { Quat } from './rig';
 
-/** Half the distance between the boxers, m. */
-const GAP = 0.78;
+/** Structural subset of pose/PoseState the view reads (render may not import pose/). */
+export interface LivePose {
+  hips: { rot: Quat };
+  torso: { rot: Quat };
+  head: { rot: Quat };
+}
+/** games/boxing/authority, injected by the game (render doesn't import games). */
+export type AuthorityFn = (s: Readonly<BoxingState>, who: BoxerId) => BoxerFrame['authority'];
+
+const turnsOf = (p: LivePose | null | undefined): LiveTurns | null =>
+  p ? { hips: p.hips.rot, torso: p.torso.rot, head: p.head.rot } : null;
+
+/** Bodies come from the sim (the player's pose or the puppet), predicted to now (PLAN-BOXING §2.1);
+ *  rotations from the live pose while that boxer is pose-driven. */
+function boxerFrames(
+  s: Readonly<BoxingState>,
+  poses: readonly (LivePose | null)[],
+  authority: AuthorityFn,
+  dtS: number,
+): BoxerFrame[] {
+  return s.boxers.map((b, who) => ({
+    authority: authority(s, who as BoxerId),
+    body: predictPose(b.body),
+    turns: b.body.source === 'pose' ? turnsOf(poses[who]) : null,
+    dtS,
+  }));
+}
+
+/** Half the distance between the boxers, m: the sim's, so drawn and collided bodies coincide. */
+const GAP = C.ring.gapM;
 const RING = 5.5;
 
 function buildRing(): Object3D {
@@ -102,7 +132,11 @@ function place(scene: Scene, boxer: Object3D, i: number): Group {
 }
 
 /** 2P: each boxer wears its player's face; 1P: both wear P1's face. */
-export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFeed) {
+export async function createBoxingView(
+  canvas: HTMLCanvasElement,
+  authority: AuthorityFn,
+  faces?: FaceFeed,
+) {
   const renderer = createRenderer(canvas);
   renderer.info.autoReset = false;
   const scene = boxingScene();
@@ -112,7 +146,7 @@ export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFe
   const eye = new Vector3();
   const face = new Vector3();
   let frames = 0;
-  const liveFeed = createLiveFeed();
+  let last = performance.now();
 
   return {
     /** `poses[i]`: player i's live body. 2P: player i is boxer i; 1P: player 0 is boxer 0, 1 is the bot. */
@@ -123,9 +157,12 @@ export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFe
     ): null {
       frames++;
       renderer.info.reset();
-      const live = liveFeed(poses);
+      const now = performance.now();
+      const dtS = Math.min(0.1, (now - last) / 1000);
+      last = now;
       sims.forEach((sim, index) => {
         const s = sim.getState();
+        const frames = boxerFrames(s, poses, authority, index === 0 ? dtS : 0);
         const me = (index === 1 ? 1 : 0) as BoxerId;
         useSlot(renderer, camera, canvas, { index, count: sims.length });
         boxers.forEach((b, who) =>
@@ -134,7 +171,7 @@ export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFe
             who as BoxerId,
             who === me,
             faces && { feed: faces, player: sims.length === 2 ? who : 0 },
-            live[who],
+            frames[who]!,
           ),
         );
         holders.forEach((h) => h.updateMatrixWorld(true));

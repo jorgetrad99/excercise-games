@@ -19,16 +19,24 @@ function run(s: BoxingState, seconds: number, events: BoxingInput[] = []): strin
   return out;
 }
 const PUNCH_S = C.punch.travelS + C.punch.retractS + 0.02;
+/** The stamina a clean hit on `who` just took: base drain scaled by that hit's impact speed. */
+const clean = (s: BoxingState, who: BoxerId): number => {
+  const hit = s.boxers[who].hits.at(-1)!;
+  const part = hit.part === 'body' ? C.impact.bodyMult : 1;
+  return C.stamina.clean * part * Math.min(C.impact.maxMult, hit.speed / C.impact.refSpeedMps);
+};
 const HOOK_RIGHT: Aim = { x: 0.9, y: 0 }; // left fist sweeping toward the puncher's right
 const UPPER: Aim = { x: 0, y: 0.9 };
 
 describe('boxing sim rules', () => {
-  it('a straight lands after travel time and costs the defender a clean hit', () => {
+  it('a key straight lands when its glove reaches the face; damage scales with impact speed', () => {
     const s = fight();
-    expect(run(s, C.punch.travelS - 0.03, [ev('PUNCH_RIGHT')])).toEqual(['PUNCH']);
+    expect(run(s, 0.05, [ev('PUNCH_RIGHT')])).toEqual(['PUNCH']); // glove still on its way
     expect(s.boxers[1].stamina).toBe(10);
-    expect(run(s, 0.05)).toEqual(['HIT']);
-    expect(s.boxers[1].stamina).toBeCloseTo(10 - C.stamina.clean);
+    expect(run(s, C.punch.travelS)).toEqual(['HIT']);
+    expect(s.boxers[1].hits.at(-1)).toMatchObject({ part: 'head' });
+    expect(s.boxers[1].hits.at(-1)!.speed).toBeGreaterThan(1);
+    expect(s.boxers[1].stamina).toBeCloseTo(10 - clean(s, 1));
     expect(s.boxers[0].landed).toBe(1);
   });
 
@@ -46,7 +54,7 @@ describe('boxing sim rules', () => {
     expect(run(s, PUNCH_S, [ev('GUARD_START', 1), ev('PUNCH_LEFT')])).toEqual(['PUNCH', 'BLOCK']);
     expect(s.boxers[1].stamina).toBeCloseTo(10 - C.stamina.blocked);
     expect(run(s, PUNCH_S, [ev('PUNCH_LEFT', 0, UPPER)])).toEqual(['PUNCH', 'HIT']);
-    expect(s.boxers[1].stamina).toBeCloseTo(10 - C.stamina.blocked - C.stamina.clean);
+    expect(s.boxers[1].stamina).toBeCloseTo(10 - C.stamina.blocked - clean(s, 1));
   });
 
   it('a sway beats a straight (whiff costs the attacker) and opens a counter window', () => {
@@ -55,7 +63,33 @@ describe('boxing sim rules', () => {
     const afterWhiff = 10 - C.stamina.whiff;
     expect(s.boxers[0].stamina).toBeCloseTo(afterWhiff);
     expect(run(s, PUNCH_S, [ev('PUNCH_LEFT', 1)])).toEqual(['PUNCH', 'COUNTER']);
-    expect(s.boxers[0].stamina).toBeCloseTo(afterWhiff - C.stamina.clean * C.stamina.counterMult);
+    expect(s.boxers[0].stamina).toBeCloseTo(afterWhiff - clean(s, 0) * C.stamina.counterMult);
+  });
+
+  it('a guard raised onto a glove already on its way in blocks it (the glove does not pass through)', () => {
+    for (const late of [10, 11, 12]) {
+      const s = fight();
+      const out: string[] = [];
+      for (let i = 0; i < PUNCH_S / C.fixedDt; i++) {
+        tickBoxing(s, [
+          ...(i === 0 ? [ev('PUNCH_RIGHT')] : []),
+          ...(i === late ? [ev('GUARD_START', 1)] : []),
+        ]);
+        out.push(...s.events.map((e) => `${e.type}:${e.boxer}`));
+      }
+      expect(out, `guard on tick ${late}`).toContain('BLOCK:1');
+      expect(out, `guard on tick ${late}`).not.toContain('HIT:1');
+    }
+  });
+
+  it('key straights travel level: on an idle boxer a right lands on the left cheek, a left on the right (not the chin)', () => {
+    const landed = (e: BoxingInput) => {
+      const s = fight();
+      const events = run(s, PUNCH_S, [e]);
+      return { events, zone: s.boxers[1].hits.at(-1)?.zone };
+    };
+    expect(landed(ev('PUNCH_RIGHT'))).toEqual({ events: ['PUNCH', 'HIT'], zone: 0 });
+    expect(landed(ev('PUNCH_LEFT'))).toEqual({ events: ['PUNCH', 'HIT'], zone: 1 });
   });
 
   it('dodge vs aim falls out of the vector: hooks catch a sway into them, uppercuts catch a duck', () => {
@@ -192,10 +226,12 @@ describe('boxing bot and determinism', () => {
   it('the 1P bot reacts: guards or sways against telegraphed punches far more than chance', () => {
     const sim = createBoxingSim({ seed: 5, skipIntro: true }, boxingBot([1]));
     const counts = { thrown: 0, defended: 0 };
-    for (let tick = 0; tick < 40 * 39; tick++) {
-      // A punch every 39 ticks (0.65 s): off the bot's 6-tick punch grid, like a human.
+    const every = Math.round(0.65 / C.fixedDt) + 1; // 0.65 s, off the bot's punch grid, like a human
+    for (let tick = 0; tick < 40 * every; tick++) {
       const punch =
-        tick % 39 === 0 ? [{ t: 0, type: tick % 78 ? 'PUNCH_LEFT' : 'PUNCH_RIGHT' } as const] : [];
+        tick % every === 0
+          ? [{ t: 0, type: tick % (2 * every) ? 'PUNCH_LEFT' : 'PUNCH_RIGHT' } as const]
+          : [];
       sim.step(C.fixedDt, punch);
       for (const e of sim.drainEvents()) {
         if (e.type === 'PUNCH' && e.boxer === 0) counts.thrown++;

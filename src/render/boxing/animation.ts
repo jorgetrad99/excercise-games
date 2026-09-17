@@ -1,9 +1,8 @@
-import { Quaternion, Vector3, type Bone, type Object3D } from 'three';
+import { Quaternion, type Bone, type Object3D } from 'three';
 import type { BoxingState, BoxerId } from '../../core/boxing/types';
 import type { Rig } from '../skater';
-import type { LiveExpression } from './live-pose';
 import type { Presentation } from './presentation';
-import { boxingVisual as V } from './visual.config';
+import type { Quat, RigPose } from './rig';
 
 export interface HeadReaction {
   duration: number;
@@ -12,30 +11,14 @@ export interface HeadReaction {
 }
 const JOINTS = { torso: 'Torso', head: 'Head', hips: 'Hips' } as const;
 
-/** Apply character-space rotations after the base pose. Reactions compose with live pose input. */
-function rotate(root: Object3D, bone: Object3D, delta: Quaternion): void {
-  root.updateWorldMatrix(true, true);
-  const frame = root.getWorldQuaternion(new Quaternion());
-  const parent = bone.parent!.getWorldQuaternion(new Quaternion());
-  const turn = parent
-    .clone()
-    .invert()
-    .multiply(frame)
-    .multiply(delta)
-    .multiply(frame.invert())
-    .multiply(parent);
-  bone.quaternion.premultiply(turn);
-}
-
-const Y = new Vector3(0, 1, 0);
 const snap = new Quaternion();
 const mirrored = new Quaternion();
-const kickQ = new Quaternion();
+const clipQ = new Quaternion();
 
 /** UAL `Hit_Head` turns the head toward the character's left (+x), as from a blow to the right cheek
  * (measured on the rig). A blow to the left cheek (`hitSide` +1) mirrors it across the sagittal plane;
  * a chin shot keeps only its pitch (halfway between both sides). */
-function reactionAt(clip: HeadReaction, age: number, hitSide: number, out: Quaternion): Quaternion {
+function reactionQ(clip: HeadReaction, age: number, hitSide: number, out: Quaternion): Quaternion {
   if (age < 0 || age >= clip.duration) return out.identity();
   const k = (age / clip.duration) * (clip.times.length - 1),
     i = Math.floor(k);
@@ -44,7 +27,12 @@ function reactionAt(clip: HeadReaction, age: number, hitSide: number, out: Quate
   return hitSide > 0 ? out.copy(mirrored) : hitSide === 0 ? out.slerp(mirrored, 0.5) : out;
 }
 
-export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
+/** The authored head track at `age` s after a hit, as the O1 overlay's clip (render/boxing/rig.ts bounds it). */
+export function reactionAt(clip: HeadReaction, age: number, hitSide: number): Quat {
+  return reactionQ(clip, age, hitSide, clipQ).toArray() as Quat;
+}
+
+export function createBoxerAnimation(r: Rig) {
   const bones: Bone[] = [];
   r.body.traverse((o) => {
     if ('isBone' in o) bones.push(o as Bone);
@@ -54,13 +42,17 @@ export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
     p: b.position.clone(),
     s: b.scale.clone(),
   }));
-  const head = r.body.getObjectByName('Head');
+  /** `rig`: the player-owned rotations to apply (null = the sim clip alone, authority S4). `duck`: 0…1
+   *  crouch from the body's own head drop (the player's, or the puppet's dodge). `breathe`: the idle bob,
+   *  only for a boxer nobody's body drives (a live player's head is drawn where it is, §4 BX-A-1). */
   return (
     s: Readonly<BoxingState>,
     who: BoxerId,
     v: Presentation,
     figure: Object3D,
-    live?: LiveExpression | null,
+    rig: RigPose | null,
+    duck: number,
+    breathe: boolean,
   ): void => {
     bones.forEach((b, i) => {
       const c = clean[i]!;
@@ -76,9 +68,8 @@ export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
         winner ? 'Wave' : 'Idle_Neutral',
         v.time % r.duration(winner ? 'Wave' : 'Idle_Neutral'),
       );
-      const duck = s.boxers[who].dodge === 'duck' ? 1 : 0;
       r.bend(0.35 + duck * 0.9, 0.7 + duck * 1.3, 0.2 + duck * 0.4);
-      figure.position.y = -0.06 + Math.sin(v.time * 7) * 0.012 - duck * 0.15;
+      figure.position.y = -0.06 + (breathe ? Math.sin(v.time * 7) * 0.012 : 0) - duck * 0.15;
     }
     bones.forEach((b, i) => {
       const c = clean[i]!;
@@ -86,34 +77,28 @@ export function createBoxerAnimation(r: Rig, reaction: HeadReaction) {
       c.p.copy(b.position);
       c.s.copy(b.scale);
     });
-    if (live && live.weight > 1e-3 && v.floor === 0) applyLive(r.body, live);
-    if (head && v.floor === 0) {
-      rotate(r.body, head, reactionAt(reaction, v.hitAge, v.hitSide, kickQ));
-      const kick = Math.sin(Math.min(1, v.hitAge / V.hitS) * Math.PI) * Math.exp(-v.hitAge * 3);
-      // Turn away from the blow: a hit on the left cheek (+1) yaws the face toward -x.
-      if (Number.isFinite(kick))
-        rotate(r.body, head, kickQ.setFromAxisAngle(Y, -v.hitSide * kick * 0.4));
-    }
+    if (rig) applyRig(r.body, rig);
     for (const name of ['UpperArmL', 'UpperArmR'])
       r.body.getObjectByName(name)?.scale.setScalar(0.001);
   };
 }
 
-/** Live torso/hips/head turns in character axes, each absolute from the animated pose: `base` is read
- * before any joint moves, so the head doesn't inherit the torso turn (PoseState head is camera-relative).
- * Arms stay collapsed (armless gloves), so arm swings drive glove offsets in boxer.ts instead of bones. */
+/** Rig torso/hips/head turns in character axes (live + O1/O2, rig.ts), each absolute from the animated
+ * pose: `base` is read before any joint moves, so the head doesn't inherit the torso turn (PoseState head
+ * is camera-relative). Arms stay collapsed (armless gloves): the gloves are the arms' positions. */
 const TURNED = ['hips', 'torso', 'head'] as const;
 const frame = new Quaternion();
 const parentQ = new Quaternion();
 const bases = TURNED.map(() => new Quaternion());
-function applyLive(body: Object3D, live: LiveExpression): void {
+const turnQ = new Quaternion();
+function applyRig(body: Object3D, rig: RigPose): void {
   body.updateWorldMatrix(true, true);
   body.getWorldQuaternion(frame);
   const bones = TURNED.map((joint) => body.getObjectByName(JOINTS[joint]));
   bones.forEach((bone, i) => bone?.getWorldQuaternion(bases[i]!));
   bones.forEach((bone, i) => {
     if (!bone?.parent) return;
-    const turn = live[TURNED[i]!];
+    const turn = turnQ.fromArray(rig[TURNED[i]!]);
     // world = frame · turn · frame⁻¹ · base; local = parentWorld⁻¹ · world
     const world = bases[i]!.premultiply(parentQ.copy(frame).invert())
       .premultiply(turn)

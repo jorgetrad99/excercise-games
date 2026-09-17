@@ -3,9 +3,13 @@ import type { Measures } from './body';
 import { createCalibrator } from './calibration';
 import { gestureConfig } from './gestures.config';
 
-const measures = (dx: number): Measures => ({
+const KNEES: Measures['knees'] = [
+  { x: 0.55, y: 0.85 },
+  { x: 0.45, y: 0.86 },
+];
+const measures = (dx: number, knees: Measures['knees'] = KNEES): Measures => ({
   shoulderCenter: { x: 0.5 + dx, y: 0.35 },
-  hipCenter: { x: 0.5, y: 0.65 },
+  hipCenter: { x: 0.52, y: 0.65 },
   nose: { x: 0.5, y: 0.25 },
   lShoulder: { x: 0.6 + dx, y: 0.35 },
   rShoulder: { x: 0.4 + dx, y: 0.35 },
@@ -16,6 +20,7 @@ const measures = (dx: number): Measures => ({
   aspect: 1,
   armsUp: false,
   tPose: false,
+  knees,
 });
 
 describe('calibrator', () => {
@@ -32,6 +37,23 @@ describe('calibrator', () => {
         ? (cal.status() as { calib: { shoulderX: number } }).calib
         : null;
     expect(calib!.shoulderX).toBeCloseTo(0.5, 2); // the mean, not a noisy single frame
+  });
+
+  it('BX-CAL-1: captures the hip centre x, and knee heights only when both knees stayed tracked', () => {
+    const calib = (knees: (t: number) => Measures['knees']) => {
+      const cal = createCalibrator(gestureConfig);
+      for (let t = 0; t <= 2100; t += 33) cal.update(t, measures(0, knees(t)));
+      const s = cal.status();
+      return s.state === 'calibrated' ? s.calib : null;
+    };
+    const full = calib(() => KNEES)!;
+    expect(full.hipX).toBeCloseTo(0.52, 6);
+    expect(full.kneeY![0]).toBeCloseTo(0.85, 6);
+    expect(full.kneeY![1]).toBeCloseTo(0.86, 6);
+    // A knee lost for one frame of the hold: calibration still completes, without a knee reference.
+    const partial = calib((t) => (t === 990 ? null : KNEES))!;
+    expect(partial.kneeY).toBeNull();
+    expect(partial.hipX).toBeCloseTo(0.52, 6);
   });
 
   it('restarts the hold when the player actually moves', () => {

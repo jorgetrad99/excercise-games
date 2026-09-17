@@ -49,19 +49,29 @@ describe('ProfileStore', () => {
     expect(s.matches('Ana')[0]!.at).toBe('t5');
   });
 
-  it('migrates an unversioned profile to v1', () => {
+  it('migrates unversioned and v1 profiles to v2 (players keep their matches, no body scan yet)', () => {
     expect(migrate({ players: { Ana: [match('x')] } })).toEqual({
-      version: 1,
+      version: 2,
       players: { Ana: { matches: [match('x')] } },
       lastNames: [],
     });
-    expect(migrate({ version: 1, players: {} })).toEqual({
-      version: 1,
-      players: {},
-      lastNames: [],
-    });
-    expect(migrate({ version: 2, players: {} })).toBeNull();
+    const v1 = { version: 1, players: { Ana: { matches: [match('x')] } }, lastNames: ['Ana'] };
+    expect(migrate(v1)).toEqual({ ...v1, version: 2 });
+    expect(migrate({ version: 3, players: {} })).toBeNull();
     expect(migrate('nope')).toBeNull();
+  });
+
+  it('BX-CAL-6: a body scan persists per name across reloads, and a v1 profile loads without one', () => {
+    const v1 = { version: 1, players: { Ana: { matches: [match('x')] } }, lastNames: [] };
+    const storage = memory({ [STORAGE_KEY]: JSON.stringify(v1) });
+    const a = createProfileStore(storage);
+    expect(a.body('Ana')).toBeNull();
+    const scan = { upperArm: 0.6, forearm: 0.55, shoulderWidth: 0.7, at: '2026-09-16T23:00:00Z' };
+    a.setBody('Ana', scan);
+    const b = createProfileStore(storage);
+    expect(b.body('Ana')).toEqual(scan);
+    expect(b.matches('Ana')).toHaveLength(1);
+    expect(JSON.parse(storage.data.get(STORAGE_KEY)!).version).toBe(2);
   });
 
   it('never overwrites data from a newer version', () => {

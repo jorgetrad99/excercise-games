@@ -2,7 +2,7 @@
 // one gesture engine each → per-player InputEvents, plus "one body missing > 2 s pauses both".
 import type { InputEvent } from '../core/input';
 import type { VideoSize } from '../pose/body';
-import type { SignalFrame } from '../pose/gestures';
+import type { ArmLengths, SignalFrame } from '../pose/gestures';
 import type { GestureConfig } from '../pose/gestures.config';
 import { createPauseBoth, createPlayerSplitter } from '../pose/players';
 import type { PoseFrame } from '../pose/types';
@@ -21,6 +21,8 @@ export interface PosePlayersOptions {
   config: GestureConfig;
   now?: () => number;
   tickMs?: number;
+  /** False for `player` = ignore their recalibration now (PLAN-BOXING BX-CAL-4). */
+  canRecalibrate?: (player: number) => boolean;
 }
 
 export interface PosePlayers {
@@ -30,17 +32,26 @@ export interface PosePlayers {
   /** Each pushed frame split per player ([P1] or [P1, P2]; a player with no body has no poses). */
   onFrames(cb: (frames: readonly PoseFrame[]) => void): () => void;
   recalibrate(t: number): void;
+  /** Player `player`'s body scan arm lengths (null = defaults). */
+  setArms(player: number, arms: ArmLengths | null): void;
   start(): void;
   stop(): void;
 }
 
-export function createPosePlayers({ players, config, ...rest }: PosePlayersOptions): PosePlayers {
+export function createPosePlayers({
+  players,
+  config,
+  canRecalibrate,
+  ...rest
+}: PosePlayersOptions): PosePlayers {
   if (players === 2 && config.laneMode === 'zones') {
     // Zones are thirds of the whole frame; each player only has half of it.
     console.warn('laneMode "zones" is 1-player only; using "lean" for 2 players');
     config = { ...config, laneMode: 'lean' };
   }
-  const sources = Array.from({ length: players }, () => createPoseSource({ ...rest, config }));
+  const sources = Array.from({ length: players }, (_, i) =>
+    createPoseSource({ ...rest, config, canRecalibrate: () => canRecalibrate?.(i) ?? true }),
+  );
   const events = createListeners<InputEvent & { player: number }>();
   const signals = createListeners<SignalFrame & { player: number }>();
   const perPlayer = createListeners<readonly PoseFrame[]>();
@@ -79,6 +90,7 @@ export function createPosePlayers({ players, config, ...rest }: PosePlayersOptio
     onSignals: signals.add,
     onFrames: perPlayer.add,
     recalibrate: (t) => sources.forEach((s) => s.recalibrate(t)),
+    setArms: (player, arms) => sources[player]?.setArms(arms),
     start() {
       running = true;
       sources.forEach((s) => s.start());

@@ -12,6 +12,7 @@ export interface ReplayOptions {
   config?: GestureConfig;
   players?: 1 | 2;
   now?: () => number;
+  canRecalibrate?: (player: number) => boolean;
 }
 
 export interface ReplaySource extends PosePlayers {
@@ -27,6 +28,7 @@ export function createReplaySource(
     config = gestureConfig,
     players = 1,
     now = () => performance.now(),
+    canRecalibrate,
   }: ReplayOptions,
 ): ReplaySource {
   const pose = createPosePlayers({
@@ -36,6 +38,7 @@ export function createReplaySource(
     config,
     now,
     tickMs: 0,
+    ...(canRecalibrate ? { canRecalibrate } : {}),
   });
   let finish = (): void => {};
   const done = new Promise<void>((resolve) => (finish = resolve));

@@ -14,13 +14,14 @@ async function harness(page: Page) {
   });
 }
 test.use({ viewport: { width: 960, height: 720 } });
-const STILL = {
-  body: { sway: 0, duck: 0, rise: 0, forward: 0 },
-  torso: { rot: [0, 0, 0, 1] },
-  hips: { rot: [0, 0, 0, 1] },
-  head: { rot: [0, 0, 0, 1] },
-  arms: [null, null],
-} as const;
+/** Boxer 1's player body at its neutral spot: head, and gloves in a guard (boxer-local m). */
+const BODY = {
+  head: [0, 1.66, 0.15] as [number, number, number],
+  gloves: [
+    [0.1, 1.5, 0.7],
+    [-0.1, 1.5, 0.7],
+  ] as [[number, number, number], [number, number, number]],
+};
 
 test('replacement head, rig following, clean-hit damage, fall and count recovery', async ({
   page,
@@ -103,25 +104,41 @@ test('head snaps away from the blow: left cheek turns right, right cheek left, c
 }) => {
   await harness(page);
   const neutral = await page.evaluate(() => window.__boxingVisual.inspect());
-  // Boxer 0 punches boxer 1. A straight right lands on the left cheek, a straight left on the right
-  // cheek, an uppercut on the chin (presentation.impactZone). Sample the peak of the snap.
-  const peak = (type: 'PUNCH_LEFT' | 'PUNCH_RIGHT', aim: { x: number; y: number }) =>
+  // Boxer 0 punches boxer 1; the zone is where the glove touched (collision). A straight right lands on
+  // the left cheek, a straight left on the right cheek; an uppercut rises under a raised guard into the
+  // chin (low ready hands would block it). Every drawn frame over the reaction, then the extremes.
+  const snap = (
+    type: 'PUNCH_LEFT' | 'PUNCH_RIGHT',
+    aim: { x: number; y: number },
+    guard: boolean,
+  ) =>
     page.evaluate(
-      ([type, aim]) => {
+      ([type, aim, guard]) => {
         const h = window.__boxingVisual;
         h.restart();
-        h.step(0.3, [{ type, aim }]);
-        return h.inspect().faceDir;
+        h.step(1 / 120, [
+          { type, aim },
+          ...(guard ? [{ type: 'GUARD_START' as const, player: 1 as const }] : []),
+        ]);
+        const dirs: number[][] = [];
+        for (let i = 0; i < 60; i++) {
+          h.step(1 / 120);
+          dirs.push(h.inspect().faceDir);
+        }
+        const zone = h.state().boxers[1].hits.at(-1)?.zone ?? null;
+        return { zone, dirs };
       },
-      [type, aim] as const,
+      [type, aim, guard] as const,
     );
-  const left = await peak('PUNCH_RIGHT', { x: 0, y: 0 });
-  const right = await peak('PUNCH_LEFT', { x: 0, y: 0 });
-  const chin = await peak('PUNCH_RIGHT', { x: 0, y: 1 });
-  expect(left[0]! - neutral.faceDir[0]!).toBeLessThan(-0.15);
-  expect(right[0]! - neutral.faceDir[0]!).toBeGreaterThan(0.15);
-  expect(chin[1]! - neutral.faceDir[1]!).toBeGreaterThan(0.1);
-  expect(Math.abs(chin[0]! - neutral.faceDir[0]!)).toBeLessThan(0.1);
+  const d = (dirs: number[][], axis: number) => dirs.map((v) => v[axis]! - neutral.faceDir[axis]!);
+  const left = await snap('PUNCH_RIGHT', { x: 0, y: 0 }, false);
+  const right = await snap('PUNCH_LEFT', { x: 0, y: 0 }, false);
+  const chin = await snap('PUNCH_RIGHT', { x: 0, y: 1 }, true);
+  expect([left.zone, right.zone, chin.zone]).toEqual([0, 1, 2]);
+  expect(Math.min(...d(left.dirs, 0))).toBeLessThan(-0.15);
+  expect(Math.max(...d(right.dirs, 0))).toBeGreaterThan(0.15);
+  expect(Math.max(...d(chin.dirs, 1))).toBeGreaterThan(0.1);
+  expect(Math.max(...d(chin.dirs, 0).map(Math.abs))).toBeLessThan(0.1);
 });
 
 test('the face is lit like the head: no seam at the cap edge, and it darkens with the light', async ({
@@ -151,57 +168,53 @@ test('same-tick redraws are stable; live head rotation composes and clears', asy
   for (const key of ['center', 'rotation', 'size'] as const)
     stable[key].forEach((n, i) => expect(n).toBeCloseTo(first[key][i]!, 10));
   expect(stable.facePixels).toEqual(first.facePixels);
-  await page.evaluate(
-    (still) => window.__boxingVisual.live({ ...still, head: { rot: [0, 0.258819, 0, 0.965926] } }),
-    STILL,
-  );
-  expect((await page.evaluate(() => window.__boxingVisual.inspect())).rotation).not.toEqual(
-    first.rotation,
-  );
-  await page.evaluate(() => window.__boxingVisual.live(null));
+  // Let the hit reaction (O1, hitS) finish first: it decays per tick and would move the head between reads.
+  await page.evaluate(() => window.__boxingVisual.step(0.5));
+  await page.evaluate((body) => window.__boxingVisual.live(body), BODY);
+  const straight = await page.evaluate(() => window.__boxingVisual.inspect());
+  await page.evaluate(() => {
+    const yaw = { hips: [0, 0, 0, 1], torso: [0, 0, 0, 1], head: [0, 0.258819, 0, 0.965926] };
+    window.__boxingVisual.turn(yaw as never);
+  });
+  const turned = await page.evaluate(() => window.__boxingVisual.inspect());
+  expect(turned.rotation).not.toEqual(straight.rotation);
+  await page.evaluate(() => window.__boxingVisual.turn(null));
   const cleared = await page.evaluate(() => window.__boxingVisual.inspect());
-  cleared.rotation.forEach((n, i) => expect(n).toBeCloseTo(first.rotation[i]!, 10));
+  cleared.rotation.forEach((n, i) => expect(n).toBeCloseTo(straight.rotation[i]!, 6));
 });
 
-test('the sim stays authoritative: a live sway or reach never shows a dodge or punch', async ({
+// PLAN-BOXING acceptance 2 / BX-A-1, on the shipping rig: the player's body places the boxer 1:1 (no lean or
+// glove cap, no easing), and a sim event doesn't override it.
+test('the player drives the rig: drawn head and gloves sit where the body is, uncapped', async ({
   page,
 }) => {
   await harness(page);
-  const neutral = await page.evaluate(() => window.__boxingVisual.inspect());
-  // A full-body sway and a step toward the camera the sim never heard about: only a small lean shows.
-  await page.evaluate(
-    (still) =>
-      window.__boxingVisual.live({ ...still, body: { sway: 1, duck: 0, rise: 0, forward: 0.3 } }),
-    STILL,
-  );
-  const leaned = await page.evaluate(() => window.__boxingVisual.inspect());
-  expect(Math.abs(leaned.center[0]! - neutral.center[0]!)).toBeGreaterThan(0.03);
-  expect(Math.abs(leaned.center[0]! - neutral.center[0]!)).toBeLessThan(0.08);
-  // A sim dodge replaces the live lean instead of adding to it: same spot as with no live pose at all.
-  await page.evaluate(() => window.__boxingVisual.step(0.2, [{ type: 'DODGE_RIGHT', player: 1 }]));
-  const dodgedLive = await page.evaluate(() => window.__boxingVisual.inspect());
-  await page.evaluate(() => {
+  const moved = await page.evaluate((body) => {
     const h = window.__boxingVisual;
-    h.restart();
-    h.live(null);
-    h.step(0.2, [{ type: 'DODGE_RIGHT', player: 1 }]);
-  });
-  const dodgedSim = await page.evaluate(() => window.__boxingVisual.inspect());
-  expect(Math.abs(dodgedSim.center[0]! - neutral.center[0]!)).toBeGreaterThan(0.2);
-  dodgedLive.center.forEach((n, i) => expect(n).toBeCloseTo(dodgedSim.center[i]!, 3));
-  // Both arms punched straight at the camera: gloves at rest creep forward, never reach a punch.
-  await page.evaluate((still) => {
-    window.__boxingVisual.step(1);
-    const forward = [-0.7071068, 0, 0, 0.7071068] as const; // swings (0,-1,0) onto (0,0,1)
-    const arm = { upperRot: forward, foreRot: forward };
-    window.__boxingVisual.live({ ...still, arms: [arm, arm] });
-  }, STILL);
-  const reached = await page.evaluate(() => window.__boxingVisual.inspect());
-  for (const hand of [0, 1]) {
-    const dz = reached.gloves[hand]![2]! - neutral.gloves[hand]![2]!;
-    expect(dz).toBeGreaterThan(0.05);
-    expect(dz).toBeLessThanOrEqual(0.12 + 1e-6);
-  }
+    const far = structuredClone(body);
+    far.head[0] += 0.5; // a big lean to the boxer's left
+    far.gloves[1] = [-0.1, 1.55, 1.25]; // a full reach
+    h.live(body);
+    const before = h.inspect().rig;
+    // Twice: the drawn pose leads the newest sample by up to 50 ms along its velocity (PLAN-BOXING §2.5),
+    // and a 0.5 m jump in one 8 ms tick is 60 m/s. The second identical sample has no velocity, so what's
+    // drawn is the body itself. Still no easing: the second tick is where the body is, not part way.
+    h.live(far);
+    h.live(far);
+    return { before, after: h.inspect().rig, far };
+  }, BODY);
+  // No easing: the head moved the whole 0.5 m (old live-lean cap: 6 cm) …
+  expect(moved.after.head[0]! - moved.before.head[0]!).toBeCloseTo(0.5, 2);
+  // … and the glove is exactly where the body put it (old cap: 12 cm from rest).
+  moved.after.gloves[1].forEach((n, i) => expect(n).toBeCloseTo(moved.far.gloves[1][i]!, 2));
+  // A key dodge for that boxer doesn't move a pose-driven boxer: the body stays the player's.
+  const dodged = await page.evaluate((far) => {
+    const h = window.__boxingVisual;
+    h.step(0, [{ type: 'DODGE_RIGHT', player: 1 }]);
+    for (let i = 0; i < 12; i++) h.live(far);
+    return h.inspect().rig;
+  }, moved.far);
+  dodged.head.forEach((n, i) => expect(n).toBeCloseTo(moved.after.head[i]!, 2));
 });
 
 test(

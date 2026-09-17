@@ -8,6 +8,8 @@ import { gestureConfig } from '../../pose/gestures.config';
 import { mountBoxingHud } from '../../render/boxing/hud';
 import { createBoxingView } from '../../render/boxing/view';
 import { defineGame } from '../types';
+import { boxingAuthority, canRecalibrate } from './authority';
+import { bodyEvent } from './body-input';
 import { BOXING_GESTURES, BOXING_KEYS } from './gestures';
 
 export default defineGame<BoxingSim>({
@@ -17,6 +19,9 @@ export default defineGame<BoxingSim>({
   faces: true, // "cabezota": big heads wearing the players' faces
   gestureProfile: { toInput: BOXING_GESTURES, config: gestureConfig },
   keys: BOXING_KEYS,
+  poseInput: bodyEvent, // the player's own gloves and head: the sim scores what they touch
+  canRecalibrate: (sim, player) => canRecalibrate(sim.getState(), player),
+  needsKnees: true,
   fixedDt: boxingConfig.fixedDt,
   sharedSim: true, // players face off in one state
 
@@ -27,7 +32,7 @@ export default defineGame<BoxingSim>({
     return createBoxingSim({ seed }, bots.length > 0 ? boxingBot(bots) : null);
   },
 
-  createView: (canvas, faces) => createBoxingView(canvas, faces),
+  createView: (canvas, faces) => createBoxingView(canvas, boxingAuthority, faces),
 
   mountHud: (root, player) => {
     const hud = mountBoxingHud(root, player === 1 ? 1 : 0);

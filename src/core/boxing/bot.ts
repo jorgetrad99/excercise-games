@@ -1,4 +1,4 @@
-// Reactive boxing bot: 1P opponent and ?input=bot autoplay. Reacts to each thrown punch once,
+// Reactive boxing bot: 1P opponent and ?input=bot autoplay. Reacts to each incoming glove once,
 // C.bot.reactS after it leaves (a human-ish reaction time), and punches on a coarser decision grid.
 // Stateless: every decision is a pure function of (state, boxer, seed, tick), so bot-driven runs
 // replay exactly and need no cloning.
@@ -14,8 +14,10 @@ function react(s: Readonly<BoxingState>, who: BoxerId, event: MakeInput): Boxing
   const me = s.boxers[who];
   const them = s.boxers[who === 0 ? 1 : 0];
   const react = C.bot.reactS;
-  const seen = them.fists.some(
-    (f) => f.phase === 'out' && f.t >= react - 1e-9 && f.t < react + C.fixedDt - 1e-9,
+  // Perception is the glove itself (collide.ts closingT), so the bot reads a player's real punch the
+  // same way as a key punch.
+  const seen = them.gloves.some(
+    (g) => g.closingT >= react - 1e-9 && g.closingT < react + C.fixedDt - 1e-9,
   );
   if (!seen) return null;
   const roll = rngAt(s.seed, s.tick, who * 16 + 1);
@@ -39,7 +41,7 @@ export function decide(s: Readonly<BoxingState>, who: BoxerId): BoxingInput[] {
   const reaction = react(s, who, event);
   if (reaction) return reaction;
   if (s.tick % DECIDE_TICKS !== 0 || me.dizzy) return [];
-  if (them.fists.some((f) => f.phase === 'out')) return [];
+  if (them.gloves.some((g) => g.closingT > 0)) return [];
   const out: BoxingInput[] = me.guard ? [event('GUARD_END')] : [];
   const free = me.fists.map((f) => f.phase === 'ready');
   if ((free[0] || free[1]) && r(3) < C.bot.punchP) {

@@ -4,6 +4,8 @@
 // hovering over it for cursor.dwellMs (Kinect dashboard style). A slot's name buttons only answer
 // to that slot's cursor: the body on the left claims "Left player", the body on the right "Right".
 import { createDwell, type Cursor } from '../pose/hand-cursor';
+import type { PoseFrame } from '../pose/types';
+import { bodyScanPage } from './body-scan-page';
 import { cleanName, type ProfileStore } from './profile-store';
 import { mountStats } from './stats-view';
 
@@ -35,12 +37,15 @@ const NAME_CHOICES = 6;
 export interface Menu {
   /** Latest hand cursors ([P1, P2], null = no raised hand) at time `t` (ms). */
   hover(cursors: readonly (Cursor | null)[], t: number): void;
+  /** Every camera frame: the body scan page measures from these. */
+  frame(f: PoseFrame): void;
 }
 
 interface MenuOptions {
   players?: 1 | 2;
   dwellMs: number;
   profiles: ProfileStore;
+  video: () => { width: number; height: number };
 }
 
 const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -49,18 +54,20 @@ export function mountMenu<G extends { id: string; title: string }>(
   root: HTMLElement,
   games: readonly G[],
   onPick: (game: G, players: 1 | 2, names: string[]) => void,
-  { players = 1, dwellMs, profiles }: MenuOptions,
+  { players = 1, dwellMs, profiles, video }: MenuOptions,
 ): Menu {
   const el = Object.assign(document.createElement('div'), { className: 'menu' });
   el.innerHTML = `<style>${CSS}</style><div class="page"></div>`;
   const page = el.querySelector<HTMLElement>('.page')!;
   root.append(el);
+  let sink: ((f: PoseFrame) => void) | null = null;
+  const setBusy = (busy: boolean): void => void (busy ? (el.dataset.busy = '1') : delete el.dataset.busy);
 
   const home = (): void => {
     page.innerHTML = `<h1>Move Arcade</h1>
       <div class="row">Players <button data-players="1">1</button><button data-players="2">2</button></div>
       ${games.map((g) => `<button data-game="${esc(g.id)}">${esc(g.title)}</button>`).join('')}
-      <button data-nav="stats">Stats</button>`;
+      <div class="row"><button data-nav="scan">Body scan</button><button data-nav="stats">Stats</button></div>`;
     const countButtons = [...page.querySelectorAll<HTMLButtonElement>('[data-players]')];
     const setPlayers = (n: 1 | 2): void => {
       players = n;
@@ -80,10 +87,12 @@ export function mountMenu<G extends { id: string; title: string }>(
     });
     page.querySelector<HTMLButtonElement>('[data-nav="stats"]')!.onclick = () =>
       mountStats(page, profiles, games, home);
+    page.querySelector<HTMLButtonElement>('[data-nav="scan"]')!.onclick = () =>
+      bodyScanPage(page, { profiles, video, back: home, setBusy, setSink: (s) => (sink = s) });
     page.querySelector<HTMLButtonElement>('[data-game]')?.focus();
   };
   home();
-  return { hover: hoverCursors(el, dwellMs) };
+  return { hover: hoverCursors(el, dwellMs), frame: (f) => sink?.(f) };
 }
 
 /** One name slot per player; Start once every slot has a distinct name. */
@@ -161,6 +170,7 @@ function hoverCursors(el: HTMLElement, dwellMs: number): Menu['hover'] {
   });
   return (points, t) => {
     if (!el.isConnected) return;
+    if (el.dataset.busy) points = [null, null]; // scanning: raised arms are a T-pose, not a cursor
     el.querySelectorAll('.hovered').forEach((b) => b.classList.remove('hovered'));
     cursors.forEach(({ dot, dwell }, i) => {
       const p = points[i];
