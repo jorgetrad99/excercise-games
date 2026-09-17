@@ -27,6 +27,13 @@ const blocked = [
   /^public\/models\//,
   /^docs\/PLAN\.md$/,
   /^\.claude\/settings\.json$/,
+  // What decides how the guard runs, or can add hooks/permissions/servers. An agent that could edit
+  // the launcher could set the guard's policy to open (PROGRESS 2026-09-17, config read per checkout).
+  /^\.claude\/hooks\//,
+  /^\.claude\/settings\.local\.json$/,
+  /^\.mcp\.json$/,
+  /^CLAUDE\.local\.md$/,
+  /^AGENTS\.md$/,
 ];
 
 if (blocked.some((re) => re.test(rel))) {
