@@ -1495,3 +1495,38 @@ The launcher being editable makes the whole guard optional. A session could set 
 2. First bytes checked (no BOM).
 3. Parse check where applicable.
 4. SHA-256 recorded, then re-checked immediately before a commit containing only that file.
+
+---
+
+## 2026-09-17 — Guard the launcher and agent rules (A) + config drift warning (B), committed WITHOUT e2e, by exception
+
+Branch `chore/perf-lock`, commit `13df045`, fast-forwarded to `main`. Jorge extended the no-e2e exception to A and B only (hooks are harness code, and the gates can't give a trustworthy result yet). The perf-gate port stays held and needs a real green verify.
+
+### What changed
+
+- **A.** `guard-paths` also blocks `.claude/hooks/**`, `.claude/settings.local.json`, `.mcp.json`, `CLAUDE.local.md` and `AGENTS.md`. AGENTS §3 and the CLAUDE.md quick rule list the same set.
+  - From here on, hook and AGENTS changes are hand-applied, following the guarded-file standard in the entry above.
+- **B.** New `.claude/hooks/config-drift.mjs`, called by the Stop hook. It compares `.claude/settings.json`, `.claude/hooks/**`, `AGENTS.md`, `CLAUDE.md`, `.claude/agents/` and `.claude/commands/` with `main`, and each warning names the file and the fix:
+  - **Branch lacks main's version:** `… differ from main — merge <sha> (main) and restart the session.`
+  - **Guarded file changed on the branch:** `… is human-owned — restore it with git checkout main -- <file> and restart, or have Jorge land the change on main.`
+  - **Watched file changed on the branch:** `… sessions in this checkout use this branch's version; land it on main or restore it.`
+  - **`.claude/settings.local.json` exists:** always warns.
+  - The check is advisory: an error in it never blocks a stop.
+- **Held port:** the `AGENTS.md` §4 bullets from the held port were removed from the worktree (patch kept in the session scratchpad). Jorge applies the final text by hand when the port lands.
+
+### Verified
+
+- `pnpm typecheck`, `pnpm lint` → exit 0. `pnpm test` → 27 files, 364 passed + 1 skipped (held port set aside, so this is exactly the committed tree).
+- **Unit tests:**
+  - `guard-paths.spec`: 8 new rows, including CLAUDE.md and a command staying allowed.
+  - `config-drift.spec` (temp repos): no drift → silent; branch behind → names the merge sha; AGENTS.md edited → restore; command changed → named; settings.local.json → warns; no `main` → exit 0.
+- **Live, through `run-main.mjs` from the main checkout at `main` = `13df045`:**
+  - Guard exits 2 for the launcher, a worktree's `guard-paths.mjs`, `settings.local.json`, a worktree `.mcp.json`, `CLAUDE.local.md`, `AGENTS.md` (checkout and worktree), `PLAN.md` and `settings.json`.
+  - Guard exits 0 for `CLAUDE.md`, `.claude/commands/verify.md` and `src/core/sim.ts`.
+  - The Stop hook in each of the five checkouts printed the merge line naming `13df045` for every checkout not yet on it. `feat/visual-expressiveness` also lists `settings.json` and `run-main.mjs`.
+- A malformed stdin to the launcher-run guard exits 2 ("could not run from main"), so it fails closed.
+
+### Known gaps
+
+- A branch that keeps its own `AGENTS.md` edits (e.g. `docs/plan-boxing`'s §4 bullets) will warn "human-owned — restore" after merging main, until Jorge lands that text on main. That's intended.
+- Only sessions started after a merge get the new guard. Restart after merging (rule, deliberately untested).
