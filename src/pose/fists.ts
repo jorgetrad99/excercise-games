@@ -2,8 +2,11 @@
 // face (torso lengths/s) above a threshold once the fist has left the face zone; the event carries the
 // motion's direction as `aim` instead of a punch-type classifier. Radial speed alone was rejected:
 // hooks sweep around the head and uppercuts start toward the chin. A fired fist re-arms only when
-// it is back near the face AND nearly still (the Wii "wait until the glove stops"), so the retraction
-// can't fire. Guard = both wrists close to the nose, with hysteresis.
+// it is back near the face AND has held nearly still for rearmMs (the Wii "wait until the glove
+// stops"), so the retraction can't fire. Guard = both wrists close to the nose, with hysteresis.
+// Face zone and guard are 2D: real wrist z sits a person-dependent ~1 torso behind the nose z, so
+// an absolute 3D distance never came back under `rearm` and no punch ever armed. Depth only counts as
+// displacement from where the fist rested when it armed (`restZ`).
 import type { Measures, Point } from './body';
 import type { GestureConfig } from './gestures.config';
 
@@ -22,8 +25,12 @@ interface Rel {
 
 interface Hand {
   armed: boolean;
+  /** When the wrist was last seen entering "near the face and slow" (null = not there now). */
+  stillSince: number | null;
+  /** Wrist z (torso) while resting armed: depth is measured from here. */
+  restZ: number;
   hist: Rel[];
-  /** Latest frame: distance from the nose (torso), speed relative to it (torso/s), motion direction. */
+  /** Latest frame: 2D distance from the nose (torso), speed relative to it (torso/s), direction. */
   dist: number;
   speed: number;
   aim: Aim;
@@ -31,6 +38,8 @@ interface Hand {
 
 const newHand = (): Hand => ({
   armed: false,
+  stillSince: null,
+  restZ: 0,
   hist: [],
   dist: Infinity,
   speed: 0,
@@ -74,7 +83,7 @@ function updateHand(h: Hand, rel: Rel | null, windowMs: number): void {
   ref ??= h.hist[0];
   h.hist.push(rel);
   while (h.hist.length > 0 && h.hist[0]!.t < rel.t - windowMs * 4) h.hist.shift();
-  h.dist = Math.hypot(rel.x, rel.y, rel.z);
+  h.dist = Math.hypot(rel.x, rel.y);
   if (!ref || rel.t <= ref.t) {
     h.speed = 0;
     return;
@@ -104,12 +113,19 @@ export function trackFists(f: Fists, t: number, m: Measures, torso: number, cfg:
 }
 
 /** Edge-triggered punch and guard events from the state trackFists left this frame. */
-export function detectFists(f: Fists, cfg: GestureConfig, emit: FistEmit): void {
+export function detectFists(f: Fists, t: number, cfg: GestureConfig, emit: FistEmit): void {
   const { fists } = cfg;
   f.hands.forEach((h, i) => {
-    if (h.dist < fists.rearm && h.speed < fists.rearmSpeed) h.armed = true;
+    const rel = h.hist.at(-1);
+    if (!rel) return;
+    if (h.dist < fists.rearm && h.speed < fists.rearmSpeed) {
+      h.stillSince ??= t;
+      if (t - h.stillSince >= fists.rearmMs) h.armed = true;
+      if (h.armed) h.restZ = rel.z;
+    } else h.stillSince = null;
+    const reach = Math.hypot(rel.x, rel.y, rel.z - h.restZ);
     // Dropping the hands fast is not a punch: mostly-downward motion never fires.
-    if (h.armed && h.dist > fists.rearm && h.speed > fists.speed && h.aim.y > -fists.maxDown) {
+    if (h.armed && reach > fists.rearm && h.speed > fists.speed && h.aim.y > -fists.maxDown) {
       h.armed = false;
       emit(i === 0 ? 'PUNCH_LEFT' : 'PUNCH_RIGHT', {
         x: Math.round(h.aim.x * 100) / 100,

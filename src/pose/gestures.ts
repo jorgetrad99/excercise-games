@@ -190,7 +190,7 @@ function detectAll(
   detectLanes(d, s, m, config, emit);
   detectJumpAndGrab(d, s, config, emit);
   detectSlide(d, s, config, emit);
-  detectFists(d.fists, config, emit);
+  detectFists(d.fists, s.t, config, emit);
   if (heldFor(d.revive, s.armsUp, s.t, config.reviveHoldMs)) emit('REVIVE_ACCEPT');
 }
 

@@ -909,3 +909,39 @@ Not confirmed (brief vs. sources):
   - The debug HUD's signal plots don't draw `fistL`/`fistR` yet; read them via `__game.getSignals()`.
   - **2P:** `?game=boxing&players=2`, standing side by side facing the camera: each half shows your boxer's view.
   - **Keyboard:** `?game=boxing&input=keyboard`: Z/X punch, ↑ guard, ←/→ sway, ↓ duck.
+
+## 2026-09-16 — Boxing playtest bugs: punches, 2P detection, skeleton overlay
+
+### 1. Punches never registered: where it broke
+
+The break was in the gesture engine, `pose/fists.ts`, **before any event existed**. `getEvents()` never showed a `PUNCH_*`; the shell → sim path was fine (keyboard and replay e2e both drive it).
+
+- **Cause:** a wrist armed only when its **3D** distance from the nose was < `rearm` (0.6 torso).
+  - That distance included `wrist.z − nose.z`.
+  - MediaPipe z is relative to the hip midpoint, and on Jorge's real recording (`~/Downloads/pose-2026-09-16T18-42-19-146Z.json`) that gap is 0.33 / 0.87 / 3.1 torso (p10/p50/p90).
+  - Result: **0 of 1010 wrist-frames could arm**, so no punch or guard could ever fire.
+  - The synthetic poses put the nose at z = 0, which hid it.
+- **Fix:**
+  - The face zone and guard use 2D distance.
+  - Depth only counts as displacement from where the fist rested when it armed (`restZ`).
+  - Arming needs the wrist near the face and slow for `rearmMs` (100 ms, new config). This keeps "out → half back → out" as one punch now that the half-back point is inside the 2D zone.
+- **Regression:** `testdata/synthetic.ts` puts the nose at z = −0.3. Four `fists.spec` tests failed with the old code and pass with the fix.
+- **Real-data check:** the same recording through the fixed engine arms and fires (one `PUNCH_RIGHT` during an arm swing in a Skate Run session; before the fix nothing could fire). True-positive rate on real punches is still unmeasured: there is no boxing recording.
+
+### 2. Two players
+
+- **URL:** `?game=boxing&players=2`. The menu has no player-count choice, so launching Boxing from the menu is always 1P.
+- **`numPoses`:** main.ts passes `numPoses: playerCount` to the worker. Verified with the two-person fake camera: `getPoseStats().lastPoseCount === 2`, and `getSignals(0)` / `getSignals(1)` are both `tracking: ok`, one per half (`tmp/diag/boxing-2p-debug.png`).
+- **Not a bug in the pipeline, as far as I can find.**
+  - In 2P each half shows your opponent from your point of view, so one boxer per half is expected.
+  - If both players stand close to the camera, the splitter needs both shoulders **and hips** visible (≥ 0.5) per body. Otherwise that body doesn't count.
+
+### 3. Skeleton overlay
+
+- **With `?debug=1` it was never broken** (verified in boxing 1P and 2P: `tmp/diag/boxing-1p-debug.png`).
+- The raw-feed screenshot matches the non-debug compact thumbnail, which has never drawn the skeleton since M1. `pose-panel.ts` is unchanged since `f7a4432`, so this is not from the HUD refactor.
+- **Changed:** the skeleton is now drawn in the compact thumbnail too, in every game. The heatmap and stats stay debug-only (`tmp/diag/boxing-1p-compact.png`).
+
+### Verified
+
+- `pnpm verify` → exit 0: vitest 306 passed + 1 skipped; playwright smoke 19/19.

@@ -1,4 +1,4 @@
-// Camera preview + device picker; with debug: skeleton overlay, fps, visibility heatmap; with record: fixture download.
+// Camera preview + device picker + skeleton overlay; with debug: fps, visibility heatmap; with record: fixture download.
 import { PoseLandmarker } from '@mediapipe/tasks-vision';
 import { listCameras, openCamera, rememberedCameraId } from './camera';
 import { startPosePipeline, type PoseStats } from './pipeline';
@@ -111,18 +111,20 @@ function formatStats(s: PoseStats, renderFps: number): string {
 
 type Ui = ReturnType<typeof buildDom>;
 
-function startDebugLoop(
+/** The skeleton is always drawn (the compact thumbnail too: it shows whether you're being tracked). */
+function startDrawLoop(
   ui: Ui,
+  debug: boolean,
   latest: () => PoseFrame | null,
   stats: () => PoseStats | null,
   renderFps: () => number,
 ): void {
-  ui.heatmap.hidden = ui.stats.hidden = false;
+  ui.heatmap.hidden = ui.stats.hidden = !debug;
   const draw = (): void => {
     const frame = latest();
     drawSkeleton(ui.overlay, ui.video, frame);
-    drawHeatmap(ui.heatmap, frame?.poses[0]);
-    const s = stats();
+    const s = debug ? stats() : null;
+    if (debug) drawHeatmap(ui.heatmap, frame?.poses[0]);
     if (s) ui.stats.textContent = formatStats(s, renderFps());
     requestAnimationFrame(draw);
   };
@@ -232,13 +234,13 @@ export function mountPosePanel(
   });
   ui.retry.addEventListener('click', restart);
   if (recorder) wireRecorder(ui, recorder, opts.model);
-  if (opts.debug)
-    startDebugLoop(
-      ui,
-      () => latest,
-      () => pipeline?.stats() ?? null,
-      opts.renderFps,
-    );
+  startDrawLoop(
+    ui,
+    opts.debug,
+    () => latest,
+    () => pipeline?.stats() ?? null,
+    opts.renderFps,
+  );
 
   restart();
   return {

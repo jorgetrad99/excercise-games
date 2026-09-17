@@ -108,7 +108,9 @@ export function syntheticPose(s: Stance, seed = 0, jitter = 0.002): Landmark[] |
       rElbow: [0.32, 0.35],
     });
   const wrists = boxingWrists(s);
-  const depth: Record<string, number> = {};
+  // Real MediaPipe z is relative to the hip midpoint: the nose sits well in front of the wrists
+  // (Jorge's recording: |wrist − nose| z ≈ 0.9 torso median). A zero here hid the arming bug.
+  const depth: Record<string, number> = { nose: -0.3 };
   if (wrists) {
     for (const k of ['lWrist', 'rWrist'] as const) {
       pts[k] = [wrists[k][0], wrists[k][1]];
