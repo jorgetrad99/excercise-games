@@ -11,6 +11,10 @@ export const boxingVisual = {
   /** Dizzy wobble fade in/out time constant, s. */
   dizzyEaseS: 0.15,
   bruisePerHit: 0.24,
+  /** Outward bulge at full damage (1), m, on a head ~0.31 m in radius. */
+  swellM: 0.045,
+  /** Bulge width: angular standard deviation around the bruise, rad. */
+  swellRad: 0.3,
   /** Live pose expressiveness. Clamps keep it well below a sim dodge (0.35 m) or punch (0.73 m). */
   live: {
     /** Exponential easing time constant, s. */

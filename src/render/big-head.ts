@@ -11,6 +11,7 @@ import {
   type Object3D,
 } from 'three';
 import { paintFace } from './boxing/face-damage';
+import { createSwelling } from './boxing/swelling';
 import type { FaceDamage } from './boxing/presentation';
 import { boxingVisual as V } from './boxing/visual.config';
 
@@ -42,7 +43,8 @@ function headMeshes() {
   face.name = 'LiveFace';
   face.scale.copy(shell.scale);
   object.add(shell, face);
-  return { object, ctx, texture };
+  const swell = createSwelling(face.geometry, [shell.geometry]);
+  return { object, ctx, texture, swell };
 }
 
 export function createBigHead(body: Object3D, parent: Object3D) {
@@ -50,7 +52,7 @@ export function createBigHead(body: Object3D, parent: Object3D) {
   // The asset has separate skin/hair/eye primitives beneath this group. Hide ALL of them.
   const original = body.getObjectByName('Casual_Head');
   if (original) original.visible = false;
-  const { object, ctx, texture } = headMeshes();
+  const { object, ctx, texture, swell } = headMeshes();
   parent.add(object);
   body.updateWorldMatrix(true, true);
   const bind = head?.getWorldQuaternion(new Quaternion()).invert() ?? new Quaternion();
@@ -73,6 +75,7 @@ export function createBigHead(body: Object3D, parent: Object3D) {
       const source = (faces?.version(player) ?? 0) > 0 ? faces!.canvas(player) : null;
       const version = faces?.version(player) ?? 0,
         key = damage.join(',');
+      if (key !== lastDamage) swell(damage);
       if (version !== seen || source !== lastCanvas || key !== lastDamage) {
         paintFace(ctx, source, damage);
         texture.needsUpdate = true;

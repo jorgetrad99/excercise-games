@@ -54,6 +54,7 @@ test('replacement head, rig following, clean-hit damage, fall and count recovery
   expect(hit.rotation).not.toEqual(neutral.rotation);
   expect(hit.facePixels).not.toEqual(neutral.facePixels);
   expect(hit.sourcePixels).toEqual(neutral.sourcePixels);
+  expect(hit.faceRadius - neutral.faceRadius).toBeGreaterThan(0.005); // one hit already swells
   await page.screenshot({ path: `${ROOT}/head-hit.png` });
   // Accumulate real punches until zero stamina, then another hit starts the referee count.
   await page.evaluate(() => {
@@ -87,10 +88,12 @@ test('replacement head, rig following, clean-hit damage, fall and count recovery
   const up = await page.evaluate(() => window.__boxingVisual.inspect());
   expect(up.center[1]!).toBeGreaterThan(neutral.center[1]! - 0.1);
   await page.screenshot({ path: `${ROOT}/count-recovered-damage.png` });
+  const beaten = await page.evaluate(() => window.__boxingVisual.inspect());
+  expect(beaten.faceRadius).toBeGreaterThan(hit.faceRadius);
   await page.evaluate(() => window.__boxingVisual.restart());
-  expect((await page.evaluate(() => window.__boxingVisual.inspect())).facePixels).toEqual(
-    neutral.facePixels,
-  );
+  const fresh = await page.evaluate(() => window.__boxingVisual.inspect());
+  expect(fresh.facePixels).toEqual(neutral.facePixels);
+  expect(fresh.faceRadius).toBeCloseTo(neutral.faceRadius, 6);
   expect(errors).toEqual([]);
 });
 

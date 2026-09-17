@@ -1286,3 +1286,26 @@ Item 1: map the sim state to fall/get-up (dizzy ≠ down).
 ### Next
 
 Item 3: real swelling.
+
+### Face swelling (step 3d)
+
+- **New `render/boxing/swelling.ts`:** the head's face cap *and* the shell under it bulge outward at each damage zone, by `damage × swellM` (4.5 cm at full damage on a ~31 cm head) with a gaussian falloff (σ 0.3 rad, cut at 3σ).
+  - Bump centres come from the face-cap vertex nearest to where each bruise is painted (`BRUISE_SPOTS`, now shared with `face-damage.ts`), so swelling always sits under its bruise.
+  - Normals are recomputed where the surface moved; the rest keep exact sphere normals, so there's no crease at the UV seam or poles.
+  - It runs only when damage changes (a few hundred vertices × 3 zones), not every frame.
+
+### Verified
+
+- `swelling.spec.ts` (4 tests):
+  - no damage = exact sphere
+  - a left-cheek hit bulges the left cheek by 0.8–1.0 × `swellM` on both surfaces and the right cheek by < 0.1 ×
+  - grows with damage, back to a sphere on reset
+  - a chin hit peaks below the equator
+- `boxing-visual` e2e: one real clean hit grows the rendered face radius by > 5 mm, a beating grows it further, and a restart restores it (6 dp).
+- **`pnpm verify` → exit 0** (`tmp/verify-ve-swelling-3.log`): vitest 338 + 1 skipped, playwright 27/27.
+- **Two red runs before that**, both on Skate Run's 1080p fps gate (54, then 45). Swelling code can't reach Skate Run, and the gate passed 2/2 alone and in a full `--project=perf` sequence 9/9. The desktop compositor (`dwm`) was using ~39 % of the GPU.
+- **Not verified visually:** swelling barely reads while the face is unlit, so I'll re-check it after step 3e.
+
+### Next
+
+Item 2: light the face like the shell (the seam).

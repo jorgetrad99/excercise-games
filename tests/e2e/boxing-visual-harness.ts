@@ -90,6 +90,14 @@ export async function createVisualHarness() {
           boxer.object.getObjectByName(n)!.position.toArray(),
         ),
         size: new Box3().setFromObject(head).getSize(new Vector3()).toArray(),
+        /** Largest face-cap radius, m: grows as swelling bulges the surface. */
+        faceRadius: (() => {
+          const p = face.geometry.getAttribute('position');
+          let r = 0;
+          for (let i = 0; i < p.count; i++)
+            r = Math.max(r, new Vector3().fromBufferAttribute(p, i).length());
+          return r;
+        })(),
         facePixels: Array.from(image.getContext('2d')!.getImageData(124, 103, 8, 8).data),
         sourcePixels: Array.from(ctx.getImageData(124, 103, 8, 8).data),
       };

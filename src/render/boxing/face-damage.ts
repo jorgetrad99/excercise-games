@@ -1,5 +1,13 @@
 import type { FaceDamage } from './presentation';
 
+/** Bruise centres on the face canvas (0..1, y down) per FaceDamage zone. Camera crops are unmirrored:
+ * the anatomical left cheek is on image-right. swelling.ts bulges the head at the same spots. */
+export const BRUISE_SPOTS = [
+  [0.68, 0.56],
+  [0.32, 0.56],
+  [0.5, 0.79],
+] as const;
+
 /** Blend cartoon bruises onto a private copy, never onto the shared camera crop. */
 export function paintFace(
   ctx: CanvasRenderingContext2D,
@@ -16,13 +24,7 @@ export function paintFace(
   ctx.fillRect(0, 0, size, size);
   if (source) ctx.drawImage(source, 0, 0, size, size);
   else drawFallback(ctx, size);
-  // Camera crops are unmirrored: anatomical left is on image-right.
-  const spots = [
-    [0.68, 0.56],
-    [0.32, 0.56],
-    [0.5, 0.79],
-  ] as const;
-  spots.forEach(([x, y], i) => {
+  BRUISE_SPOTS.forEach(([x, y], i) => {
     const strength = damage[i]!;
     if (!strength) return;
     ctx.save();
