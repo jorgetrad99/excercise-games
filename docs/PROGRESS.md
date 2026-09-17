@@ -1861,3 +1861,83 @@ Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), on `852efb0`. Harness an
 
 - **Render budget:** the park biome is at 586k triangles; needed before the chaser and web-swinging get designed. Not built here; flagged so it isn't lost across branches.
 - **The 7f68b4b amendments** (glove collision, prediction, body scan, 120 Hz) are under Jorge's review. Any §4.1 / authority-table conflict is his to resolve.
+## 2026-09-16 — Perf lock and gate logging onto main (harness only)
+
+Branch `chore/perf-lock`, from `main` (`6708eb4`), built in `tmp/perf-lock-worktree`. Jorge's option B: the lock goes to main so every branch picks it up by merging main, without the feature work around it on `docs/plan-boxing`.
+
+### Why
+
+- The lock and the worktree-aware guard existed only on `docs/plan-boxing` (`0457ca6`). Claude Code runs hooks from the main checkout, so they applied only while that checkout sat on a branch that had them.
+- Merging `0457ca6` into another branch would also have brought 7 unrelated commits: named players and stats, the Boxing glove-latency e2e and `boxer.ts` changes, and PLAN-BOXING D1–D5.
+
+### What changed
+
+- **Cherry-picked `448e4cf`** (perf diagnosis): `src/platform/gpu.ts` (GPU name, software-GL detection), CPU delegate on software GL, `scripts/perf-probe.mjs`, pose-panel redraw only on new frames, research doc. It was based on `main`, so it applied cleanly.
+- **From `852efb0` + `0457ca6`, harness files only:**
+  - `scripts/e2e-lock.mjs` (+ `.d.mts`), `scripts/vitest-perf-lock.mjs`; the probe holds the lock
+  - `tests/e2e/global-setup.ts` (takes the lock for the run; models check), `gates.ts`, `machine-state.ts`
+  - `.claude/hooks/guard-paths.mjs` (paths resolved against the containing checkout), `format-and-typecheck.mjs` (waits ≤ 45 s for the lock, then skips tsc)
+  - `package.json` (`typecheck`/`lint` wait for the lock; `test:smoke` = smoke + perf), `vite.config.ts` / `vitest.tools.config.ts` (lock globalSetup), `eslint.config.js` (`setTimeout` global), `playwright.config.ts` (global setup, `PLAYWRIGHT_PORT`, serial `perf` project)
+  - `tests/unit/perf-lock.spec.ts`, `guard-paths.spec.ts`
+  - Specs: `@perf` / `@realtime` tags and `recordGate` calls in `pose`, `gestures`, `render`, `two-players`; `@realtime` on the two Boxing pose replays (hand-applied: `0457ca6`'s `boxing.smoke` also carries player-stats menu clicks that don't exist on main).
+- **Left out on purpose:** `?names=` in AGENTS §5 (player stats isn't on main), `boxing-visual` / `boxing-latency` specs (not on main).
+- AGENTS §4 perf-lock rules; ARCHITECTURE Harness.
+
+### Verified
+
+- **`pnpm verify` → exit 0** (`tmp/verify/verify-perf-lock-1.log`, `PLAYWRIGHT_PORT=5191`): tsc, eslint, vitest 342 passed + 1 skipped (24 files), playwright 22/22. Retries: 0 on every gate.
+- **Gates are PROVISIONAL, not pass/fail.** Each gate's machine line reads `CONTENDED` with the same 2 other heavy `node` processes (pid 32144 from `AppData\Roaming\…`, pid 51144 from `…\web-games\…`; both had exited by the time I looked, so only the truncated command lines are known). GPU on every gate: `ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Laptop GPU … D3D11)`, pose delegate GPU.
+
+  | Gate | Measured | Limit | Machine |
+  |---|---|---|---|
+  | pose-1p-5s | pose-fps 29.5, with-pose 1.0 | ≥ 20, > 0.9 | cpu 21 %, gpu 68 %, lock held, CONTENDED (2) |
+  | skate-1p-1080p-bot | fps min 59, calls 57 | ≥ 55, < 150 | cpu 16 %, gpu 38 %, CONTENDED (2) |
+  | skate-1p-1080p-pose | fps min 60, pose-fps min 29, calls 57 | ≥ 55, ≥ 20 | cpu 24 %, gpu 39 %, CONTENDED (2) |
+  | skate-2p-1080p | fps min 60, pose-fps min 26 (mean 28.3), calls 110–114, tris 1.13–1.26 M | ≥ 55, ≥ 20, < 150 | cpu 46 %, gpu 40 %, CONTENDED (2) |
+
+- **Rule recorded (Jorge, 2026-09-16):** a gate whose machine state shows contention is reported as provisional, whether it passed or failed. A green gate on a busy machine is as misleading as a red one.
+
+### Known gaps
+
+- **Scope is still branch-dependent until every active branch merges main.** Hook commands come from the main checkout's `.claude/settings.json` and resolve scripts relative to it; a branch without this commit runs the old hooks, and a worktree on such a branch runs vitest/Playwright without the lock. Proposal for Jorge in the session report (settings are human-owned).
+- **Quiet-window agreements between sessions** should now be enforced by the lock, not by message (Jorge's note).
+- **No `.gitattributes`:** Git warns LF→CRLF on files written by sessions. Task raised after this lands.
+
+---
+
+## 2026-09-17 — Hook launcher, zero-gates guard, .gitattributes (committed WITHOUT e2e, by exception)
+
+Branch `chore/perf-lock` (`tmp/perf-lock-worktree`). Three items, committed on Jorge's explicit authorization as an exception to AGENTS §3 (verify green before commit).
+
+### Why an exception
+
+- **Deadlock:** e2e can't validate the lock because e2e can't produce a trustworthy result until the lock and the load rule exist. External load on this machine right now is ~30 % GPU (dwm on the external display) and ~4.8 CPU cores, so every gate would be contended.
+- **Scope:** only the three items below. The `1612791` / `6a28bf5` gate and machine-state port is **held**; it isn't covered by the exception.
+
+### What changed
+
+1. **`.claude/hooks/run-main.mjs`** (+ `tests/unit/run-main.spec.ts`): runs a hook from `main`'s committed tree, exported once per main commit into `<git-common-dir>/claude-hooks/<sha>/`, whatever branch the checkout has out.
+   - Fail **closed** for `guard-paths` (anything but its own 0/2 blocks), **open** for `format-and-typecheck` and `remind-progress-log`.
+   - Exports with `git ls-tree` + `git show`, not `git archive | tar`: Git Bash's GNU tar reads `C:\…` as a remote host.
+   - Takes effect only when Jorge points `.claude/settings.json` at it. Commands (human-owned file): `node .claude/hooks/run-main.mjs guard-paths || exit 2`, `node .claude/hooks/run-main.mjs format-and-typecheck`, `node .claude/hooks/run-main.mjs remind-progress-log`. The `|| exit 2` blocks even if the launcher file itself is missing.
+   - The e2e lock can't be made branch-independent this way: vitest/Playwright use their own branch's config, so each active branch still has to merge main (accepted).
+2. **`tests/e2e/gate-coverage-reporter.ts`** (+ `tests/unit/gate-coverage.spec.ts`, `playwright.config.ts` reporter): a run whose selected `@perf` gates were all provisional (or skipped) prints `GATES: no gates measured` and ends with status failed, so zero-coverage green can't happen. Every run with gates prints `GATES: X measured, Y provisional`.
+   - Why now: with provisional gates skipped, a lock-waiting `format-and-typecheck` counted as contention made every gate provisional and verify exited 0 having measured nothing (`tmp/verify/verify-perf-lock-3.log`).
+3. **`.gitattributes`:** `* text=auto eol=lf`, binaries marked. The index was already all LF (149 text, 31 binary, 1 empty); `git add --renormalize .` changed no file.
+
+### Verified (without e2e)
+
+- `pnpm typecheck`, `pnpm lint` → exit 0. `pnpm test` → 26 files, 350 passed + 1 skipped (held port set aside, so this is exactly the committed tree).
+- **Launcher (unit, temp repos):** main's guard blocks `docs/PLAN.md` while the checked-out branch's guard allows everything; main's Stop hook runs, not the branch's; a crashing advisory hook exits 0; an unknown hook exits 2; with no `main`, the guard exits 2 ("could not run from main") and advisory hooks exit 0.
+- **Reporter, end to end in real Playwright** (throwaway config in `tmp/gate-cov-check/`, no browser): every `@perf` gate provisional → exit 1 with `GATES: no gates measured (1 provisional)`; one gate measured → exit 0.
+
+### Must be re-validated on the first trustworthy gate run (after Jorge's display change)
+
+- **Reporter:** the real verify prints `GATES: N measured, M provisional`; a run with every gate provisional exits non-zero; a run with measured gates exits by their pass/fail.
+- **Launcher:** after the `settings.json` edit, an Edit on `docs/PLAN.md` from a session in the main checkout and from a worktree session is blocked; a `.ts` edit still gets prettier + tsc (or the lock-skip message); `.git/claude-hooks/<main sha>/` exists.
+- **`.gitattributes`:** after merging main, `git status` in each checkout shows no line-ending-only modifications and the LF→CRLF warnings are gone.
+
+### Decisions recorded (Jorge, 2026-09-17)
+
+- **External GPU ≤ 10 % → measured; above → provisional: approved.** The 2P pose-fps min 19 read as "quiet" had dwm at 20.6 %, so it was taken under load and isn't a real red.
+- **External CPU threshold: not approved.** VS Code, Defender and dwm (~4.8 cores idle) are the machine's steady state, not contention, and gates must measure the machine as developed on. Derive it from measurement: if external CPU doesn't move pose-fps, report it in the machine line without making results provisional; if it does, set the threshold where pose-fps degrades. One session measures it (coordinated with `move-arcade-bd`).
