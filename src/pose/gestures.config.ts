@@ -41,6 +41,24 @@ export const gestureConfig = {
   slide: { enter: 0.25, holdMs: 100, exit: 0.12, cooldownMs: 400 },
   /** Both wrists above the nose, held this long (ms) → REVIVE_ACCEPT. */
   reviveHoldMs: 1000,
+  /**
+   * Boxing fists (pose/fists.ts). Distances in torso lengths from the nose, speeds in torso/s of the
+   * wrist relative to the nose (measured over velocityWindowMs).
+   * PUNCH when an armed wrist is beyond `rearm` and moving faster than `speed`, and not mostly
+   * downward (aim.y > −maxDown). A wrist arms when within `rearm` and slower than `rearmSpeed`.
+   * zWeight scales MediaPipe's noisy depth (0 = ignore it; straight punches then rely on 2D drift).
+   * GUARD_START when both wrists are within guard.enter; GUARD_END when either passes guard.exit.
+   * UNTUNED: set from synthetic poses only; needs a real-camera playtest.
+   */
+  fists: {
+    speed: 2.5,
+    velocityWindowMs: 70,
+    rearm: 0.6,
+    rearmSpeed: 1,
+    maxDown: 0.7,
+    zWeight: 1,
+    guard: { enter: 0.35, exit: 0.45 },
+  },
   /** T-pose: wrists within wristYTol torsos of shoulder height and wristOut shoulders beyond the shoulders, held holdMs. */
   tPose: { holdMs: 1000, wristYTol: 0.25, wristOut: 0.5 },
 };

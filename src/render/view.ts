@@ -56,7 +56,7 @@ function addLights(scene: Scene): { hemi: HemisphereLight; sun: DirectionalLight
 }
 
 /** Point the renderer and camera at a player's vertical slice of the canvas (the whole canvas for 1). */
-function useSlot(
+export function useSlot(
   renderer: WebGLRenderer,
   camera: PerspectiveCamera,
   canvas: HTMLCanvasElement,

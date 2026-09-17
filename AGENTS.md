@@ -69,7 +69,8 @@ Screenshots and state dumps go to `tmp/` (git-ignored). Reference them by path i
 ## 5. How to use the runtime as an agent
 
 - `pnpm dev` then open `http://localhost:5173/?game=skate-run&debug=1&input=keyboard&seed=42` (without `?game=<id>` the game-select menu shows)
-- `window.__game.getActiveGame()` — launched MiniGame id (null on the menu); `getState()` — full sim snapshot; `getSignals()` — live pose signals; `inject({type:'JUMP'})` — fire an input event; `setSeed(n)` — restart deterministic run.
+- `window.__game.getActiveGame()` — launched MiniGame id (null on the menu); `getState<SimState | BoxingState>(player?)` — full sim snapshot, typed by the caller; `getSignals()` — live pose signals; `inject({type:'JUMP'})` — fire an input event (`player`, and `aim` for punches); `setSeed(n)` — restart deterministic run.
+- `?game=boxing` — Boxing (keys: Z/X punch, ↑ guard, ←/→ sway, ↓ duck). `?players=2` is one shared match, not two runs.
 - `?input=replay:jump.json` — drives the game from a recorded fixture; `?record=1` — records a fixture (human only).
 - `?players=2` — split screen; `?model=lite|full|heavy`; `?camera=<deviceId>`.
 - The `/playtest <seed> <input>` command wraps the above in headed Playwright and saves artifacts.

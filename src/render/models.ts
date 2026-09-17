@@ -138,20 +138,29 @@ function fallback(): LoadedModel {
   return { scene: o, animations: [] };
 }
 
+/** Load one file model; a flat box stands in if it fails (the game must still be playable). */
+export async function loadModel(
+  id: FileModelId,
+  base = '/assets/quaternius/',
+  loader = new GLTFLoader(),
+): Promise<LoadedModel> {
+  try {
+    const gltf = await loader.loadAsync(base + MODEL_FILES[id]);
+    return { scene: gltf.scene, animations: gltf.animations };
+  } catch (err) {
+    console.warn(`model ${id} failed to load, using a box`, err);
+    return fallback();
+  }
+}
+
 export async function loadModels(
   base = '/assets/quaternius/',
 ): Promise<Record<ModelId, LoadedModel>> {
   const loader = new GLTFLoader();
   const files = await Promise.all(
-    (Object.keys(MODEL_FILES) as FileModelId[]).map(async (id) => {
-      try {
-        const gltf = await loader.loadAsync(base + MODEL_FILES[id]);
-        return [id, { scene: gltf.scene, animations: gltf.animations }] as const;
-      } catch (err) {
-        console.warn(`model ${id} failed to load, using a box`, err);
-        return [id, fallback()] as const;
-      }
-    }),
+    (Object.keys(MODEL_FILES) as FileModelId[]).map(
+      async (id) => [id, await loadModel(id, base, loader)] as const,
+    ),
   );
   const built = PROCEDURAL.map((id) => [id, { scene: procedural(id), animations: [] }] as const);
   return Object.fromEntries([...files, ...built]) as Record<ModelId, LoadedModel>;

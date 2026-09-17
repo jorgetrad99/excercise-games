@@ -1,5 +1,6 @@
 // M4 DoD: screenshot tests on seed 42 at t = 0/10/30 s, HUD flows, draw-call budget, console hygiene.
 import { expect, test, type Page } from '@playwright/test';
+import type { SimState } from '../../src/core/types';
 
 /** Not ours: ANGLE's D3D compiler warns about float precision in three's PMREM shaders
  *  (X4122); MediaPipe's wasm logs glog lines like `W0916 … gl_context.cc:1119]` at startup. */
@@ -27,7 +28,7 @@ async function boot(page: Page, query: string): Promise<void> {
 
 /** Advance the manual clock to sim time `t`, then let a couple of frames render it. */
 async function seek(page: Page, t: number): Promise<void> {
-  await page.evaluate((t) => window.__game.advance(t - window.__game.getState().t), t);
+  await page.evaluate((t) => window.__game.advance(t - window.__game.getState<SimState>().t), t);
   await page.evaluate(
     () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
   );
@@ -46,7 +47,7 @@ test.describe('renderer', () => {
       await expect(page).toHaveScreenshot(`seed42-t${t}.png`, { maxDiffPixelRatio: 0.01 });
     }
     const state = await page.evaluate(() => {
-      const s = window.__game.getState();
+      const s = window.__game.getState<SimState>();
       return { phase: s.phase, distance: s.distance, crashes: s.stats.crashes };
     });
     expect(state).toMatchObject({ phase: 'running', crashes: 0 });
@@ -62,7 +63,7 @@ test.describe('renderer', () => {
   }) => {
     const problems = watchConsole(page);
     await boot(page, 'input=keyboard&seed=42&clock=manual&tokens=1');
-    const phase = () => page.evaluate(() => window.__game.getState().phase);
+    const phase = () => page.evaluate(() => window.__game.getState<SimState>().phase);
     const runUntil = async (want: string) => {
       for (let i = 0; i < 400 && (await phase()) !== want; i++)
         await page.evaluate(() => window.__game.advance(0.05));
@@ -71,7 +72,7 @@ test.describe('renderer', () => {
     await runUntil('crashed');
     await expect(page.locator('.hud .card')).toContainText('Revive?');
     await page.keyboard.press('Enter');
-    await seek(page, (await page.evaluate(() => window.__game.getState().t)) + 0.1);
+    await seek(page, (await page.evaluate(() => window.__game.getState<SimState>().t)) + 0.1);
     expect(await phase()).toBe('running');
     await runUntil('over'); // no tokens left: straight to results
     await expect(page.locator('.hud .results')).toContainText('Run over');
@@ -82,7 +83,7 @@ test.describe('renderer', () => {
     await page.waitForTimeout(1_000);
     await page.keyboard.press('Space');
     await expect.poll(phase).toBe('countdown');
-    expect(await page.evaluate(() => window.__game.getState().t)).toBe(0);
+    expect(await page.evaluate(() => window.__game.getState<SimState>().t)).toBe(0);
     expect(problems).toEqual([]);
   });
 });
@@ -104,8 +105,8 @@ test.describe('perf', () => {
     }
     const stats = await page.evaluate(() => ({
       render: window.__game.getRenderStats(),
-      phase: window.__game.getState().phase,
-      distance: Math.round(window.__game.getState().distance),
+      phase: window.__game.getState<SimState>().phase,
+      distance: Math.round(window.__game.getState<SimState>().distance),
     }));
     console.info('perf fps samples', samples.join(','), stats);
     expect(Math.min(...samples)).toBeGreaterThanOrEqual(55);
@@ -146,7 +147,9 @@ test.describe('perf', () => {
     expect(calls).toBeGreaterThan(20); // the 3D scene really drew
     await expect(page.locator('.hud .card')).toContainText('Get ready'); // held for calibration
     await page.keyboard.press('ArrowLeft'); // the keyboard fallback starts the run anyway
-    await expect.poll(() => page.evaluate(() => window.__game.getState().tick)).toBeGreaterThan(0);
+    await expect
+      .poll(() => page.evaluate(() => window.__game.getState<SimState>().tick))
+      .toBeGreaterThan(0);
     expect(problems).toEqual([]);
   });
 });

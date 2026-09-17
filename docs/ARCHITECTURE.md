@@ -6,17 +6,17 @@ Agent-maintained module map. The spec lives in `docs/PLAN.md` §3; this file rec
 
 | Path                   | Status (M2)            | Role                                                                                    |
 | ---------------------- | ---------------------- | --------------------------------------------------------------------------------------- |
-| `src/core/`            | M3 sim: `sim`, `worldgen`, `patterns`, `collision`, `bot`, `hash`, `prng`, `input` | Pure, deterministic TS: sim, worldgen, scoring, progression. ADR-002.                   |
+| `src/core/`            | M3 sim: `sim`, `worldgen`, `patterns`, `collision`, `bot`, `hash`, `prng`, `input`; `boxing/` | Pure, deterministic TS: sim, worldgen, scoring, progression. ADR-002. `boxing/` = Boxing's sim, bot, config (Piece 4). |
 | `src/input/`           | keyboard, pose, pose-players, replay | `InputSource` impls: pose, keyboard, replay, network. The only layer that sees both pose and core events. |
 | `src/pose/`            | M1 pipeline, M2 gestures | Camera manager, worker bridge, One Euro filter, signals, gesture engine, debug HUD. See "Pose pipeline (M1)" and "Gestures (M2)" below. |
-| `src/render/`          | M4 view + HUD          | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD.       |
+| `src/render/`          | M4 view + HUD; `boxing/` | three.js behind `createRenderer()` (ADR-001), scene, chunk views, pools, DOM HUD. `boxing/` = ring view, boxer figure, boxing HUD. |
 | `src/net/`             | —                      | Colyseus client + room protocol (M6).                                                   |
 | `src/platform/`        | `rate`, `latency`, `menu` | Profile store, settings, debug bridge (`window.__game`), game-select menu (DOM, unstyled). |
-| `src/games/`           | `types.ts`, `skate-run/` | `types.ts` = the `MiniGame` contract (PLAN §2.6). One `MiniGame` per `<id>/` folder. `skate-run/` wraps `core/` + `render/` in place (Phase 2 option A: not moved yet) and owns its gesture→input map. |
+| `src/games/`           | `types.ts`, `registry.ts`, `skate-run/`, `boxing/` | `types.ts` = the `MiniGame` contract (PLAN §2.6) + `defineGame()`. `registry.ts` = `GAMES` in menu order (the only importer of game folders). One `MiniGame` per `<id>/` folder, default-exported through `defineGame`; each wraps its `core/` + `render/` modules and owns its gesture→input map and keys. |
 | `src/main.ts`          | game-agnostic shell    | Boot: `?game=<id>` launches that MiniGame, otherwise the menu; URL params → sim (`?seed`, `?tokens`), inputs (`?input=pose|keyboard|bot|replay:<fixture>`, keyboard always on), rAF loop (sim.step → view.render → HUD; `?clock=manual` for screenshots), calibration gate for pose/replay, restart on JUMP after game over, `window.__game`. |
 | `src/debug-bridge.d.ts`| `Window.__game` type   | Debug bridge contract shared by app and Playwright tests.                               |
 | `public/models/`       | vendored, gitignored   | MediaPipe wasm + `pose_landmarker_{lite,full,heavy}.task` (model v1). Regenerate: `pnpm vendor:models`. |
-| `tests/e2e/`           | `boot`, `pose`, `gestures` smoke | Playwright; `smoke` project = `*.smoke.spec.ts`, new-headless Chromium (real GPU) with the fake camera fed by `tests/e2e/assets/placeholder-person.mjpeg` (interim, see CREDITS.md). |
+| `tests/e2e/`           | `boot`, `pose`, `gestures`, `render`, `two-players`, `boxing` smoke | Playwright; `smoke` project = `*.smoke.spec.ts`, new-headless Chromium (real GPU) with the fake camera fed by `tests/e2e/assets/placeholder-person.mjpeg` (interim, see CREDITS.md). |
 | `tests/unit/`          | `boundaries.spec.ts`   | Vitest for cross-cutting checks; module tests are colocated `*.spec.ts`.                |
 
 ## Dependency rules (enforced)
@@ -28,7 +28,9 @@ core     ─✗→ render, pose, input, net, platform, games, three, @mediapipe/
 core     ─✗→ window, document, navigator, performance, requestAnimationFrame, setTimeout, setInterval, localStorage, Math.random
 render   ─✗→ pose
 pose     ─✗→ core          (only input/ bridges pose ⇄ core events)
-games/a  ─✗→ games/b     (rule covers src/games/*/**; the shared games/types.ts may import layers)
+games/a  ─✗→ games/b     (src/games/*/**, regex: also '../b' folder-index imports; '../types' and layers allowed)
+games/types.ts ─✗→ any game   (only games/registry.ts imports game folders)
+core/<game>/ may import core/input.ts ('../input'), never the input/ layer
 ```
 
 Also enforced on non-test `src/**`: `max-lines` 400, `max-lines-per-function` 60. `typescript-eslint` recommended bans `any` and `@ts-ignore`.
@@ -86,6 +88,36 @@ render: ONE renderer + ONE scene; per player: world + skater updated from that s
 - **Lane mode:** zones are thirds of the whole frame, so 2P forces `lean` (warns).
 - **Latency/judder instrumentation** tracks P1 only in 2P.
 - **Tests:** `src/pose/players.spec.ts`, `src/input/pose-players.spec.ts`, `tests/e2e/two-players.smoke.spec.ts`. They use synthetic two-person frames (`scriptTwo`) and `tests/e2e/assets/placeholder-two-people.mjpeg`, all marked `TEMPORARY(synthetic-fixtures)` until `two-players.json` exists.
+
+## Registry typing (Piece 4)
+
+- `MiniGame<S>` members are function-valued properties, so strictFunctionTypes checks their parameters contravariantly and a `MiniGame<SkateSim>` no longer fits a `MiniGame<GameSim>` by accident.
+- `defineGame<S>(game)` returns a `RegisteredGame = MiniGame<OpaqueSim>`. `OpaqueSim` is branded, so the shell can't make one: every sim it hands to `render`/`hud`/`summary` came from that game's `createSim`. That's why the one cast inside `defineGame` is sound.
+- Bridge: `__game.getState<S>(player?)`. The caller names the shape (`SimState`, `BoxingState`); unchecked at runtime. `advance()` returns `getState().t`, which every `GameSim` state has.
+
+## Boxing (Piece 4)
+
+```
+pose: body.ts tracks wrists + nose with z (One Euro) → fists.ts per wrist: position relative to the nose (torso units,
+      z × aspect × zWeight) → speed over 70 ms + motion direction → PUNCH_LEFT/RIGHT {aim} when armed, beyond `rearm`,
+      fast, not mostly downward; re-arm only back within `rearm` AND slow (recovery). GUARD_START/END by both-wrists
+      distance (hysteresis). SignalFrame + fistL, fistR, guard.
+games/boxing: LANE_LEFT/RIGHT → DODGE_LEFT/RIGHT, SLIDE_START → DUCK, punches/guard 1:1, JUMP = play again.
+      Keys: Z/X punch, ↑ hold guard, ←/→ sway, ↓ duck, Space play again.
+core/boxing/sim.ts @ 60 Hz, ONE BoxingState for both boxers (events carry `player`):
+      intro → fight ⇄ down (count) → break → … → over. Fists ready → out (lands at travelS) → back → ready.
+      land(): dodge (aim vs sway/duck) → whiff + counter window; guard (not vs uppercut) → block drain; else clean hit;
+      dizzy at 0 stamina; hit while dizzy → knockdown (seeded get-up count, max −2); 3 knockdowns TKO; decision after 3 rounds.
+      Same-tick landings resolve in a seeded coin-flip order (fairness).
+core/boxing/bot.ts: stateless (state, seed, tick) → reacts reactS after a punch leaves; punches on a 0.1 s grid.
+render/boxing: ring + 2 × Casual_Hoodie (SkeletonUtils.clone, arms collapsed, floating gloves like Miis);
+      slot i = camera behind boxer i's head, own body hidden, own gloves low/wide. HUD: stamina pies, clock, count, result.
+```
+
+- **Shared sim in the shell:** `MiniGame.sharedSim`. With it, every `Player.sim` is the same object. `record()` tags each queued event with `player`. `eachSim()` steps each distinct sim once with all its players' events (frame loop and `advance`). `restart()` replaces a shared sim for everyone (play again, `setSeed`). `view.render` gets `[sim, sim]`, one entry per player, so slot *i* is drawn from boxer *i*.
+- **1P:** the bot is boxer 1. `?input=bot` / `?autoplay=1` also puts it on boxer 0. **2P:** no bot.
+- **Tuning:** `core/boxing/boxing.config.ts` (rules) and `pose/gestures.config.ts` `fists` (detection, UNTUNED on real video).
+- **Tests:** `core/boxing/sim.spec.ts` covers rules, determinism, frame pacing, bot vs bot and bot reactions. `pose/fists.spec.ts` covers synthetic straight/hook/uppercut/guard/recovery. `tests/e2e/boxing.smoke.spec.ts` covers the menu, 1P keyboard + bot, 2P shared state, pose replay → sim, and screenshot baselines.
 
 ## Core sim (M3)
 

@@ -54,9 +54,10 @@ function buildBoard(): Group {
   return board;
 }
 
-type Clip = 'Idle_Neutral' | 'Roll' | 'Death' | 'Wave' | 'Run';
+export type Clip = 'Idle_Neutral' | 'Roll' | 'Death' | 'Wave' | 'Run';
 
-function rig(model: LoadedModel) {
+/** The Casual_Hoodie rig: one clip at a time plus crouch bends (also the boxers, render/boxing). */
+export function rig(model: LoadedModel) {
   const body = model.scene;
   body.traverse((o) => {
     o.castShadow = true;
@@ -109,7 +110,7 @@ function rig(model: LoadedModel) {
   return { body, show, bend, duration };
 }
 
-type Rig = ReturnType<typeof rig>;
+export type Rig = ReturnType<typeof rig>;
 
 const sideAxis = new Vector3();
 const qParent = new Quaternion();

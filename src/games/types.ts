@@ -3,6 +3,7 @@
 // Differences from the PLAN sketch: createView takes the canvas (the view outlives runs, so it gets
 // the sim per frame), and the shell also needs a HUD and a run summary (calibration gate, results).
 import type { InputEvent } from '../core/input';
+import type { KeyMap } from '../input/keyboard';
 import type { GestureMap } from '../input/pose-source';
 import type { Drawn } from '../platform/latency';
 import type { SignalFrame } from '../pose/gestures';
@@ -24,8 +25,10 @@ export interface GestureProfile {
 /** What the shell calls on any sim. Games return their own richer sim type. */
 export interface GameSim {
   readonly seed: number;
+  /** Events carry `player` when the sim is shared by several players (MiniGame.sharedSim). */
   step(dt: number, events: readonly InputEvent[]): void;
-  getState(): Readonly<object>;
+  /** Every game's state has at least its seed and sim time (s): the bridge's advance() returns t. */
+  getState(): Readonly<{ seed: number; t: number }>;
   /** Sim events since the last call; the shell drains every frame so they never pile up. */
   drainEvents(): readonly unknown[];
 }
@@ -35,20 +38,31 @@ export interface RunSummary {
   started: boolean;
   /** Results are up: the shell restarts the run on a JUMP made ≥ 1 s later. */
   over: boolean;
+  /** This player's score (the shell keeps each player's best). */
   score: number;
 }
 
-// Methods (not function-valued properties) on purpose: their parameters are bivariant, so a
-// MiniGame<SkateSim> fits a MiniGame[] registry without casts.
+// Function-valued properties (not methods) on purpose: under strictFunctionTypes their parameters
+// are checked contravariantly, so a MiniGame<SkateSim> does NOT silently fit a MiniGame<GameSim>.
+// The registry holds games through defineGame() instead.
 export interface GameView<S extends GameSim> {
-  /** Draw every player's run side by side (1 = full screen); `interpolate` false = exact tick
-   *  (manual clock). Returns what P1's slot drew, for judder tracking, or null when nothing moves. */
-  render(sims: readonly S[], interpolate: boolean): Drawn | null;
-  stats(): RenderStats;
+  /** Draw one slot per player side by side (1 = full screen); a shared sim appears once per player,
+   *  so slot i can be drawn from player i's point of view. `interpolate` false = exact tick (manual
+   *  clock). Returns what P1's slot drew, for judder tracking, or null when nothing moves. */
+  render: (sims: readonly S[], interpolate: boolean) => Drawn | null;
+  stats: () => RenderStats;
 }
 
 export interface GameHud<S extends GameSim> {
-  update(sim: S, extras: HudExtras): void;
+  update: (sim: S, extras: HudExtras) => void;
+}
+
+export interface SimOptions {
+  reviveTokens: number;
+  /** A bot drives P1 (?input=bot, ?autoplay=1). */
+  autoplay: boolean;
+  /** Players in this session (1, or 2 with ?players=2). */
+  players: number;
 }
 
 export interface MiniGame<S extends GameSim = GameSim> {
@@ -56,11 +70,28 @@ export interface MiniGame<S extends GameSim = GameSim> {
   title: string;
   requiredSignals: readonly SignalId[];
   gestureProfile: GestureProfile;
+  /** Keyboard fallback keys; absent = Skate Run's. */
+  keys?: KeyMap;
   /** Fixed tick length, s: window.__game.advance() steps whole ticks. */
   fixedDt: number;
-  /** Pure and deterministic. `autoplay`: a bot drives the run (?input=bot, ?autoplay=1). */
-  createSim(seed: number, opts: { reviveTokens: number; autoplay: boolean }): S;
-  createView(canvas: HTMLCanvasElement): Promise<GameView<S>>;
-  mountHud(root: HTMLElement): GameHud<S>;
-  summary(sim: S): RunSummary;
+  /** true: one sim holds every player (versus); false: one independent sim per player, same seed. */
+  sharedSim: boolean;
+  /** Pure and deterministic. */
+  createSim: (seed: number, opts: SimOptions) => S;
+  createView: (canvas: HTMLCanvasElement) => Promise<GameView<S>>;
+  /** `player`: whose HUD this is (0-based). */
+  mountHud: (root: HTMLElement, player: number) => GameHud<S>;
+  summary: (sim: S, player: number) => RunSummary;
+}
+
+declare const opaque: unique symbol;
+/** A sim the shell can only get from a game's createSim and hand back to that same game. */
+export type OpaqueSim = GameSim & { readonly [opaque]: true };
+
+/** A registered game with its sim type hidden. The shell can't build an OpaqueSim itself, so every
+ *  sim it passes to render/hud/summary came from that game's createSim: what makes the cast sound. */
+export type RegisteredGame = MiniGame<OpaqueSim>;
+
+export function defineGame<S extends GameSim>(game: MiniGame<S>): RegisteredGame {
+  return game as unknown as RegisteredGame;
 }

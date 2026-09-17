@@ -3,6 +3,7 @@
 // composited two-person placeholder clip, until Jorge records two-players.json and a real 2-person clip.
 import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import type { SimState } from '../../src/core/types';
 import { CALIBRATE, JUMP, fixture, scriptTwo, type Key } from '../../src/pose/testdata/synthetic';
 
 // This whole file sees two people in front of the fake camera.
@@ -67,7 +68,7 @@ test('replay: two bodies are tracked independently, each driving only its own ru
 
   const [p1, p2] = await page.evaluate(() =>
     [0, 1].map((i) => {
-      const s = window.__game.getState(i);
+      const s = window.__game.getState<SimState>(i);
       return {
         seed: s.seed,
         lane: s.targetLane,
@@ -103,7 +104,7 @@ test('manual clock: same seed, different inputs → independent collisions and s
     g.inject({ type: 'LANE_RIGHT', player: 1 }); // P2 only: into the right lane's parked car on seed 42
     g.advance(5);
     return [0, 1].map((i) => {
-      const s = g.getState(i);
+      const s = g.getState<SimState>(i);
       return {
         phase: s.phase,
         lane: s.targetLane,
@@ -119,7 +120,7 @@ test('manual clock: same seed, different inputs → independent collisions and s
   await page.keyboard.press('ArrowLeft');
   await page.evaluate(() => window.__game.advance(0.1));
   expect(
-    await page.evaluate(() => [0, 1].map((i) => window.__game.getState(i).targetLane)),
+    await page.evaluate(() => [0, 1].map((i) => window.__game.getState<SimState>(i).targetLane)),
   ).toEqual([-1, 1]);
   expect(errors).toEqual([]);
 });
@@ -140,7 +141,9 @@ test.describe('split screen', () => {
       () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
     );
     await expect(page).toHaveScreenshot('two-players-seed42-t10.png', { maxDiffPixelRatio: 0.01 });
-    const phases = await page.evaluate(() => [0, 1].map((i) => window.__game.getState(i).phase));
+    const phases = await page.evaluate(() =>
+      [0, 1].map((i) => window.__game.getState<SimState>(i).phase),
+    );
     expect(phases).toEqual(['running', 'running']);
     expect(errors).toEqual([]);
   });
@@ -183,7 +186,9 @@ test.describe('perf', () => {
         }),
       );
     }
-    const phases = await page.evaluate(() => [0, 1].map((i) => window.__game.getState(i).phase));
+    const phases = await page.evaluate(() =>
+      [0, 1].map((i) => window.__game.getState<SimState>(i).phase),
+    );
     console.info('perf 2 players', JSON.stringify(samples), { phases });
     expect(phases).toEqual(['running', 'running']);
     expect(Math.min(...samples.map((s) => s.fps))).toBeGreaterThanOrEqual(55);

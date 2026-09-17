@@ -8,23 +8,24 @@ import { mountHud } from '../../render/hud';
 import { renderPose } from '../../render/interp';
 import { loadModels } from '../../render/models';
 import { createGameView } from '../../render/view';
-import type { MiniGame } from '../types';
+import { defineGame } from '../types';
 import { SKATE_GESTURES } from './gestures';
 
-export const skateRun: MiniGame<GameSim> = {
+export default defineGame<GameSim>({
   id: 'skate-run',
   title: 'Skate Run',
   requiredSignals: ['leanX', 'zone', 'hipRise', 'hipRiseVel', 'headDrop'],
   gestureProfile: { toInput: SKATE_GESTURES, config: gestureConfig },
   fixedDt: simConfig.fixedDt,
+  sharedSim: false, // parallel solo runs on one seed
 
-  createSim(seed, { reviveTokens, autoplay }) {
+  createSim: (seed, { reviveTokens, autoplay }) => {
     const sim = createGameSim({ seed, reviveTokens });
     if (autoplay) sim.setController(createBot(sim.context).act);
     return sim;
   },
 
-  async createView(canvas) {
+  createView: async (canvas) => {
     const view = createGameView(canvas, await loadModels());
     return {
       render(sims, interpolate) {
@@ -49,13 +50,13 @@ export const skateRun: MiniGame<GameSim> = {
     };
   },
 
-  mountHud(root) {
+  mountHud: (root) => {
     const hud = mountHud(root);
     return { update: (sim, extras) => hud.update(sim.getState(), extras) };
   },
 
-  summary(sim) {
+  summary: (sim) => {
     const s = sim.getState();
     return { started: s.tick > 0, over: s.phase === 'over', score: s.score };
   },
-};
+});

@@ -47,7 +47,7 @@ export function createPoseSource({
     if (!running) return;
     for (const g of gestures) {
       const type = toInput[g.type];
-      if (type) events.emit({ t: g.t, type });
+      if (type) events.emit(g.aim ? { t: g.t, type, aim: g.aim } : { t: g.t, type });
     }
   };
 

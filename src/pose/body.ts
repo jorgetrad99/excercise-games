@@ -6,6 +6,8 @@ import type { PoseFrame } from './types';
 export interface Point {
   x: number;
   y: number;
+  /** MediaPipe relative depth (smaller = nearer the camera, roughly x's scale); tracked points only. */
+  z?: number;
 }
 
 /** MediaPipe pose landmark indices we use. l/r = the PERSON's left/right. */
@@ -40,6 +42,7 @@ export function createBodyTracker(cfg: GestureConfig, video: () => VideoSize) {
       {
         fx: createOneEuro(cfg.filter),
         fy: createOneEuro(cfg.filter),
+        fz: createOneEuro(cfg.filter),
         value: null as Point | null,
         seenT: -Infinity,
       },
@@ -59,8 +62,13 @@ export function createBodyTracker(cfg: GestureConfig, video: () => VideoSize) {
           // re-acquired after being lost: don't glide in from a stale value
           tr.fx = createOneEuro(cfg.filter);
           tr.fy = createOneEuro(cfg.filter);
+          tr.fz = createOneEuro(cfg.filter);
         }
-        tr.value = { x: tr.fx(lm.x * aspect, frame.t) / aspect, y: tr.fy(lm.y, frame.t) };
+        tr.value = {
+          x: tr.fx(lm.x * aspect, frame.t) / aspect,
+          y: tr.fy(lm.y, frame.t),
+          z: tr.fz(lm.z * aspect, frame.t) / aspect, // z shares x's scale
+        };
         tr.seenT = frame.t;
       } else if (frame.t - tr.seenT > cfg.holdLandmarkMs) {
         tr.value = null;
@@ -75,6 +83,9 @@ export interface Measures {
   shoulderCenter: Point;
   hipCenter: Point;
   nose: Point | null;
+  /** The person's left / right wrist (boxing fists). */
+  lWrist: Point | null;
+  rWrist: Point | null;
   /** Lengths are in image-height units with x corrected by `aspect`, so they are true proportions. */
   torsoLen: number;
   shoulderWidth: number;
@@ -103,6 +114,8 @@ export function measure(body: Body, aspect: number, cfg: GestureConfig): Measure
     shoulderCenter,
     hipCenter,
     nose,
+    lWrist,
+    rWrist,
     torsoLen,
     shoulderWidth,
     aspect,

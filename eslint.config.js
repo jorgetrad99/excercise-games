@@ -9,6 +9,20 @@ const forbid = (...dirs) =>
     message: `import from ${d}/ violates PLAN §3 boundaries`,
   }));
 
+/** core's import rule; `contract` = the relative path of core/input.ts (the InputEvent contract,
+ *  core's own file, not the input/ layer) as seen from the files the rule applies to. */
+const coreImports = (contract) => [
+  'error',
+  {
+    paths: [{ name: 'three', message: 'core is pure TS (ADR-002)' }],
+    patterns: [
+      ...forbid('render', 'pose', 'net', 'platform', 'games'),
+      { ...forbid('input')[0], group: ['**/input', '**/input/**', `!${contract}`] },
+      { group: ['three/*', '@mediapipe/*'], message: 'core is pure TS (ADR-002)' },
+    ],
+  },
+];
+
 export default defineConfig(
   { ignores: ['node_modules', 'dist', 'tmp', 'public', 'fixtures'] },
   js.configs.recommended,
@@ -31,18 +45,7 @@ export default defineConfig(
   {
     files: ['src/core/**/*.ts'],
     rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          paths: [{ name: 'three', message: 'core is pure TS (ADR-002)' }],
-          patterns: [
-            ...forbid('render', 'pose', 'net', 'platform', 'games'),
-            // core/input.ts (the InputEvent contract) is core's own file, not the input/ layer.
-            { ...forbid('input')[0], group: ['**/input', '**/input/**', '!./input'] },
-            { group: ['three/*', '@mediapipe/*'], message: 'core is pure TS (ADR-002)' },
-          ],
-        },
-      ],
+      'no-restricted-imports': coreImports('./input'),
       'no-restricted-globals': [
         'error',
         'window',
@@ -61,6 +64,12 @@ export default defineConfig(
     },
   },
   {
+    // Game modules one folder down (core/boxing/): '../input' is core/input.ts there, while from
+    // core/ itself it would be the input/ layer.
+    files: ['src/core/*/**/*.ts'],
+    rules: { 'no-restricted-imports': coreImports('../input') },
+  },
+  {
     files: ['src/render/**/*.ts'],
     rules: { 'no-restricted-imports': ['error', { patterns: forbid('pose') }] },
   },
@@ -69,13 +78,28 @@ export default defineConfig(
     rules: { 'no-restricted-imports': ['error', { patterns: forbid('core') }] },
   },
   {
-    files: ['src/games/*/**/*.ts'], // games/<id>/…; the shared contract games/types.ts may import layers,
+    // games/<id>/…: never a sibling game, including its folder index ('../boxing'). The shared
+    // contract '../types' and layers ('../../core/…') stay allowed. A regex, because a gitignore
+    // group like '../*' also matches the '..' parent of '../../core'.
+    files: ['src/games/*/**/*.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
         {
-          patterns: [{ group: ['../*/**', '!../../**'], message: 'games never import each other' }],
+          patterns: [
+            { regex: '^[.][.]/(?!types$|[.][.]/)', message: 'games never import each other' },
+          ],
         },
+      ],
+    },
+  },
+  {
+    // The contract must not depend on any game; only the registry imports game folders.
+    files: ['src/games/types.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { patterns: [{ regex: '^[.]/', message: 'the contract imports no game' }] },
       ],
     },
   },

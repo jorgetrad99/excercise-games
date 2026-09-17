@@ -5,8 +5,14 @@ interface Window {
     getActiveGame(): string | null;
     /** Runs in this session: 1, or 2 with ?players=2; 0 while the menu is up. */
     getPlayerCount(): number;
-    /** Full sim snapshot of player `player` (default 0 = P1; live object: copy it if you keep it). */
-    getState(player?: number): import('./core/types').SimState;
+    /**
+     * Full sim snapshot of player `player` (default 0 = P1; live object: copy it if you keep it).
+     * The shape is the active game's, so name it: `getState<SimState>()` (Skate Run) or
+     * `getState<BoxingState>()` (Boxing; one state shared by both players). Unchecked at runtime.
+     */
+    getState<S extends { seed: number; t: number } = { seed: number; t: number }>(
+      player?: number,
+    ): S;
     getFps(): number;
     /** null when not in ?input=pose or before the camera opened. */
     getPoseStats(): import('./pose/pipeline').PoseStats | null;
@@ -15,7 +21,12 @@ interface Window {
     /** Last 200 InputEvents from every source and player, oldest first (pose events carry `player`). */
     getEvents(): import('./core/input').InputEvent[];
     /** Fire an event as if an InputSource produced it, for `player` (default P1). */
-    inject(e: { type: import('./core/input').InputEventType; t?: number; player?: number }): void;
+    inject(e: {
+      type: import('./core/input').InputEventType;
+      t?: number;
+      player?: number;
+      aim?: import('./core/input').Aim;
+    }): void;
     /** Restart every player's run with a new seed. */
     setSeed(seed: number): void;
     /** Step every sim synchronously by `seconds` (use with ?clock=manual); returns P1's sim time. */

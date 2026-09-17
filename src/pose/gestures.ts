@@ -3,6 +3,7 @@
 // (e.g. REVIVE_ACCEPT mid-run), which keeps this module testable from pose data alone.
 import { createBodyTracker, measure, type Measures, type VideoSize } from './body';
 import { createCalibrator, type Calib, type CalibStatus } from './calibration';
+import { detectFists, newFists, trackFists, type Aim } from './fists';
 import { gestureConfig, type GestureConfig } from './gestures.config';
 import type { PoseFrame } from './types';
 
@@ -17,11 +18,17 @@ export type GestureEventType =
   | 'RECALIBRATE'
   | 'CALIBRATED'
   | 'TRACKING_LOST'
-  | 'TRACKING_RESTORED';
+  | 'TRACKING_RESTORED'
+  | 'PUNCH_LEFT'
+  | 'PUNCH_RIGHT'
+  | 'GUARD_START'
+  | 'GUARD_END';
 
 export interface GestureEvent {
   t: number;
   type: GestureEventType;
+  /** Punches: direction of the fist's motion, puncher's frame (+x = their right, +y = up). */
+  aim?: Aim;
 }
 
 export interface SignalFrame {
@@ -38,11 +45,16 @@ export interface SignalFrame {
   tPose: boolean;
   /** zones mode: 0 left, 1 center, 2 right (mirrored). */
   zone: number;
+  /** Left / right wrist speed relative to the face, torso lengths/s (boxing punches). */
+  fistL: number;
+  fistR: number;
+  /** Both wrists near the face (boxing guard, without the detector's hysteresis). */
+  guard: boolean;
   tracking: 'ok' | 'lost';
   calibration: CalibStatus;
 }
 
-type Emit = (type: GestureEventType) => void;
+type Emit = (type: GestureEventType, aim?: Aim) => void;
 
 function initialDetectors() {
   return {
@@ -56,6 +68,7 @@ function initialDetectors() {
     slideSince: null as number | null,
     slideEndT: -Infinity,
     revive: { since: null, fired: false } as Hold,
+    fists: newFists(),
     hist: [] as { t: number; v: number }[],
   };
 }
@@ -82,7 +95,8 @@ function deriveSignals(
   d: Detectors,
   cfg: GestureConfig,
 ) {
-  if (!m || !calib) return { leanX: 0, hipRise: 0, hipRiseVel: 0, headDrop: 0 };
+  if (!m || !calib)
+    return { leanX: 0, hipRise: 0, hipRiseVel: 0, headDrop: 0, fistL: 0, fistR: 0, guard: false };
   const hipRise = (calib.hipY - m.hipCenter.y) / calib.torsoLen;
   return {
     // Calibrated (not live) scale: live shoulder width collapses when the player turns sideways.
@@ -90,6 +104,7 @@ function deriveSignals(
     hipRise,
     hipRiseVel: velocity(d, t, hipRise, cfg.jump.velocityWindowMs),
     headDrop: m.nose ? (m.nose.y - calib.noseY) / calib.torsoLen : 0,
+    ...trackFists(d.fists, t, m, calib.torsoLen, cfg),
   };
 }
 
@@ -175,13 +190,14 @@ function detectAll(
   detectLanes(d, s, m, config, emit);
   detectJumpAndGrab(d, s, config, emit);
   detectSlide(d, s, config, emit);
+  detectFists(d.fists, config, emit);
   if (heldFor(d.revive, s.armsUp, s.t, config.reviveHoldMs)) emit('REVIVE_ACCEPT');
 }
 
 /** Runs `fn` with an emitter stamped at `t` and returns what it emitted. */
 function collect(t: number, fn: (emit: Emit) => void): GestureEvent[] {
   const events: GestureEvent[] = [];
-  fn((type) => events.push({ t, type }));
+  fn((type, aim) => events.push(aim ? { t, type, aim } : { t, type }));
   return events;
 }
 
@@ -234,6 +250,7 @@ export function createGestureEngine({ video, config = gestureConfig }: GestureEn
   const reset = (emit: Emit): void => {
     calibrator.reset();
     if (d.sliding) emit('SLIDE_END'); // never leave the sim stuck sliding
+    if (d.fists.guard) emit('GUARD_END'); // …or guarding
     d = initialDetectors();
   };
   const trackingEvents = (t: number, seen: boolean, emit: Emit): void => {
@@ -241,13 +258,15 @@ export function createGestureEngine({ video, config = gestureConfig }: GestureEn
     if (change === 'restored') emit('TRACKING_RESTORED');
     if (change !== 'lost') return;
     if (d.sliding) emit('SLIDE_END');
+    if (d.fists.guard) emit('GUARD_END');
     d = { ...initialDetectors(), zone: d.zone };
     emit('TRACKING_LOST');
   };
 
   function push(frame: PoseFrame): { signals: SignalFrame; events: GestureEvent[] } {
     const events: GestureEvent[] = [];
-    const emit: Emit = (type) => events.push({ t: frame.t, type });
+    const emit: Emit = (type, aim) =>
+      events.push(aim ? { t: frame.t, type, aim } : { t: frame.t, type });
     const { width, height } = video();
     const m = measure(track(frame), width / height, config);
     // Raw pose presence, not held landmarks: "no pose for 700 ms" shouldn't wait out the 300 ms hold too.

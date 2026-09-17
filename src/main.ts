@@ -1,10 +1,10 @@
 // Boot: parse URL params, pick a MiniGame (?game=<id>, else the menu), wire InputSources into one run
 // per player (?players=2: split screen, PLAN §2.5 local), render loop, HUDs and window.__game.
-// Game-specific rules sit behind the MiniGame contract (games/).
+// Game-specific rules sit behind the MiniGame contract (games/). A game either gives each player an
+// independent sim (Skate Run) or one sim they all share (Boxing: MiniGame.sharedSim).
 import type { InputEvent } from './core/input';
-import type { SimState } from './core/types';
-import { skateRun } from './games/skate-run';
-import type { GameHud, GameSim, GameView, MiniGame } from './games/types';
+import { GAMES } from './games/registry';
+import type { GameHud, GameView, OpaqueSim, RegisteredGame } from './games/types';
 import { createKeyboardSource } from './input/keyboard';
 import { createPosePlayers, type PosePlayers } from './input/pose-players';
 import { createReplaySource } from './input/replay';
@@ -18,9 +18,6 @@ import type { PoseFixture } from './pose/recorder';
 import { mountSignalHud } from './pose/signal-hud';
 import type { FrameTiming, ModelVariant } from './pose/types';
 
-/** Registered MiniGames, in menu order. */
-const GAMES: readonly MiniGame[] = [skateRun];
-
 const params = new URLSearchParams(location.search);
 const input = params.get('input') ?? 'pose';
 const debug = params.has('debug');
@@ -33,13 +30,14 @@ const tokens = Math.max(0, Number(params.get('tokens') ?? 1) || 0);
 const model: ModelVariant =
   (['lite', 'full', 'heavy'] as const).find((m) => m === params.get('model')) ?? 'full';
 
-/** One player's run. Runs are independent: own sim (same seed), inputs, results and best. */
+/** One player's run: own inputs, results and best. The sim is theirs alone, or the same object for
+ *  every player when the game shares it. */
 interface Player {
-  sim: GameSim;
+  sim: OpaqueSim;
   /** Events waiting for this player's next sim step. */
   queue: InputEvent[];
   signals: SignalFrame | null;
-  hud: GameHud<GameSim>;
+  hud: GameHud<OpaqueSim>;
   /** performance.now() when the current run was first seen as over (null while playing). */
   overSince: number | null;
   best: number;
@@ -48,18 +46,43 @@ interface Player {
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const renderRate = createRate();
 /** The launched game; null while the menu is up (and `players` is empty). */
-let game: MiniGame | null = null;
+let game: RegisteredGame | null = null;
 let players: Player[] = [];
-let view: GameView<GameSim> | null = null;
+let view: GameView<OpaqueSim> | null = null;
 /** Pose/replay runs wait for calibration; any keyboard input also opens the gate (fallback). */
 let keyboardUsed = false;
 /** Results stay up at least this long, so a late dodge-jump doesn't skip them, ms. */
 const RESULTS_MIN_MS = 1000;
 
-function newRun(g: MiniGame, seed: number): GameSim {
+function newRun(g: RegisteredGame, seed: number): OpaqueSim {
   // ?autoplay=1 lets the bot drive while another input (e.g. the camera) is live: latency tooling.
   const autoplay = input === 'bot' || params.has('autoplay');
-  return g.createSim(seed, { reviveTokens: tokens, autoplay });
+  return g.createSim(seed, { reviveTokens: tokens, autoplay, players: playerCount });
+}
+
+/** Fresh runs for `who` (a shared sim always restarts for everyone: it is one match). */
+function restart(g: RegisteredGame, seed: number, who: readonly Player[]): void {
+  const shared = g.sharedSim ? newRun(g, seed) : null;
+  for (const p of g.sharedSim ? players : who) {
+    p.queue.length = 0;
+    p.sim = shared ?? newRun(g, seed);
+    p.overSince = null;
+  }
+}
+
+/** Calls `fn` once per distinct sim with every event for it: a shared sim gets all players' events. */
+function eachSim(
+  applied: InputEvent[][],
+  fn: (sim: OpaqueSim, events: InputEvent[], first: number) => void,
+): void {
+  players.forEach((p, i) => {
+    if (players.findIndex((q) => q.sim === p.sim) !== i) return;
+    fn(
+      p.sim,
+      players.flatMap((q, j) => (q.sim === p.sim ? applied[j]! : [])),
+      i,
+    );
+  });
 }
 
 // Sources feed each player's queue; the frame loop hands it to that sim. The log is for tests and the HUD.
@@ -73,16 +96,15 @@ function record(e: InputEvent, player = 0): void {
   const p = players[player];
   if (!p) return; // menu still up, or no such player
   if (player === 0) latency.event(e, pushing, performance.now()); // latency/judder track P1 only
-  p.queue.push(e);
+  p.queue.push({ ...e, player }); // a shared sim needs to know whose event it is
   events.push(e);
   if (events.length > 200) events.shift();
   if (player === 0) signalHud?.event(e);
 }
 
 // Keyboard is always on once a game launched: the fallback for every mode (PLAN §2.2); drives P1.
-const keyboard = createKeyboardSource();
-keyboard.onEvent((e) => record(e));
-keyboard.onEvent(() => (keyboardUsed = true));
+// Created at launch, with the game's keys.
+let keyboard: ReturnType<typeof createKeyboardSource> | null = null;
 
 function attach(source: PosePlayers): void {
   source.onEvent((e) => record(e, e.player));
@@ -91,13 +113,16 @@ function attach(source: PosePlayers): void {
     if (p) p.signals = s;
     if (s.player === 0) signalHud?.signals(s);
   });
-  keyboard.onEvent((e) => e.type === 'RECALIBRATE' && source.recalibrate(e.t));
+  keyboard?.onEvent((e) => e.type === 'RECALIBRATE' && source.recalibrate(e.t));
   source.start();
 }
 
 let pose: ReturnType<typeof mountPosePanel> | null = null;
 
-function startInput({ gestureProfile: { toInput, config } }: MiniGame): void {
+function startInput({ gestureProfile: { toInput, config }, keys }: RegisteredGame): void {
+  keyboard = createKeyboardSource(window, undefined, keys);
+  keyboard.onEvent((e) => record(e));
+  keyboard.onEvent(() => (keyboardUsed = true));
   keyboard.start();
   if (input === 'pose') {
     const source = createPosePlayers({
@@ -151,26 +176,23 @@ function trackingLabel({ signals }: Player): { tracking: string; trackingOk: boo
 let last = performance.now();
 
 /** "Play again" = jump (PLAN §2.1), only for jumps made after the results were up for 1 s. */
-function playAgain(g: MiniGame, p: Player, now: number): void {
-  const run = g.summary(p.sim);
+function playAgain(g: RegisteredGame, p: Player, index: number, now: number): void {
+  const run = g.summary(p.sim, index);
   if (!run.over) {
     p.overSince = null;
     return;
   }
   p.best = Math.max(p.best, run.score);
   const since = (p.overSince ??= now);
-  if (p.queue.some((e) => e.type === 'JUMP' && e.t >= since + RESULTS_MIN_MS)) {
-    p.queue.length = 0;
-    p.sim = newRun(g, p.sim.seed);
-    p.overSince = null;
-  }
+  if (p.queue.some((e) => e.type === 'JUMP' && e.t >= since + RESULTS_MIN_MS))
+    restart(g, p.sim.seed, [p]);
 }
 
 /** Pose/replay: a fresh run waits until every player calibrated (PLAN §2.1; a fair 2-player start).
  *  Decided per run, so one player's play-again or recalibration never freezes a run in progress. */
-function waitingForCalibration(g: MiniGame, p: Player): boolean {
+function waitingForCalibration(g: RegisteredGame, p: Player, index: number): boolean {
   if (input === 'keyboard' || input === 'bot' || keyboardUsed) return false;
-  if (g.summary(p.sim).started) return false;
+  if (g.summary(p.sim, index).started) return false;
   return players.some((q) => q.signals?.calibration.state !== 'calibrated');
 }
 
@@ -179,14 +201,14 @@ function frame(now: number): void {
   renderRate.tick();
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
-  for (const p of players) playAgain(g, p, now);
-  const waiting = players.map((p) => waitingForCalibration(g, p));
+  players.forEach((p, i) => playAgain(g, p, i, now));
+  const waiting = players.map((p, i) => waitingForCalibration(g, p, i));
   const applied = players.map((p, i) => (waiting[i] || manualClock ? [] : p.queue.splice(0)));
   players.forEach((p, i) => waiting[i] && (p.queue.length = 0));
   latency.frameStart(now, performance.now(), applied.flat());
-  players.forEach((p, i) => {
-    if (!waiting[i] && !manualClock) p.sim.step(dt, applied[i]!);
-    p.sim.drainEvents(); // ponytail: nothing consumes sim events yet (sound/juice come later)
+  eachSim(applied, (sim, events, first) => {
+    if (!waiting[first] && !manualClock) sim.step(dt, events);
+    sim.drainEvents(); // ponytail: nothing consumes sim events yet (sound/juice come later)
   });
   const drawn =
     view?.render(
@@ -202,7 +224,7 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
 }
 
-const NO_HUD: GameHud<GameSim> = { update: () => {} };
+const NO_HUD: GameHud<OpaqueSim> = { update: () => {} };
 
 /** 1 player: the HUD covers the page. 2 players: one half-width box per player, split by a line. */
 function hudRoot(player: number): HTMLElement {
@@ -222,13 +244,14 @@ function hudRoot(player: number): HTMLElement {
   return box;
 }
 
-function launch(g: MiniGame): void {
+function launch(g: RegisteredGame): void {
   game = g;
   const seed = Number(params.get('seed') ?? 42);
   if (debug) signalHud = mountSignalHud(document.body, g.gestureProfile.config);
   if (params.has('latency')) latencyOverlay = mountLatencyOverlay(document.body, latency.summary);
+  const shared = g.sharedSim ? newRun(g, seed) : null;
   players = Array.from({ length: playerCount }, () => ({
-    sim: newRun(g, seed),
+    sim: shared ?? newRun(g, seed),
     queue: [],
     signals: null,
     hud: NO_HUD,
@@ -237,7 +260,7 @@ function launch(g: MiniGame): void {
   }));
   startInput(g);
   // HUDs after the pose panel: same DOM (stacking) order as before split screen.
-  players.forEach((p, i) => (p.hud = g.mountHud(hudRoot(i))));
+  players.forEach((p, i) => (p.hud = g.mountHud(hudRoot(i), i)));
   g.createView(canvas)
     .then((v) => (view = v))
     .catch((err: unknown) => console.error('renderer failed', err))
@@ -245,7 +268,7 @@ function launch(g: MiniGame): void {
 }
 
 /** Bridge calls that need a run fail loudly (not with a TypeError) while the menu is up. */
-function launched(): MiniGame {
+function launched(): RegisteredGame {
   if (!game) throw new Error('no game launched: open with ?game=<id> or pick one in the menu');
   return game;
 }
@@ -260,27 +283,24 @@ function player(index: number): Player {
 window.__game = {
   getActiveGame: () => game?.id ?? null,
   getPlayerCount: () => players.length,
-  // ponytail: typed as Skate Run's state while it's the only game; widen when game #2 lands.
-  getState: (index = 0) => player(index).sim.getState() as SimState,
+  // Typed by the caller (see debug-bridge.d.ts): the shape is the active game's.
+  getState: <S>(index = 0) => player(index).sim.getState() as S,
   getFps: () => renderRate.value(),
   getPoseStats: () => pose?.stats() ?? null,
   getSignals: (index = 0) => players[index]?.signals ?? null,
   getEvents: () => [...events],
   inject: ({ player: index = 0, ...e }) => record({ t: performance.now(), ...e }, index),
-  setSeed: (seed: number) => {
-    const g = launched();
-    for (const p of players) {
-      p.queue.length = 0;
-      p.sim = newRun(g, seed);
-    }
-  },
+  setSeed: (seed: number) => restart(launched(), seed, players),
   advance: (seconds: number) => {
     const { fixedDt } = launched();
     const ticks = Math.round(seconds / fixedDt);
-    for (const p of players) {
-      for (let i = 0; i < ticks; i++) p.sim.step(fixedDt, i === 0 ? p.queue.splice(0) : []);
-    }
-    return (player(0).sim.getState() as SimState).t; // ponytail: same Skate Run typing as getState
+    eachSim(
+      players.map((p) => p.queue.splice(0)),
+      (sim, events) => {
+        for (let i = 0; i < ticks; i++) sim.step(fixedDt, i === 0 ? events : []);
+      },
+    );
+    return player(0).sim.getState().t;
   },
   getRenderStats: () => view?.stats() ?? null,
   getLatency: () => latency.summary(),

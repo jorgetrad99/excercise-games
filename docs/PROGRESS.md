@@ -722,3 +722,190 @@ Then `pnpm verify`.
   - assignment stays put when one person leans across the middle
   - stepping out < 2 s pauses only you, > 2 s pauses both
 - **Artifacts:** `tmp/two-players/replay.png`, `tests/e2e/two-players.smoke.spec.ts-snapshots/two-players-seed42-t10-smoke-win32.png`.
+
+---
+
+## 2026-09-16 — Phase 2, Piece 4: Boxing
+
+### Step 1 — Research: how Wii Sports Boxing actually plays
+
+Sources: [StrategyWiki](https://strategywiki.org/wiki/Wii_Sports/Boxing) and [Wii Sports Wiki](https://wiisports.fandom.com/wiki/Boxing_(sport)) (both blocked my fetcher; content via search snippets), [MiiWiki](https://miiwiki.org/wiki/Boxing), [Ducksters tips](https://www.ducksters.com/games/wii-sports-boxing.php), [GameFAQs TKO Q&A](https://gamefaqs.gamespot.com/wii/683180-wii-sports-wii-sports-resort/answers/442032-how-do-you-do-a-tko-in-boxing).
+
+Confirmed:
+
+- **Controls:** each hand (Wiimote / Nunchuk) punches on its own. Straight = thrust forward; hook = swing sideways; uppercut = start low, swing up. Tilt both left/right = dodge (sway); hold both upright near the face = guard high, flat = guard body.
+- **Health:** a pie of **10 segments** per boxer. Harder punches take more pieces. In the original, a boxer needs a certain number of hits before the pie drops; Club changed it to drop on every hit.
+- **Punch recovery:** "the harder the punch the longer it takes your boxer to recover"; "wait until your glove stops moving, then punch again". Wild flailing doesn't register. Rhythm is the skill.
+- **Counter:** holding your guard and dodging a hard punch at the last moment briefly slows the game so you can throw a hard counter. Jabs can't knock you down; hooks, uppercuts and counters can.
+- **Dizzy:** enough head hits make a boxer dizzy (stars): **guard dropped, can't punch, can only dodge**. In Club it lasts a short time.
+- **Knockdown:** pie empty → down. The announcer counts to **10**; not up in time = KO, and the match ends. Each knockdown makes getting up less likely, and a boxer who gets up has **max health 2 segments lower**. **Three knockdowns = TKO.**
+- **Match:** **3 rounds of up to 3 minutes**; a KO ends it. If it goes the distance, it's a decision on points.
+
+Not confirmed (brief vs. sources):
+
+- **Stamina drain from missed/blocked punches:** no source says Wii Boxing drains the *attacker* for whiffs. That's a Punch-Out!!-style rule. It's in the brief, so I keep it, but small (see design).
+- **"Doesn't recover from dizzy until knocked down":** sources say dizzy is triggered by head hits and (in Club) wears off after a short time. The brief chains dizzy → knockdown. I follow the brief: dizzy = stamina at zero, and the next clean hit knocks you down. Round end also clears it, so nobody stays dizzy forever if the other side stops punching.
+- **Decision:** Wii scores "on points" (formula unpublished). Per the brief, knockdowns decide it first, then clean hits landed, then a draw.
+
+**Result:** `?game=boxing` is a playable Wii-Sports-style boxing match on pose, keyboard or bot input. 1P is against a reactive bot; `?players=2` is one shared match with split screen. The Piece 2 leftovers are closed (defineGame typing, generic `getState`, folder-index lint gap). `pnpm verify` is green. **The pose thresholds are untuned:** they're set from synthetic poses only (see playtest note).
+
+### Step 2 — Design decisions (made without a checkpoint, as asked; final values, revisions marked)
+
+**Gesture mapping (pose → events), `pose/fists.ts` + existing detectors:**
+
+- **Punch:** each wrist on its own. Signal = the wrist's **3D speed relative to the nose** (x aspect-corrected, y, MediaPipe z × `zWeight`), in calibrated torso lengths/s, over a 70 ms window.
+  - Fires when the fist is armed, beyond `rearm` (0.6 torso) from the nose, faster than `speed` (2.5/s), and not mostly downward (dropping the hands isn't a punch).
+  - *Revised during build:* the first design used radial speed away from the face. Writing the tests showed it misses hooks (they sweep *around* the head) and uppercuts (they start by moving *toward* the chin). So it's total speed plus the gates.
+  - No punch-type classifier. The event carries `aim = {x, y}`: the unit direction of that motion in the puncher's frame (+x = puncher's right, +y = up). The sim reads the vector directly.
+- **Recovery (the Wii "wait until the glove stops"):** a fist disarms when it fires. It re-arms only when the wrist is back within `rearm` of the nose **and** nearly still (< `rearmSpeed` 1/s), so the retraction can't fire. A second, independent gate lives in the sim: a fist is busy for `travel + retract` seconds, so keyboard and bot follow the same rhythm.
+- **Guard:** both wrists within `guard.enter` (0.35 torso) of the nose → `GUARD_START`; either past `guard.exit` (0.45) → `GUARD_END`. Tracking loss or recalibration also sends `GUARD_END`.
+- **Dodge:** reuses the lean detector (`LANE_LEFT/RIGHT` → `DODGE_LEFT/RIGHT`) and the slide detector (`SLIDE_START` → `DUCK`). A dodge is a timed move in the sim (0.45 s), like Wii's sway. No new "held" state to sync.
+- **Known risk:** a big hook rotates the shoulders and could cross the lean threshold, giving a false dodge. The sim makes it harmless mid-punch: you can't dodge while a fist is travelling. Needs a real-camera playtest.
+
+**Sim rules (`core/boxing/`), one shared state for both boxers:**
+
+- **Stamina** = Wii's pie: 10 segments.
+  - A clean hit taken: −0.7. A counter hit (within 0.8 s after dodging a punch): ×1.5 = −1.05. A blocked hit taken: −0.15.
+  - *Revised:* the first cut was −1 / −0.25. In bot-vs-bot, 10/10 matches then ended by TKO inside round 1 (~45 s).
+  - A whiffed punch costs the attacker −0.3 (the brief's rule, kept small since Wii doesn't do this).
+  - Regen: +0.5/s after 1 s without punching or being hit; landing a clean hit gives +0.2.
+- **Dizzy** at 0 stamina: guard doesn't count, can't punch, can still dodge, no regen. The next clean hit is a knockdown.
+  - *Added after review:* if **both** boxers are dizzy (whiffs and blocks can empty both pies), neither could ever act until the bell, so both come round at 1 segment.
+- **Aim vs. defence, straight from the vector:**
+  - A side dodge is caught only by a punch sweeping toward that side (lateral > 0.5).
+  - A duck is caught only by an uppercut (up > 0.5).
+  - The guard stops everything except uppercuts (up > 0.5 splits the guard).
+- **Knockdown:**
+  - Counted 1…10, one count per 0.8 s.
+  - Get-up count = `2 + 3·(knockdowns−1) + floor(6·rng)`, where rng is seeded from (seed, tick). First knockdown gets up at 2–7; second at 5–10, and 10 = KO. So each knockdown makes getting up less likely.
+  - Getting up: max stamina −2 (Wii), refilled to the new max.
+  - 3 knockdowns = TKO.
+- **Match: 3 rounds × 60 s**, with a 4 s break (stamina refilled to each boxer's current max, dizzy cleared) and a 3 s intro. A KO or TKO ends it early. If it goes the distance, the winner is whoever suffered fewer knockdowns, then more clean hits landed, else a draw.
+  - **Why 60 s:** full-body shadow-boxing is far more tiring than flicking a Wiimote. One minute is a standard amateur/fitness boxing interval. At roughly one clean hit per 1.5–2 s from an active player, 60 s gets through the 10-segment pie about once, so a round usually has a knockdown and a match ~1–2. A full match is ≤ 3.5 min including breaks and counts.
+- **Bot:** stateless, a pure function of (state, seed, tick), so it can't break determinism.
+  - It reacts once per thrown punch, 0.08 s after the punch leaves (`reactS`): guard 55 %, sway 20 %; when dizzy, sway 70 %.
+  - Otherwise, on a 0.1 s grid, it drops its guard and punches in 15 % of decisions (about 1.2 punches/s, a sustainable human pace): straight 60 %, hook 25 %, uppercut 15 %.
+  - *Revised:* reacting on the 0.1 s grid missed most 0.18 s punches; the first 35 % punch rate was too lethal.
+
+**Two-player:** Piece 3 only supported "N independent runs" (one sim per player). Extended the shell with `MiniGame.sharedSim`: one sim for all players. The shell tags each queued event with `player`, steps each distinct sim once, restarts it for everyone, and passes `[sim, sim]` to `view.render`, so slot *i* draws from boxer *i*'s point of view. Details under "What changed".
+- **Fairness (found in build):** punches that land on the same tick used to resolve boxer 0 first. Bot-vs-bot won 9/10 for boxer 0, then 31/9 for boxer 1 with tick-parity alternation (both bots punch on the same grid). Now the order is a seeded coin flip per tick: **32–28 over 60 seeds**, average match 101 s, results TKO 50 / KO 9 / decision 1, matches ending in round 1: 17, round 2: 39, round 3: 4 (tuning measured before the two review fixes; the rules they touch rarely trigger between bots). Humans punch less relentlessly than two bots, so expect longer matches.
+- **Pause in 2P (added after review):** PAUSE/RESUME come from each player's own tracking, but the match is shared. `pausedBy[player]` holds it until every player who paused is back.
+- **Assets:** nothing new. Boxers reuse the CC0 Quaternius `Casual_Hoodie` (`SkeletonUtils.clone`, already in `three`) with the upper-arm bones scaled to ~0, plus floating sphere gloves. Wii Sports Miis have no arms either. **No download, no CREDITS change, no new dependency, no ADR.**
+
+### What changed
+
+- **Core:**
+  - `src/core/input.ts`: new events `PUNCH_LEFT/RIGHT`, `GUARD_START/END`, `DODGE_LEFT/RIGHT`, `DUCK`, plus optional `aim` and `player` on `InputEvent`.
+  - `src/core/boxing/`: `boxing.config.ts` (all rule tuning), `types.ts`, `sim.ts` (tick, rules, `createBoxingSim`), `bot.ts`, `sim.spec.ts`.
+- **Pose:**
+  - `body.ts`: tracks z (One Euro) and exposes both wrists in `Measures`.
+  - `fists.ts`: the new detector.
+  - `gestures.ts`: `PUNCH_*`/`GUARD_*` events with `aim`; `SignalFrame` gains `fistL`, `fistR`, `guard`; `GUARD_END` on tracking loss or reset.
+  - `gestures.config.ts`: `fists` block.
+  - `testdata/synthetic.ts`: boxing arms (`fists: 'ready'|'guard'`, `punchL/R`, `hookR`, `upperL`).
+- **Input:**
+  - `pose-source.ts` passes `aim` through.
+  - `keyboard.ts` takes a `KeyMap {down, up}`. `SKATE_KEYS` is the default, so Skate Run is unchanged, and any held key with an `up` event is released on `stop()`.
+- **Games:**
+  - `types.ts`: property-style members, `sharedSim`, `keys`, `createSim(seed, {…, players})`, `mountHud(root, player)`, `summary(sim, player)`, `GameSim.getState(): {seed, t}`, and `defineGame` / `OpaqueSim` / `RegisteredGame`.
+  - `registry.ts`: `GAMES`.
+  - `skate-run/index.ts` default-exports `defineGame`.
+  - `boxing/` (`index.ts`, `gestures.ts` with the gesture map and keys).
+- **Render:**
+  - `boxing/view.ts`: ring, 2 boxers, per-slot eye camera.
+  - `boxing/boxer.ts` and `boxing/hud.ts`.
+  - Exported for reuse: `useSlot` (view.ts), `rig` (skater.ts), `loadModel` (models.ts, one model with the box fallback; `loadModels` now uses it).
+- **Shell (`main.ts`):**
+  - Imports the registry.
+  - `restart()` and `eachSim()` handle shared sims.
+  - Queued events are tagged with `player`.
+  - The keyboard is created at launch with the game's keys.
+- **Bridge (`debug-bridge.d.ts`):** `getState<S>(player?)`; `inject` accepts `aim`. The three Skate e2e specs now say `getState<SimState>()`, and `advance()` no longer casts.
+- **Lint (`eslint.config.js`):**
+  - Games rule is a regex, `^[.][.]/(?!types$|[.][.]/)`, so `../boxing` (a folder index) is caught. A gitignore group `'../*'` also matched the `..` parent of `../../core`, which is why it's a regex.
+  - `games/types.ts` may not import `./<game>`.
+  - `core/*/**` may import `../input` (core's contract), but `core/` itself may not (the reviewer caught that loophole).
+- **Docs:** ARCHITECTURE (module map, rules, new "Registry typing" and "Boxing" sections), AGENTS §5, features.json M7.6 and M7.7.
+
+### Verified
+
+- **`pnpm verify` → exit 0:** tsc, eslint, vitest 306 passed + 1 skipped (18 files), playwright smoke 19/19. After the review fixes and the boot-poll fix: **3 consecutive green runs**.
+- **Unit, `src/core/boxing/sim.spec.ts` (14 tests):**
+  - Clean hit after travel time.
+  - Recovery (the same fist is ignored until ready; the other fist is free).
+  - Block drain; an uppercut splits the guard.
+  - A sway beats a straight → whiff + counter ×1.5.
+  - Hook-into-sway and uppercut-vs-duck from the aim vector.
+  - Dizzy → no punching, dodging works, no regen → knockdown → get up with max −2.
+  - Count of 10 = KO; 3rd knockdown = TKO.
+  - Rounds, break refill, decision by knockdowns then hits, draw.
+  - 2P pause needs both players back.
+  - Both-dizzy clinch.
+  - Pause/intro.
+  - Bot vs bot reaches a result using every mechanic.
+  - **Determinism:** same seed → same hash, other seed differs, 1/120 s frames = 1/60 s.
+  - The 1P bot defends > 30 % of off-grid punches.
+- **Unit, `src/pose/fists.spec.ts` (7 tests, TEMPORARY(synthetic-fixtures)), exact sequences through the real gesture engine:**
+  - Idle 5 s → nothing.
+  - Straight → one `PUNCH_RIGHT`/`PUNCH_LEFT` with |aim| < 0.5.
+  - Out → half back → out = one punch; full returns = two.
+  - A slow 1.2 s reach = nothing.
+  - Right hook → aim.x < −0.5; left uppercut → aim.y > 0.5.
+  - Guard start/end.
+  - Tracking loss mid-guard → `GUARD_START, GUARD_END, TRACKING_LOST`.
+- **Unit, `tests/unit/boundaries.spec.ts`:** `../boxing`, `../boxing/index` and `../boxing/gestures` rejected from `games/skate-run`; `../types` allowed; the contract can't import `./boxing`; the registry can; `core/boxing` → `../input` OK; `core/` → `../input` rejected.
+- **e2e, `tests/e2e/boxing.smoke.spec.ts` (5 tests; stress-run `--repeat-each 4 --workers 6` → 20/20):**
+  - The menu launches Boxing.
+  - 1P manual clock, seed 42: the X key puts boxer 0's right fist out; 12 s later the bot has landed hits.
+  - 2P: an injected P2 punch lands on boxer 0 for exactly −0.7; `getState(0)` deep-equals `getState(1)`; Z from the keyboard drives boxer 0; nobody else punches (no bot in 2P); two HUDs.
+  - Realtime pose replay of a synthetic fixture: events exactly `PUNCH_RIGHT, PUNCH_RIGHT, GUARD_START, GUARD_END`, straight aim |x| < 0.5, hook aim x < −0.5; calibration opened the gate (tick > 0).
+  - Screenshot baselines: `boxing-seed42-t8`, `boxing-seed42-down` (the count running), `boxing-2p-seed42`. Draw calls < 150.
+- **Skate Run regression:** `render.smoke` seed 42 t0/10/30/60 and `two-players` baselines pass unchanged (`git status` shows no snapshot changes for them).
+- **Perf** (1920×1080, RTX 4060 Laptop, bots, no pose worker):
+
+  | Mode | fps | draw calls | triangles |
+  | --- | --- | --- | --- |
+  | 1P | 60 | 43 | 15k |
+  | 2P | 60 | 86 | 31k |
+
+  Pose + boxing together isn't measured separately; Skate's pose-perf test covers the worker cost.
+- **Visual check** of screenshots at intro/fight, dizzy (stars), knockdown (count, Death pose), TKO results card and 2P split, in `tmp/boxing/*.png`.
+  - **Fixed from that check:** the player's own gloves in guard covered the opponent. They're now low and wide, fading back to centre as a punch extends.
+- **Verify flake, `boot.smoke` "renders frames":** failed 2 of 6 full `pnpm verify` runs, both times stuck at 1 frame when its **5 s default** poll expired, at smoke-suite startup.
+  - It never failed in 5 standalone smoke runs, nor after running vitest and then booting.
+  - On a fresh server (`vite --force`, :5174) Skate Run boots in 2.2 s with no dep reload. Even idle, a fresh page stalls ~1.7 s on first-frame shader compile.
+  - Probable cause: the new boxing spec adds GPU pages that boot in parallel with it at startup. Not proven; I couldn't reproduce it outside verify.
+  - Fix: its poll now uses the same 20 s startup budget as every other boot poll (render, two-players, boxing). The assertion is unchanged.
+  - I first blamed a dep re-optimization on the long-running :5173 dev server (started 12:16, before this session; left running). The second failure ruled that out as the whole story.
+- **Review:** the reviewer subagent went over the diff. Fixed from its findings:
+  - the PROGRESS numbers were stale
+  - one player's RESUME restarted a 2P match while the other was still out
+  - both-dizzy stall
+  - untested `GUARD_END` on tracking loss
+  - `Event` type name shadowing the DOM type
+  - core `../input` lint loophole
+
+### Known gaps
+
+- **Pose tuning is synthetic-only (TEMPORARY(synthetic-fixtures)).** `fists.speed`, `rearm`, `rearmSpeed`, `guard.*` and `zWeight` have never seen a real person. Concerns:
+  - MediaPipe wrist z is noisy.
+  - A straight punch at the camera foreshortens and may drop wrist visibility.
+  - A natural boxing stance may sit inside `guard.enter` (always guarding).
+  - A hook's shoulder turn may cross the lean threshold. The sim ignores dodges while a fist is out, but a lean just *before* the punch would still sway.
+
+  Needs a recorded `boxing.json` and a clip.
+- **Keyboard punches are straights only** (`ponytail:` note in `games/boxing/gestures.ts`), so on keyboard you can't catch a swaying or ducking bot with hooks/uppercuts.
+- **2P half-screen:** own gloves sit mostly off the narrow 640 px slot; scale the offset by aspect if playtests miss them.
+- **No sound or hit-stop / slow-motion counter** (Wii slows the game on a last-moment dodge). `drainEvents()` output is ready for juice later.
+- **Latency/judder instrumentation** reports nothing for Boxing (`render` returns null: there's no forward motion to judge).
+- **The menu is still mouse/keyboard only.**
+- **Playtest note for Jorge:**
+  - **1P:** `http://localhost:5173/?game=boxing&seed=42&debug=1`. Stand ~2.5 m back in a boxing stance and hold still to calibrate. Throw straights, hooks and uppercuts. Check:
+    - one punch = one event
+    - pulling back never fires
+    - rapid flailing without returning to the face does **not** register
+    - fists at the chin = guard, while your normal stance is *not* guard
+    - lean = sway, and duck works
+  - The debug HUD's signal plots don't draw `fistL`/`fistR` yet; read them via `__game.getSignals()`.
+  - **2P:** `?game=boxing&players=2`, standing side by side facing the camera: each half shows your boxer's view.
+  - **Keyboard:** `?game=boxing&input=keyboard`: Z/X punch, ↑ guard, ←/→ sway, ↓ duck.
