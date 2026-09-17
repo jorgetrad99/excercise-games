@@ -79,10 +79,20 @@ Already captured by Piece 4 (research notes in PROGRESS "Phase 2, Piece 4"):
 - **No smoothing delay (D5).** The τ 0.08 s live smoother is removed. Measured on `12c1ddf`, it took the rig 200 ms to cover 90 % of a pose step (`boxing-latency.smoke`).
   - **Prediction instead:** each channel is drawn at the newest pose sample moved along its velocity by the time since that sample arrived, at most `body.extrapolateS` = 0.05 s, then held.
   - **Scoring doesn't predict:** extrapolating a fast glove past its last frame scored a jab that stopped 2 cm short.
-  - **Jitter:** the landmark One Euro filter (M2) stays the only smoothing.
+  - **Jitter:** the landmark One Euro filter (M2) stays on the torso and head. **Elbows and wrists are unfiltered** (`gestureConfig.armLagMax` = 0), see the smoothing rule below.
   - **Stun sluggishness** (O2's `slow(live)`) is an additive, bounded offset under §4.1, not channel easing.
 - **Anatomical and ring limits** are the only clamps. Player → rig gains are fixed per axis (`body.armGainM`, `body.leanGainM`), normalised by the player's calibrated arm length (BX-CAL-6). They scale, but never clamp or gate.
 - **Latency (BX-LAT-1):** camera frame → rendered glove is reported on every verify run, 1P and 2P (pipeline p50/p95 plus rig response to 90 % of a step). Report-only until Jorge sets the budget from the measured values.
+- **Smoothing is suspect until proven not to clip peaks (Jorge, 2026-09-16).** Any stage that smooths, eases or averages the pose pipeline must show it doesn't cut the peak of a fast, short movement.
+  - **Why this rule exists.** The inversion found three instances of one defect: the τ 0.08 s rig easing (200 ms to 90 % of a step), the 6 cm / 12 cm live caps, and the landmark One Euro filter on the arms.
+  - **How the arm filter clipped.** A straight at the camera barely moves in the image: a half-extension jab moves the wrist 0.012 image heights, and its reach is foreshortening. One Euro only relaxes for fast image motion. It clipped that jab's glove depth from 1.039 m to 0.93–0.96 m, a miss.
+  - **What the filter protected against.** On Jorge's real recording (21 fps) it removed about 10 % of glove jitter (2nd difference p50 0.041 → 0.036 m, p90 0.127 → 0.116 m). On a still synthetic guard, glove depth sd went 5.4 → 4.0 cm.
+  - **Why a milder filter doesn't work.** That jitter is the same size as the jab's whole image motion. A lag bound small enough to keep peaks (≤ 0.002 image heights) removed no measurable jitter. No causal filter at ≤ 30 pose-fps separates the two without delay.
+  - **Decision: arms unfiltered.**
+    - **What regresses:** per-frame forearm direction noise +5–7 % (p50 0.110 → 0.118 rad, p90 0.359 → 0.378 rad). Glove depth jitter rises by the amounts above.
+    - **What it buys:** the rig and scoring see the punch the camera saw.
+    - **How to revisit:** `armLagMax` stays as the knob, to retune against real boxing drills.
+  - **Regression test (BX-CL-7):** on every sampling phase at 30 and 15 pose-fps, the pipeline's peak glove depth for a jab must equal the unfiltered pipeline's (within 2 mm). A future smoothing change can't silently reintroduce the clip.
 
 ### 2.2 Authorized sim overlays (closed list, D1 decided)
 
@@ -111,11 +121,24 @@ A constraint only clamps where a player-driven value lands. It never produces mo
   - **Pose boxers:** a `BODY` event per pose frame places them from the player's `PoseState` (arms via wrist IK × `armGainM`, head via sway/duck/forward × `leanGainM`).
   - **Puppets (§2.4):** key/bot punches, guard and dodges move the same spheres along authored paths.
 - **Hit:** a glove sphere entering the defender's head or torso sphere, swept over the tick using motion relative to the target, so a fast glove can't pass through between ticks or pose frames. Only the side whose own motion did most of the closing strikes.
-- **Block:** the glove enters one of the defender's gloves first.
+- **Block:** the glove enters one of the defender's gloves first. A guard raised onto a glove already on its way in also blocks: a glove that starts a tick inside a defender's glove and keeps pushing deeper is met at t = 0 (gloves only; a head leaning onto a resting glove still isn't that glove's hit).
 - **Whiff:** the glove passes the front of the defender's head and turns back having touched nothing. It costs the attacker and opens the defender's counter window (existing rule).
 - **Damage:** `clean × clamp(closing speed / impact.refSpeedMps, 0, impact.maxMult)`, × `impact.bodyMult` on the torso, × `counterMult` in the counter window. No minimum speed.
 - **Zone** (bruises, O1 head snap): from the contact normal and the glove's own direction. A rising glove below the head's centre is the chin.
+  - **Puppet paths:** a key straight reaches face height in the first half of its depth, so from low ready hands it travels level into a cheek, not up into the chin. Uppercuts keep the slow rise: they dip under a raised guard, and low ready hands block them.
 - **No punch detector:** `fists.ts` keeps only the guard posture classifier and the wrist-speed signal. `PUNCH_*` come from keyboard and bot only.
+- **Drawn ahead, scored on what was seen (deliberately asymmetric).**
+  - **Render:** the rig draws each point at the newest pose sample plus velocity × time since it arrived, up to `body.extrapolateS` = 50 ms. At 20–30 pose-fps this cancels most of the gap between frames, so the glove feels attached to the hand.
+  - **Collision:** only observed samples, never extrapolated ones. Extrapolating a fast glove past its last frame overshoots: in `collide.spec`, a jab stopping 2 cm short of the head scored a hit when collision used the prediction.
+  - **So:** the drawn glove may briefly enter the face without a hit (for ≤ 50 ms, when the jab stopped short). The sim never scores a hit the camera didn't see.
+  - **Don't "fix" this by making the two agree:** predicting in collision invents hits, and drawing only observed samples brings back up to a frame of lag.
+  - **Known cost (as built): the lead is capped in time, not distance, so it can overshoot.**
+    - **Mechanics:** velocity = the last frame-to-frame displacement ÷ the frame interval Δ (only when Δ ≤ 150 ms; slower than ~6.7 pose-fps there's no prediction at all). The lead grows with the sample's age until the next frame replaces it, so it reaches min(Δ, 50 ms).
+    - **Bound:** overshoot ≤ last displacement × min(Δ, 50 ms) / Δ. At or above 20 pose-fps (Δ ≤ 50 ms, the supported floor: the pose-fps gate is ≥ 20) that is **at most one full frame's displacement**. Below 20 it shrinks: ×2/3 at 15 fps, ×1/2 at 10 fps.
+    - **In metres at 20 pose-fps:** a glove moving 10 m/s (a fast jab) travels 0.5 m per frame, so if it stops dead between two frames the drawn glove can sit up to 0.5 m past its real stop for up to 50 ms, until the next frame. A 0.5 m tracking glitch can draw 0.5 m beyond the glitch.
+    - **Duration:** at most one frame interval; the next observed sample always replaces the prediction (no accumulation).
+    - **Scoring is unaffected, by construction:** `collideGlove` reads only `body.prev` / `body.now`, which `stepBody` fills with copies of observed samples (or the puppet path). `predictPose` is called only by the renderer (`render/boxing/view.ts`) and the e2e harness. Bot perception (`closingT`) also reads observed positions. BX-CL-2 pins it: a jab stopping 2 cm short scores nothing at any rate.
+    - **If it shows in play:** cap the drawn lead distance (e.g. a fraction of the last displacement, or a few cm), not the time. Shortening the time brings the lag back for every normal movement to fix the rare stop.
 - **Bot perception:** the bot reacts to a glove closing on it faster than `bot.seeSpeedMps`. That's the bot's own perception, not a gate on the player.
 - **§7 reach rule (M7.18):** with positions in the sim, "out of reach" is geometric (gloves can't get there). `move.reachM` becomes the bot's approach distance, not a whiff rule.
 
@@ -126,7 +149,8 @@ A constraint only clamps where a player-driven value lands. It never produces mo
 | BX-CL-3 | Swept: a hook crossing the face between two pose frames 100 ms apart, with no frame inside the head, is a `HIT`. |
 | BX-CL-4 | One hit per contact: a glove held in the face scores once; pulled back behind `recoverZ`, it can score again. |
 | BX-CL-5 | A pose guard (gloves in front of the face) turns a straight into exactly one `BLOCK`. |
-| BX-CL-6 | Keyboard rules still hold through geometry: straight hits, guard blocks, uppercut splits a guard, sway beats a straight (whiff + counter), a hook catches a sway into it, an uppercut catches a duck. |
+| BX-CL-7 | No smoothing clips a punch: the pipeline's peak glove depth for a jab equals the unfiltered pipeline's on every sampling phase at 30 and 15 pose-fps (±2 mm), and BX-CL-1 end to end judges "reached the head" on unfiltered frames. Both fail on the old arm filter. |
+| BX-CL-6 | Keyboard rules still hold through geometry: straight hits, guard blocks, uppercut splits a guard, sway beats a straight (whiff + counter), a hook catches a sway into it, an uppercut catches a duck. A key right lands on the idle defender's left cheek and a left on the right cheek (zones 0 / 1, not the chin). A guard raised on tick 10, 11 or 12 of a straight's travel blocks it (`BLOCK`, no `HIT`); before the fix, a guard raised on tick 11 let the glove through. |
 
 ### 2.4 Boxers without a body (puppets)
 
@@ -148,7 +172,7 @@ Additions:
 | BX-CAL-3 | **Rig scale:** player torso length ↦ rig torso length, so wrist IK and `rootY` are in rig metres. Already implied by `PoseState.wrist`; now also used for `root`. |
 | BX-CAL-4 | **Recalibration** (`RECALIBRATE`) is accepted in `intro`, `fight`, `break` and `over`. It's **ignored while the boxer is down**: holding still would fight the recovery rule. |
 | BX-CAL-5 | **Per player:** in 2P each player has their own calibration (existing). Tracking loss during a count pauses the match and freezes the count (existing PAUSE rule). |
-| BX-CAL-6 | **Body scan (D5):** a menu option before a match. Stand still (existing calibration), then T-pose for 2 s.<br>• **Measures:** upper arm and forearm lengths (left/right) and shoulder width, in torso lengths; arms held side-on to the camera, so 2D lengths are true lengths.<br>• **Stored:** in `ProfileStore` under the player name (schema v1 → v2 migration; v1 profiles load with no scan).<br>• **Used for:** the bone lengths in `PoseState` depth reconstruction, and the arm length that normalises `armGainM`. So the scan changes effective reach: the same wrist image reads a different glove depth.<br>• **Default when skipped:** today's `gestureConfig.pose` bone lengths.<br>• **Tests:** a scan from synthetic T-pose frames measures the synthetic lengths (±3 %); the migration test; an e2e where a long-arm scan and the default map the same half-extension frames to a miss and a hit respectively. |
+| BX-CAL-6 | **Body scan (D5):** a menu option before a match. Stand still (existing calibration), then T-pose for 2 s.<br>• **Measures:** upper arm and forearm lengths (left/right) and shoulder width, in torso lengths; arms held side-on to the camera, so 2D lengths are true lengths.<br>• **Stored:** in `ProfileStore` under the player name (schema v1 → v2 migration; v1 profiles load with no scan).<br>• **Used for:** the bone lengths in `PoseState` depth reconstruction, and the arm length that normalises `armGainM`. So the scan changes effective reach: the same wrist image reads a different glove depth.<br>• **Default when skipped:** today's `gestureConfig.pose` bone lengths.<br>• **As built:** one upper arm, forearm and shoulder width per player (averaged over both sides), stored as `{upperArm, forearm, shoulderWidth, at}`. Menu → Body scan → name → stand → T-pose → Save / Redo / Back. At launch, `profiles.body(name)` sets the gesture engine's bone lengths and the Boxing `BODY` mapping for that player.<br>• **Tests:** a scan from synthetic T-pose frames measures the synthetic lengths (±3 %); the v0/v1 → v2 migration; e2e: the menu scan saves ≈ 0.71 torso lengths per bone. **Acceptance 5 (corrected premise):** the synthetic figure's arms really are 0.71; with the 0.50 / 0.48 defaults, the same 2D arm reads nearer the image plane. The scanned profile reads the same take deeper (peak glove z 1.29 m vs 1.04 m; head contact at 0.99 m). The e2e asserts scanned > default + 0.1 m. The original draft expected long arms to reach less, which forgot that depth comes from foreshortening against bone length. |
 
 ## 4. Authority split (the contract)
 

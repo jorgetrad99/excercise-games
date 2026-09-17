@@ -81,8 +81,9 @@ Screenshots and state dumps go to `tmp/` (git-ignored). Reference them by path i
 ## 5. How to use the runtime as an agent
 
 - `pnpm dev` then open `http://localhost:5173/?game=skate-run&debug=1&input=keyboard&seed=42` (without `?game=<id>` the game-select menu shows)
-- `window.__game.getActiveGame()` — launched MiniGame id (null on the menu); `getState<SimState | BoxingState>(player?)` — full sim snapshot, typed by the caller; `getSignals()` — live pose signals; `inject({type:'JUMP'})` — fire an input event (`player`, and `aim` for punches); `setSeed(n)` — restart deterministic run.
-- `?game=boxing` — Boxing (keys: Z/X punch, ↑ guard, ←/→ sway, ↓ duck). `?players=2` is one shared match, not two runs.
+- `window.__game.getActiveGame()` — launched MiniGame id (null on the menu); `getState<SimState | BoxingState>(player?)` — full sim snapshot, typed by the caller; `getSignals()` — live pose signals; `inject({type:'JUMP'})` — fire an input event (`player`, and `aim` for key/bot punches; pose Boxing has no punch events, its `BODY` gloves collide); `setSeed(n)` — restart deterministic run.
+- `?game=boxing` — Boxing (keys: Z/X punch, ↑ guard, ←/→ sway, ↓ duck). `?players=2` is one shared match, not two runs. With pose input the player's body drives the boxer 1:1 and hits are glove collisions (PLAN-BOXING §2).
+- Menu → **Body scan**: stand still, then T-pose; saves arm lengths under the player name (`ProfileStore` v2). Boxing uses them for depth and reach; skipped = default proportions.
 - `?input=replay:jump.json` — drives the game from a recorded fixture; `?record=1` — records a fixture (human only).
 - `?players=2` — split screen; `?model=lite|full|heavy`; `?camera=<deviceId>`.
 - `?names=Ana,Beto` — player names for a `?game=` link (the menu asks "Who's playing?" instead). Finished matches are saved per name in `localStorage['move-arcade.profile']`; the menu's **Stats** page charts them.

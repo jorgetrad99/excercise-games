@@ -95,33 +95,41 @@ render: ONE renderer + ONE scene; per player: world + skater updated from that s
 - `defineGame<S>(game)` returns a `RegisteredGame = MiniGame<OpaqueSim>`. `OpaqueSim` is branded, so the shell can't make one: every sim it hands to `render`/`hud`/`summary` came from that game's `createSim`. That's why the one cast inside `defineGame` is sound.
 - Bridge: `__game.getState<S>(player?)`. The caller names the shape (`SimState`, `BoxingState`); unchecked at runtime. `advance()` returns `getState().t`, which every `GameSim` state has.
 
-## Boxing (Piece 4)
+## Boxing (Piece 4; control model inverted in M7.15, PLAN-BOXING §2–§4)
+
+The player's body owns the rig; the sim resolves only collision, damage and the opponent's reaction.
 
 ```
-pose: body.ts tracks wrists + nose with z (One Euro) → fists.ts per wrist: position relative to the nose (torso units,
-      z × aspect × zWeight) → speed over 70 ms + motion direction → PUNCH_LEFT/RIGHT {aim} when armed, beyond `rearm`,
-      fast, not mostly downward; re-arm only back within `rearm` AND slow (recovery). GUARD_START/END by both-wrists
-      distance (hysteresis). SignalFrame + fistL, fistR, guard.
-games/boxing: LANE_LEFT/RIGHT → DODGE_LEFT/RIGHT, SLIDE_START → DUCK, punches/guard 1:1, JUMP = play again.
-      Keys: Z/X punch, ↑ hold guard, ←/→ sway, ↓ duck, Space play again.
-core/boxing/sim.ts @ 60 Hz, ONE BoxingState for both boxers (events carry `player`):
-      intro → fight ⇄ down (count) → break → … → over. Fists ready → out (lands at travelS) → back → ready.
-      land(): dodge (aim vs sway/duck) → whiff + counter window; guard (not vs uppercut) → block drain; else clean hit;
-      dizzy at 0 stamina; hit while dizzy → knockdown (seeded get-up count, max −2); 3 knockdowns TKO; decision after 3 rounds.
-      Same-tick landings resolve in a seeded coin-flip order (fairness).
-core/boxing/bot.ts: stateless (state, seed, tick) → reacts reactS after a punch leaves; punches on a 0.1 s grid.
-render/boxing: ring + 2 × Casual_Hoodie (SkeletonUtils.clone, arms collapsed, floating gloves like Miis);
-      slot i = camera behind boxer i's head, own body hidden, own gloves low/wide. HUD: stamina pies, clock, count, result.
+pose: body.ts (head/torso One Euro; elbows + wrists UNFILTERED, PLAN-BOXING §2.1) → PoseState per frame
+      fists.ts: wrist-speed signal + GUARD_START/END posture (hysteresis). No punch detector.
+games/boxing/body-input.ts: PoseState + arm lengths (body scan or defaults) → BODY {head, gloves} in boxer-local m
+      (shoulder + wrist/arm × armGainM, head + sway/duck/forward × leanGainM). One per pose frame.
+      LANE/SLIDE → DODGE/DUCK and JUMP = play again stay gestures. Keys: Z/X punch, ↑ guard, ←/→ sway, ↓ duck.
+core/boxing @ 120 Hz, ONE BoxingState for both boxers (events carry `player`):
+      body.ts: BodyTrack per boxer: observed pose samples (+ velocity), or a puppet path for keyboard/bot punches,
+               guard and dodges. Stale > staleS → puppet. predictPose(track) = drawn pose, ≤ 50 ms ahead.
+      collide.ts: per glove per tick, swept spheres (glove vs defender gloves, head, torso) on OBSERVED samples,
+               relative motion; the side that closed most strikes; one outcome per extension → hit / block / whiff.
+      sim.ts: damage = clean × min(maxMult, speed / refSpeedMps) (× bodyMult torso, × counterMult);
+               dizzy, knockdown, count, TKO, decision; boxer.hits (≤ 4) = where each clean hit touched.
+games/boxing/authority.ts: boxingAuthority(state, boxer) → S1–S6 / S11–S13 / BREAK / PUPPET, per-channel owner, and
+      which overlays are allowed (O1 hit, O2 stun). Only S4 (the fall) hands channels to the sim.
+render/boxing/rig.ts: rig = live body + bounded, time-limited offsets (O1 head snap/stagger, O2 stun follower).
+render/boxing: ring + 2 × Casual_Hoodie (arms collapsed, floating gloves); slot i = camera behind boxer i's head.
+      Gloves and head drawn at the rig; idle bob only for puppets. HUD: stamina pies, clock, count, result.
 ```
 
-- **Shared sim in the shell:** `MiniGame.sharedSim`. With it, every `Player.sim` is the same object. `record()` tags each queued event with `player`. `eachSim()` steps each distinct sim once with all its players' events (frame loop and `advance`). `restart()` replaces a shared sim for everyone (play again, `setSeed`). `view.render` gets `[sim, sim]`, one entry per player, so slot *i* is drawn from boxer *i*.
-- **1P:** the bot is boxer 1. `?input=bot` / `?autoplay=1` also puts it on boxer 0. **2P:** no bot.
-- **Tuning:** `core/boxing/boxing.config.ts` (rules) and `pose/gestures.config.ts` `fists` (detection, UNTUNED on real video).
-- **Tests:** `core/boxing/sim.spec.ts` covers rules, determinism, frame pacing, bot vs bot and bot reactions. `pose/fists.spec.ts` covers synthetic straight/hook/uppercut/guard/recovery. `tests/e2e/boxing.smoke.spec.ts` covers the menu, 1P keyboard + bot, 2P shared state, pose replay → sim, and screenshot baselines.
+- **Shared sim in the shell:** `MiniGame.sharedSim`. With it, every `Player.sim` is the same object. `record()` tags each queued event with `player` (BODY is queued but not logged). `eachSim()` steps each distinct sim once with all its players' events (frame loop and `advance`). `restart()` replaces a shared sim for everyone (play again, `setSeed`). `view.render` gets `[sim, sim]`, one entry per player, so slot *i* is drawn from boxer *i*.
+- **1P:** the bot is boxer 1 (a puppet that perceives glove closing speed > `bot.seeSpeedMps`). `?input=bot` / `?autoplay=1` also puts it on boxer 0. **2P:** no bot.
+- **Calibration hooks:** `MiniGame.canRecalibrate(sim, player)` (ignored while that boxer is down), `needsKnees` (framing hint), `poseInput(pose, player, arms)`.
+- **Body scan:** Menu → Body scan (`platform/body-scan-page.ts`, `pose/body-scan.ts`) → `ProfileStore` v2 `players[name].body`. At launch `main.ts` passes it to the gesture engine (`setArms`) and to `poseInput`.
+- **Tuning:** `core/boxing/boxing.config.ts` (bodies, gains, impact, rules) and `pose/gestures.config.ts` (`fists` guard, `pose` default bone lengths). UNTUNED on real boxing video.
+- **Latency:** `tests/e2e/boxing-latency.smoke.spec.ts` measures camera → drawn glove every verify run (gate `latency-camera-to-glove`).
+- **Tests:** `core/boxing/sim.spec.ts` (rules through geometry, determinism, bot), `collide.spec.ts` (BX-CL-*), `games/boxing/authority.spec.ts` (BX-H-*, BX-A-1/3), `body-input.spec.ts` (BX-CL-1/7 end to end), `render/boxing/rig.spec.ts` (BX-A-4/5/6), `pose/body-scan.spec.ts`; e2e `boxing.smoke` (menu, keyboard + bot, 2P shared state, pose replay → collisions, screenshots), `boxing-visual.smoke` (rig follows the body 1:1, head snap by zone), `body-scan.smoke`.
 
 ## Pose mirroring (continuous body → rig)
 
-Two paths from the same frame, neither replacing the other: the discrete `PUNCH_*`/`GUARD_*`/`DODGE`/`DUCK` events the sim scores, and a continuous `PoseState` a renderer binds bones to every frame (live arm extension included).
+Two paths from the same frame, neither replacing the other: discrete gesture events (`GUARD_*`, `DODGE`, `DUCK`, …), and a continuous `PoseState` every frame. Boxing turns the latter into `BODY` events the sim collides; other games bind bones to it.
 
 ```
 gesture engine push(frame) ─ body.ts (One Euro) + calibration ─┬→ SignalFrame {…, pose: PoseState | null} ─→ input/ → main.ts
@@ -162,7 +170,7 @@ interface ArmState {
 - **Distance scale:** max(torso ratio, shoulder ratio) against calibration. Bending shrinks only the torso, and turning shrinks only the shoulders.
 - **Torso yaw:** the shoulder foreshortening, weighted by how far the nose left the shoulder center. On the real recording, shoulders alone read ±1 rad while facing the camera.
 
-**World landmarks:** the worker now also sends `PoseFrame.world` (MediaPipe metric 3D) and `?record=1` saves it. Nothing consumes it yet; `pnpm tune:boxing` compares its reach against the bone model on the boxing drills.
+**World landmarks:** the worker now also sends `PoseFrame.world` (MediaPipe metric 3D) and `?record=1` saves it. Nothing consumes it yet.
 
 **Tests:**
 
@@ -172,8 +180,6 @@ interface ArmState {
   - hand-built guard/punch arm geometry
 - e2e `boxing.smoke` replay: `getSignals().pose` present.
 
-**Detection tuning against real drills:** `pnpm tune:boxing` (`tests/tools/boxing-tune.tool.ts`, not in verify).
-
 - Reads `fixtures/pose/boxing/*.json` with exact expected counts per drill.
 - Checks handedness from a raised-left-hand marker at the start of each file.
 - Reports counts and pose-state channels at each punch.
@@ -181,28 +187,15 @@ interface ArmState {
 
 ## Boxing visual expressiveness (render only)
 
-- `render/boxing/presentation.ts` observes each boxer's clean-hit counter and current punch aims. It owns bounded left/right/chin bruises, hit age, zero-stamina fall timing and count recovery. Repeated split-screen draws are idempotent; a new sim or rewind resets damage. Blocks and regeneration do not create/heal bruises. Core scoring and phases are unchanged: zero stamina starts the visual fall, the next clean hit still starts the official count.
+- `render/boxing/presentation.ts` observes each boxer's `hits` list (where each clean hit touched: zone and time). It owns bounded left/right/chin bruises, hit age, zero-stamina fall timing and count recovery. Repeated split-screen draws are idempotent; a new sim or rewind resets damage. Blocks and regeneration do not create/heal bruises. Core scoring and phases are unchanged: zero stamina starts the visual fall, the next clean hit still starts the official count.
 - `render/boxing/animation.ts` samples the existing CC0 Casual_Hoodie Death clip over the fall, holds the floor pose, and blends through a crouch during the final part of a recoverable count. KO/TKO stays down; a decision loser stays standing. Head snap uses a locally vendored UAL `Hit_Head` quaternion track, with a directional stagger. Animation clocks pause with the match.
 - `render/big-head.ts` hides the complete `Casual_Head` mesh group. A rounded replacement is 2.6 times the proportional radius, follows the Head bone position AND orientation, and carries a private copy of the existing `FaceFeed` crop. `render/boxing/face-damage.ts` composites redness, bruises and swelling highlights on that copy. No camera capture, inference or pose-layer dependency is added. With no camera, a procedural face provides the same large-head silhouette and damage feedback.
 - `render/boxing/visual.config.ts` holds visual tuning. `public/assets/quaternius/boxing/hit-head.json` is baked by `scripts/vendor-boxing-reaction.mjs` from Quaternius UAL Standard's `Hit_Head`; provenance and the unchanged CC0 license are in CREDITS.
-- Tests: `presentation.spec.ts`, `live-pose.spec.ts`, and `tests/e2e/boxing-visual.smoke.spec.ts`. The browser harness loads the shipping GLB and renderer, steps the real boxing sim, and inspects head transforms and texture pixels. Screenshots and fake-camera performance samples are under `tmp/visual-expressiveness/`.
+- Tests: `presentation.spec.ts`, `rig.spec.ts`, and `tests/e2e/boxing-visual.smoke.spec.ts`. The browser harness loads the shipping GLB and renderer, steps the real boxing sim, and inspects head transforms and texture pixels. Screenshots and fake-camera performance samples are under `tmp/visual-expressiveness/`.
 
-### Live pose in Boxing (render/boxing/live-pose.ts)
+### Live pose in Boxing
 
-The shell's per-frame `GameView.render(sims, interpolate, poses)` feeds it. The Boxing view maps `poses[i]` to boxer i (in 1P, boxer 1 is the bot and gets null). `LivePose` is a structural subset of `PoseState` because render may not import pose/. `tsc` checks the view's `render` against `GameView<BoxingSim>`, so a contract change that breaks it fails to compile.
-
-**The sim is authoritative for anything scored.** Live pose only adds expression within what the sim shows:
-
-| Channel | Live effect | Sim precedence |
-| --- | --- | --- |
-| `body.sway/duck/rise` (torso units × 0.5 m), `body.forward` (fraction of camera distance × 2.5 m) | whole-boxer lean, clamped to ±6 cm | scaled by 1 − the sim dodge amount; a sim dodge replaces it, and no live-only dodge can show (a dodge is 35 cm) |
-| `torso/hips/head.rot` | absolute character-frame turns on top of the animation, clamped 0.35 / 0.2 / 0.5 rad | off while falling, down or rising |
-| `arms[i].upperRot/foreRot` (swings from a hanging arm) | wrist = swing·(0,−1,0)·upper arm + swing·(0,−1,0)·forearm; offset from the sim's rest glove, clamped ±12 cm | only for a fist at rest; a thrown or retracting punch is placed by the sim |
-
-- **Smoothing:** exponential easing (τ 0.08 s) on the render clock, since poses arrive at 20–30 Hz.
-- **Tracking loss:** null eases back to neutral, and below weight 0.001 no live math runs.
-- **Arm bones:** stay collapsed (armless gloves); arm swings move the gloves only.
-- **Tests:** `live-pose.spec.ts` covers units, the arm read, clamps and smoothing. The `boxing-visual` e2e covers live lean < 8 cm, a sim dodge replacing it, and live reach ≤ 12 cm on real transforms.
+Replaced in M7.15 (`render/boxing/live-pose.ts` deleted). The player's body no longer adds clamped expression on top of a sim-placed boxer: it IS the boxer (see Boxing above, and PLAN-BOXING §2.1 / §4). The only render-side additions are the authorized overlays in `render/boxing/rig.ts`, each bounded in size and time (`BOUNDS`), plus live torso/hips/head turns from `PoseState`.
 
 ## Core sim (M3)
 
