@@ -87,3 +87,21 @@ test('capture wizard: practice mode steps through b1 demos without recording', a
   await expect(page.locator('.capture')).toContainText('Start (K)');
   expect(errors).toEqual([]);
 });
+
+// Jorge (B1): the demo loops while you read and count down, and is gone from GO, so a take records
+// what the prompt asks for rather than a copy of the loop.
+test('capture wizard: the demo shows during the countdown and hides from GO', async ({ page }) => {
+  test.setTimeout(60_000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/?game=boxing&record=1&capture=b1');
+  await shows(page, 'Start (K)');
+  const canvas = page.locator('.capture canvas');
+  await page.keyboard.press('k');
+  await expect(canvas).toBeVisible(); // countdown
+  await shows(page, 'GO');
+  await expect(canvas).toBeHidden();
+  await shows(page, 'hold');
+  await expect(canvas).toBeHidden();
+  expect(errors).toEqual([]);
+});

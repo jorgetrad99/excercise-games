@@ -199,7 +199,9 @@ export function mountCaptureWizard(
     const html = view(w, now);
     // Only on change: rebuilding the buttons every frame would swallow clicks.
     if (html !== shown) text.innerHTML = shown = html;
-    const id = w.phase === 'review' || w.phase === 'done' ? '' : w.steps[w.index]!.id;
+    // Hidden from GO on (Jorge, B1): a looping demo during the take got 6 punches recorded for "3".
+    const go = w.phase === 'recording' && now >= w.start + LEAD_MS;
+    const id = go || w.phase === 'review' || w.phase === 'done' ? '' : w.steps[w.index]!.id;
     if (id !== demo.id) demo = { id, since: now };
     box.classList.toggle('demo', id !== '' && drawDemo(canvas, id, now - demo.since));
     requestAnimationFrame(loop);

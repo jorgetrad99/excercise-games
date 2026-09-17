@@ -118,7 +118,7 @@ A constraint only clamps where a player-driven value lands. It never produces mo
 ### 2.5 Scoring by collision (D5)
 
 - **Bodies in the sim:** each boxer has a head, torso and two gloves as spheres in its own frame (m).
-  - **Pose boxers:** a `BODY` event per pose frame places them from the player's `PoseState` (arms via wrist IK × `armGainM`, head via sway/duck/forward × `leanGainM`).
+  - **Pose boxers:** a `BODY` event per pose frame places them from the player's `PoseState` (arms via wrist IK × `armGainM`; the whole body via sway/rise/forward × `leanGainM`; **a duck lowers the head only**, Jorge 2026-09-17 on the B1 capture: lowering the gloves with it sent twisted straights under the face).
   - **Puppets (§2.4):** key/bot punches, guard and dodges move the same spheres along authored paths.
 - **Hit:** a glove sphere entering the defender's head or torso sphere, swept over the tick using motion relative to the target, so a fast glove can't pass through between ticks or pose frames. Only the side whose own motion did most of the closing strikes.
 - **Block:** the glove enters one of the defender's gloves first. A guard raised onto a glove already on its way in also blocks: a glove that starts a tick inside a defender's glove and keeps pushing deeper is met at t = 0 (gloves only; a head leaning onto a resting glove still isn't that glove's hit).

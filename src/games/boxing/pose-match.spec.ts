@@ -40,11 +40,11 @@ function vsBot(step: B1Step, everyNth: 1 | 2) {
 describe('real punches vs the 1P bot (B2)', () => {
   it.each([
     // step, every nth frame, player HITs on the bot
-    ['square-right-x3', 1, 5],
-    ['natural-right-x3', 1, 3],
+    ['square-right-x3', 1, 6],
+    ['natural-right-x3', 1, 6],
     ['left-x1', 1, 6],
-    ['square-right-x3', 2, 5],
-    ['natural-right-x3', 2, 1],
+    ['square-right-x3', 2, 6],
+    ['natural-right-x3', 2, 5],
     ['left-x1', 2, 5],
   ] as const)(
     '%s, every %i frame(s): %i hits drain the bot, the damage stays, and it reacts',

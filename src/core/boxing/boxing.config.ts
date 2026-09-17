@@ -24,6 +24,9 @@ export const boxingConfig = {
      * body reaches the head at the same fraction of extension). Forward is larger: the Wii analog of a
      * glove that crosses the ring. At 1.3 a guard (wrist ~0.43 arm forward → z ≈ 0.71) stays ~29 cm short
      * of the face (z ≈ 0.99), and half the travel from guard to full extension lands ~4 cm into it.
+     * CANDIDATE forward 1.2 (Jorge, 2026-09-17: kept at 1.3 until a scanned recording). On the B1 capture
+     * (b1-capture.spec, head-only duck): 1.3 → 18/18 punches touch, 17 HIT, 10 false contacts;
+     * 1.2 → 18/18, 17 HIT, 6 false; 1.1 → 17/18, 16 HIT, 4 false. One person, one take, default arms.
      */
     armGainM: { forward: 1.3, side: 0.7, up: 0.7 },
     /** m per torso length of body sway / duck / rise (the player's lean moves the head this much). */

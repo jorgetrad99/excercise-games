@@ -42,12 +42,12 @@ describe('B1 capture: punches through the whole pipeline (real recording)', () =
     expect(r.right).toEqual(['HIT', 'HIT', 'HIT', 'HIT', 'HIT', 'HIT']);
   });
 
-  // Open (PLAN-BOXING §10 playtest list): the twist bends the player forward, which reads as a 0.14–0.25
-  // torso duck; × leanGainM that carries the glove ~0.2–0.3 m lower, into the idle defender's ready glove.
-  it('right punches, with twist: all 6 touch with the right glove, only 2 reach the head', () => {
+  // A bend lowers only the head (Jorge, B1): before, the twist's forward bend read as a 0.14–0.25 torso
+  // duck and carried the glove 0.17–0.30 m low into the ready glove, and only 2 of 6 reached the head.
+  it('right punches, with twist: all 6 touch with the right glove, 5 reach the head', () => {
     const r = byExtension('natural-right-x3');
     expect(r.left).toEqual([]);
-    expect(r.right).toEqual(['HIT', 'BLOCK', 'BLOCK', 'BLOCK', 'BLOCK', 'HIT']);
+    expect(r.right).toEqual(['HIT', 'BLOCK', 'HIT', 'HIT', 'HIT', 'HIT']);
   });
 
   it('left punches: 6 extensions, 6 HITs by the left glove', () => {
@@ -56,10 +56,11 @@ describe('B1 capture: punches through the whole pipeline (real recording)', () =
     expect(r.left).toEqual(['HIT', 'HIT', 'HIT', 'HIT', 'HIT', 'HIT']);
   });
 
-  // Known false contacts, pinned (none a HIT on the idle defender):
+  // Known false contacts, pinned. 3 are HITs on the idle defender (were BLOCKs before the head-only duck):
   // - arms rising from the sides read mid-raise as reaching forward (glove z 1.04–1.30, face at 0.99)
-  // - the guarding LEFT glove during a twisted right punch reads forward (z up to 1.38)
-  // - a resting right glove's depth jitters to 1.12
+  // - the guarding LEFT glove during a twisted right punch reads forward (z up to 1.38): 2 HITs, one of
+  //   them the capped 1.05 seg, from a 2-frame left-wrist landmark jump (7.7 m/s)
+  // - a resting right glove's depth jitters past the face: 1 HIT, 0.19 seg
   // - the square take's lead-in (walking back into place) whiffs
   it('false contacts: 10, from raising arms, the twist, a resting glove and a lead-in', () => {
     expect(byExtension('left-hand-overhead').stray).toEqual(['BLOCK:0']);
@@ -69,9 +70,9 @@ describe('B1 capture: punches through the whole pipeline (real recording)', () =
       'WHIFF:0',
       'WHIFF:1',
       'BLOCK:0',
-      'BLOCK:1',
+      'HIT:1',
     ]);
-    expect(byExtension('natural-right-x3').stray).toEqual(['BLOCK:0', 'BLOCK:0', 'BLOCK:0']);
+    expect(byExtension('natural-right-x3').stray).toEqual(['HIT:0', 'HIT:0', 'BLOCK:0']);
     expect(byExtension('left-x1').stray).toEqual(['BLOCK:0']);
   });
 

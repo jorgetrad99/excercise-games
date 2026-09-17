@@ -2476,3 +2476,48 @@ Counted in the image alone (wrist rises above the nose and comes back), so the c
 ### Next
 
 - Jorge: (a) twist punches: should a bend lower the gloves? (b) wizard: stop the demo loop at GO? (c) arm gain 1.3 → 1.2 on this evidence, or wait for scanned drills?
+
+## 2026-09-17 — Jorge's three B1 decisions applied: head-only duck, demo stops at GO, gain 1.2 logged as candidate
+
+Branch `fix/boxing-phase0`.
+
+### What changed
+
+1. **A duck/bend lowers the head only** (`body-input.ts`). Sway, rise (hips) and forward still move head and gloves together. PLAN-BOXING §2.5 "Pose boxers" line amended.
+2. **The capture demo hides from GO** (`capture-panel.ts`): it shows while reading and counting down, and is gone during GO and hold.
+3. **`armGainM.forward` stays 1.3**; 1.2 is logged as a CANDIDATE in `boxing.config.ts` with the re-measured numbers below.
+
+### B1 capture, re-measured after (1) (idle defender, exact per-glove attribution)
+
+| Take | Before | After |
+|---|---|---|
+| right, no twist | 6/6 HIT | 6/6 HIT |
+| right, twist | 2/6 HIT (4 BLOCK) | **5/6 HIT** (1 BLOCK) |
+| left | 6/6 HIT | 6/6 HIT |
+| false contacts | 10, 0 HIT | 10, **3 HIT** |
+
+- **The 3 false HITs (known, pinned in `b1-capture.spec`):**
+  - twist take, 2.3 s: the guarding left glove, 0.2 m/s, 0.03 seg
+  - twist take, 3.7 s: the guarding left glove during a 2-frame left-wrist landmark jump, read as 7.7 m/s: **1.05 seg, the cap**
+  - no-twist take, 8.7 s: resting right glove depth jitter, 1.3 m/s, 0.19 seg
+  - Before (1) these ended on the idle defender's ready glove as BLOCKs; the gloves now travel at face height, so they reach the head too.
+- **Vs the 1P bot:** player HITs 6 / 6 / 6 at 30 fps, 6 / 5 / 5 at 15 fps (were 5 / 3 / 6 and 5 / 1 / 5).
+- **Gain sweep, after (1):** 1.3 → 18/18 touch, 17 HIT, 10 false; 1.2 → 18/18, 17 HIT, 6 false; 1.1 → 17/18, 16 HIT, 4 false. (Before (1), 1.2 vs 1.3 was 15 vs 14 HIT, 7 vs 10 false: with the duck fixed, 1.2's advantage is fewer false contacts only.)
+
+### Tests
+
+- `body-input.spec` "a duck lowers the head, not the gloves; sinking the hips still lowers both": glove Δy = rise × leanGainM, head Δy = (rise − duck) × leanGainM. The first draft asserted gloves don't move at all and failed: the synthetic crouch also lowers the hips, and a knee bend should sink the whole boxer. Corrected to the rule, not loosened.
+- `b1-capture.spec` twist and false-contact pins, `pose-match.spec` hit counts updated to the measured values above.
+- e2e `capture.smoke` "the demo shows during the countdown and hides from GO" (`capture=b1`).
+- **Mutation:** old `(rise − duck)` shift on everything → the duck test, the twist pin and the false-contact pin fail.
+
+### Verified
+
+- **`PLAYWRIGHT_PORT=5196 pnpm verify` exit 0** (`tmp/verify/verify-b1-decisions.log`): vitest 461 passed + 1 skipped (42 files), e2e 36 passed (3.7 min), 6 gates measured.
+- **Every gate reads `lock NOT HELD · other heavy: none`**: the lock-bookkeeping anomaly from the 2026-09-17 perf-lock entry (not fixed, harness). The VS Code test-server that made the last verifies CONTENDED is gone. Values match quiet runs: boxing-1p-face fps 60 / pose-fps min 29; skate-2p pose-fps min 26; pipeline 1P p50 22.4 ms. Not re-measured.
+
+### Playtest note (Jorge)
+
+`pnpm dev --port 5180` in `tmp/boxing-phase0-worktree`, then `http://localhost:5180/?game=boxing&debug=1&names=Jorge`. What to check and the known weaknesses are in the chat reply of this session and summarised here:
+- twist punches should now land about as often as square ones
+- known, not new: arms rising to guard can touch; a resting glove can score a small hit; the guarding hand can score during a twist (once at max damage, from a landmark glitch); the bot rarely blocks by reaction (§2.5 known limit); ~25 real hits per pie; standing off your calibration spot shifts everything sideways (recalibrate with C); no lean dodges for pose players (by decision); scan not applied (BX-CAL-6).

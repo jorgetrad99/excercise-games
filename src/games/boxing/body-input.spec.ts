@@ -91,6 +91,19 @@ describe('player body → BODY input (PLAN-BOXING §2.5)', () => {
     expect(half.gloves[1][1]).toBeGreaterThan(B.head[1] - 0.15); // at face height
   });
 
+  // Jorge (B1): a duck or forward bend lowers the head only. Lowering the gloves with it sent twisted
+  // straights under the face into the opponent's ready glove (2 of 6 hit; 5 of 6 now, b1-capture.spec).
+  it('a duck lowers the head, not the gloves; sinking the hips (rise) still lowers both', () => {
+    const guard = bodyFromPose(held({ fists: 'guard' }));
+    const pose = held({ fists: 'guard', crouch: 0.06 }); // head drops, hips drop half as much
+    const ducked = bodyFromPose(pose);
+    const { duck, rise } = pose.body;
+    expect(duck).toBeGreaterThan(0.1);
+    for (const h of [0, 1] as const)
+      expect(ducked.gloves[h][1] - guard.gloves[h][1]).toBeCloseTo(rise * B.leanGainM, 2);
+    expect(ducked.head[1] - guard.head[1]).toBeCloseTo((rise - duck) * B.leanGainM, 2);
+  });
+
   it('the head follows the body continuously: a lean to the left moves it +x, no cap', () => {
     const still = bodyFromPose(held({}));
     const small = bodyFromPose(held({ lean: -0.02 }));

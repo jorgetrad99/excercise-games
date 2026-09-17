@@ -40,8 +40,12 @@ export function bodyFromPose(
 ): NonNullable<InputEvent['body']> {
   const k = B.leanGainM;
   const { sway, duck, rise, forward } = pose.body;
-  const shift: P3 = [sway * k, (rise - duck) * k, forward * B.cameraDistanceM * k];
+  // A duck lowers the head only (Jorge, B1 capture): the forward bend of a twisted punch read as a
+  // 0.14–0.25 torso duck and carried both gloves 0.17–0.30 m low, into the opponent's ready glove.
+  const shift: P3 = [sway * k, rise * k, forward * B.cameraDistanceM * k];
   const at = (p: readonly number[]): P3 => [p[0]! + shift[0], p[1]! + shift[1], p[2]! + shift[2]];
+  const head = at(B.head);
+  head[1] -= duck * k;
   const centre = [0, B.shoulder[1], B.shoulder[2]];
   // Shoulders turn with the torso about the shoulder centre (a hook's shoulder comes forward).
   const shoulder = (side: 1 | -1): P3 => {
@@ -50,7 +54,7 @@ export function bodyFromPose(
   };
   const arm = arms.upperArm + arms.forearm;
   return {
-    head: at(B.head),
+    head,
     gloves: [
       glove(pose.arms[0]?.wrist ?? null, 1, shoulder(1), arm),
       glove(pose.arms[1]?.wrist ?? null, -1, shoulder(-1), arm),
@@ -59,7 +63,11 @@ export function bodyFromPose(
 }
 
 /** The BODY event for one pose frame of `player`. */
-export const bodyEvent = (pose: PoseState, player: number, arms: ArmLengths | null): InputEvent => ({
+export const bodyEvent = (
+  pose: PoseState,
+  player: number,
+  arms: ArmLengths | null,
+): InputEvent => ({
   t: pose.t,
   type: 'BODY',
   player,
