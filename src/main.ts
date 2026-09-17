@@ -11,18 +11,20 @@ import { createReplaySource } from './input/replay';
 import { createLatencyTracker } from './platform/latency';
 import { mountLatencyOverlay } from './platform/latency-overlay';
 import { mountMenu } from './platform/menu';
+import { createHandCursors } from './pose/hand-cursor';
+import { gestureConfig } from './pose/gestures.config';
 import { createRate } from './platform/rate';
 import type { SignalFrame } from './pose/gestures';
 import { mountPosePanel } from './pose/pose-panel';
 import type { PoseFixture } from './pose/recorder';
 import { mountSignalHud } from './pose/signal-hud';
-import type { FrameTiming, ModelVariant } from './pose/types';
+import type { FrameTiming, ModelVariant, PoseFrame } from './pose/types';
 
 const params = new URLSearchParams(location.search);
 const input = params.get('input') ?? 'pose';
 const debug = params.has('debug');
-/** ?players=2: two runs sharing one seed, one camera, split screen. */
-const playerCount: 1 | 2 = params.get('players') === '2' ? 2 : 1;
+/** ?players=2: two runs sharing one seed, one camera, split screen. The menu can change it at launch. */
+let playerCount: 1 | 2 = params.get('players') === '2' ? 2 : 1;
 /** ?clock=manual: the sim only advances through window.__game.advance() (screenshot tests). */
 const manualClock = params.get('clock') === 'manual';
 /** Revive tokens per run until the profile store exists (M5). */
@@ -118,6 +120,24 @@ function attach(source: PosePlayers): void {
 }
 
 let pose: ReturnType<typeof mountPosePanel> | null = null;
+/** Where camera frames (and window.__game.injectPose) go: the menu's cursors, then the game's pose input. */
+let frameSink: ((f: PoseFrame) => void) | null = null;
+const videoSize = () => pose?.videoSize() ?? { width: 1280, height: 720 };
+
+/** ?input=pose: the camera opens at boot, so the menu can already be driven by hand. */
+function mountCamera(numPoses: number): void {
+  pose = mountPosePanel(document.body, {
+    debug,
+    record: params.get('record') === '1',
+    model,
+    numPoses,
+    cameraId: params.get('camera') ?? undefined,
+    renderFps: () => renderRate.value(),
+    onFrame: (f) => frameSink?.(f),
+  });
+  // Outside debug the camera preview is a small corner thumbnail over the game.
+  document.querySelector('.pose-panel')?.classList.toggle('compact', !debug);
+}
 
 function startInput({ gestureProfile: { toInput, config }, keys }: RegisteredGame): void {
   keyboard = createKeyboardSource(window, undefined, keys);
@@ -125,30 +145,16 @@ function startInput({ gestureProfile: { toInput, config }, keys }: RegisteredGam
   keyboard.onEvent(() => (keyboardUsed = true));
   keyboard.start();
   if (input === 'pose') {
-    const source = createPosePlayers({
-      players: playerCount,
-      video: () => pose?.videoSize() ?? { width: 1280, height: 720 },
-      toInput,
-      config,
-    });
-    pose = mountPosePanel(document.body, {
-      debug,
-      record: params.get('record') === '1',
-      model,
-      numPoses: playerCount,
-      cameraId: params.get('camera') ?? undefined,
-      renderFps: () => renderRate.value(),
-      onFrame: (f) => {
-        pushing = f.timing ?? null;
-        const t0 = performance.now();
-        source.push(f);
-        latency.poseFrame(f.timing, performance.now() - t0);
-        pushing = null;
-      },
-    });
+    const source = createPosePlayers({ players: playerCount, video: videoSize, toInput, config });
+    pose?.setNumPoses(playerCount);
+    frameSink = (f) => {
+      pushing = f.timing ?? null;
+      const t0 = performance.now();
+      source.push(f);
+      latency.poseFrame(f.timing, performance.now() - t0);
+      pushing = null;
+    };
     attach(source);
-    // Outside debug the camera preview is a small corner thumbnail over the game.
-    document.querySelector('.pose-panel')?.classList.toggle('compact', !debug);
   } else if (input.startsWith('replay:')) {
     // replay:jump.json → /fixtures/pose/jump.json; anything with a slash is used as the URL as-is.
     const name = input.slice('replay:'.length);
@@ -244,8 +250,10 @@ function hudRoot(player: number): HTMLElement {
   return box;
 }
 
-function launch(g: RegisteredGame): void {
+function launch(g: RegisteredGame, count = playerCount): void {
   game = g;
+  playerCount = count;
+  frameSink = null;
   const seed = Number(params.get('seed') ?? 42);
   if (debug) signalHud = mountSignalHud(document.body, g.gestureProfile.config);
   if (params.has('latency')) latencyOverlay = mountLatencyOverlay(document.body, latency.summary);
@@ -304,12 +312,22 @@ window.__game = {
   },
   getRenderStats: () => view?.stats() ?? null,
   getLatency: () => latency.summary(),
+  injectPose: (frame) => frameSink?.(frame),
 };
 
 const requested = params.get('game');
 const chosen = GAMES.find((g) => g.id === requested);
+if (input === 'pose') mountCamera(chosen ? playerCount : 2); // the menu tracks up to two hands
 if (chosen) launch(chosen);
 else {
   if (requested) console.warn(`unknown ?game=${requested}; showing the menu`);
-  mountMenu(document.body, GAMES, launch);
+  const menu = mountMenu(document.body, GAMES, launch, {
+    players: playerCount,
+    dwellMs: gestureConfig.cursor.dwellMs,
+  });
+  const cursors = createHandCursors(gestureConfig);
+  frameSink = (f) => {
+    const { width, height } = videoSize();
+    menu.hover(cursors(f, width / height), f.t);
+  };
 }

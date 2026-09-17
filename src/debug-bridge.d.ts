@@ -35,5 +35,7 @@ interface Window {
     getRenderStats(): import('./render/view').RenderStats | null;
     /** Per-stage input-to-screen latency, frame pacing and judder (see platform/latency.ts). */
     getLatency(): import('./platform/latency').LatencySummary;
+    /** Feed a PoseFrame as if the camera produced it: menu hand cursors, or the game's pose input. */
+    injectPose(frame: import('./pose/types').PoseFrame): void;
   };
 }

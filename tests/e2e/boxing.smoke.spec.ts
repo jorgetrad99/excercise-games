@@ -4,7 +4,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { boxingConfig as C } from '../../src/core/boxing/boxing.config';
 import type { BoxingState } from '../../src/core/boxing/types';
-import { CALIBRATE, fixture, script, type Key } from '../../src/pose/testdata/synthetic';
+import { CALIBRATE, fixture, script, scriptTwo, type Key } from '../../src/pose/testdata/synthetic';
 
 /** Not ours: ANGLE's D3D compiler precision warnings; Vite's own logs. */
 const BENIGN = /warning X4122|\[vite\]/;
@@ -131,6 +131,38 @@ test('pose replay: punches and guard go through the gesture engine into the sim'
   const s = await state(page);
   expect(s.tick).toBeGreaterThan(0); // calibration opened the gate
   expect(s.boxers[0].fists[1].phase).toBe('ready');
+  expect(problems).toEqual([]);
+});
+
+test('2P pose replay: one body missing > 2 s pauses the shared match; both back resumes it', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  // Timeline (ms): both calibrate → intro. P2 leaves 5.5–9.5 s (> PAUSE_BOTH_MS), then stands back.
+  const stand = (ms: number): Key => ({ ms, to: {} });
+  const fx = fixture(
+    scriptTwo(
+      [CALIBRATE, stand(12_000)],
+      [CALIBRATE, stand(3000), { ms: 4000, to: { visible: false } }, stand(5000)],
+    ),
+  );
+  await page.route('**/fixtures/pose/synthetic-boxing-2p.json', (r) => r.fulfill({ json: fx }));
+  const problems = watchConsole(page);
+  await page.goto('/?game=boxing&players=2&input=replay:synthetic-boxing-2p.json&seed=42');
+  const phase = () => page.evaluate(() => window.__game.getState<BoxingState>().phase);
+  const byPlayer = () =>
+    page.evaluate(() =>
+      (window.__game.getEvents() as { type: string; player?: number }[]).map(
+        (e) => `${e.player}:${e.type}`,
+      ),
+    );
+  // P2's own tracking loss pauses the match at once (0.7 s); after 2 s the pause-both rule holds
+  // both players, so P2's return alone (its TRACKING_RESTORED) can't resume it: only both-back does.
+  const bothPaused = ['1:PAUSE', '0:PAUSE', '1:PAUSE'];
+  await expect.poll(byPlayer, { timeout: 20_000 }).toEqual(bothPaused);
+  expect(await phase()).toBe('paused');
+  await expect.poll(byPlayer, { timeout: 20_000 }).toEqual([...bothPaused, '0:RESUME', '1:RESUME']);
+  await expect.poll(phase).not.toBe('paused');
   expect(problems).toEqual([]);
 });
 

@@ -190,16 +190,50 @@ async function fillCameraSelect(
   );
 }
 
+/** The worker pipeline, started once the camera is open and restarted when the body count changes. */
+function lazyPipeline(
+  video: HTMLVideoElement,
+  opts: PosePanelOptions,
+  onFrame: (frame: PoseFrame) => void,
+) {
+  let pipeline: ReturnType<typeof startPosePipeline> | null = null;
+  let numPoses = opts.numPoses;
+  const ensure = (): void => {
+    pipeline ??= startPosePipeline({ video, model: opts.model, numPoses, onFrame });
+  };
+  return {
+    ensure,
+    stats: () => pipeline?.stats() ?? null,
+    /** `open`: the camera is running (else ensure() runs once it opens). */
+    setNumPoses(n: number, open: boolean): void {
+      if (n === numPoses) return;
+      numPoses = n;
+      pipeline?.dispose();
+      pipeline = null;
+      if (open) ensure();
+    },
+  };
+}
+
 export function mountPosePanel(
   root: HTMLElement,
   opts: PosePanelOptions,
-): { stats(): PoseStats | null; videoSize(): { width: number; height: number } } {
+): {
+  stats(): PoseStats | null;
+  videoSize(): { width: number; height: number };
+  /** Restart the pose worker for another body count (menu: 2 cursors → a 1P game). */
+  setNumPoses(n: number): void;
+} {
   const ui = buildDom(root);
   const recorder = opts.record ? createRecorder() : null;
   let latest: PoseFrame | null = null;
-  let pipeline: ReturnType<typeof startPosePipeline> | null = null;
   let stream: MediaStream | null = null;
   let deviceId = opts.cameraId ?? rememberedCameraId();
+  const pipeline = lazyPipeline(ui.video, opts, (frame) => {
+    latest = frame;
+    recorder?.push(frame);
+    opts.onFrame(frame);
+  });
 
   let generation = 0; // a newer start() (fast camera switching) supersedes an in-progress one
   async function start(): Promise<void> {
@@ -210,16 +244,7 @@ export function mountPosePanel(
     stream = next;
     deviceId = next.getVideoTracks()[0]?.getSettings().deviceId;
     await fillCameraSelect(ui.select, deviceId);
-    pipeline ??= startPosePipeline({
-      video: ui.video,
-      model: opts.model,
-      numPoses: opts.numPoses,
-      onFrame: (frame) => {
-        latest = frame;
-        recorder?.push(frame);
-        opts.onFrame(frame);
-      },
-    });
+    pipeline.ensure();
   }
   const restart = (): void => {
     start().catch((err: unknown) => {
@@ -234,17 +259,12 @@ export function mountPosePanel(
   });
   ui.retry.addEventListener('click', restart);
   if (recorder) wireRecorder(ui, recorder, opts.model);
-  startDrawLoop(
-    ui,
-    opts.debug,
-    () => latest,
-    () => pipeline?.stats() ?? null,
-    opts.renderFps,
-  );
+  startDrawLoop(ui, opts.debug, () => latest, pipeline.stats, opts.renderFps);
 
   restart();
   return {
-    stats: () => pipeline?.stats() ?? null,
+    stats: pipeline.stats,
     videoSize: () => ({ width: ui.video.videoWidth || 1280, height: ui.video.videoHeight || 720 }),
+    setNumPoses: (n) => pipeline.setNumPoses(n, stream !== null),
   };
 }

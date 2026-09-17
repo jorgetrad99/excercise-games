@@ -61,6 +61,23 @@ export const gestureConfig = {
     zWeight: 1,
     guard: { enter: 0.35, exit: 0.45 },
   },
+  /**
+   * Menu hand cursors (pose/hand-cursor.ts), Kinect-style. Units: shoulder widths, measured on screen
+   * (mirrored) from the shoulder center; +x = screen right, +y = down. The raised hand is mapped from a
+   * box centered `offset` toward its own side and `drop` below the shoulders, 2·halfW × 2·halfH big,
+   * onto the whole screen. A hand lower than `lowered` below the shoulders (≈ mid-chest; a hanging arm
+   * is ≈ 1.1+) is resting: no cursor. The box bottom (drop + halfH) matches `lowered`.
+   * `filter`: One Euro on the 0..1 screen point (Hz / s per unit / Hz). `dwellMs`: hover to select.
+   */
+  cursor: {
+    offset: 0.6,
+    drop: 0.1,
+    halfW: 1.3,
+    halfH: 0.7,
+    lowered: 0.8,
+    filter: { minCutoff: 1.5, beta: 5, dCutoff: 1.0 },
+    dwellMs: 1000,
+  },
   /** T-pose: wrists within wristYTol torsos of shoulder height and wristOut shoulders beyond the shoulders, held holdMs. */
   tPose: { holdMs: 1000, wristYTol: 0.25, wristOut: 0.5 },
 };
