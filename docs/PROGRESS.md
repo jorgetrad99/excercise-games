@@ -1778,3 +1778,86 @@ Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), fast-forwarded onto `fea
 - **Render budget:** the park biome is at 586k triangles, and the budget is needed before the chaser and web-swinging are designed.
 - **The guard hook doesn't cover worktrees** (see the previous entry).
 - **Next step:** stop. M7.15 is owned by session move-arcade-64, per Jorge's answer relayed by that session; to be confirmed by Jorge.
+
+## 2026-09-16 — Perf rule enforced (lock waiters + machine state), guard hook fixed for worktrees, 2P pose-fps re-baselined
+
+Branch `docs/plan-boxing` (`tmp/plan-boxing-worktree`), on `852efb0`. Harness and hooks only; no game code.
+
+### Perf lock: extended from "second e2e fails" to "heavy work waits" (Jorge: enforce it, don't document it)
+
+- **`scripts/e2e-lock.mjs`** is now the one lock module (it replaces `tests/e2e/e2e-lock.ts`), with types in `e2e-lock.d.mts`.
+  - Same lockfile (`.git/move-arcade-e2e.lock`), same takeover when the holder's pid is dead.
+  - Adds `waitForLock()` and the CLI `node scripts/e2e-lock.mjs wait <label>`.
+- **Holders:**
+  - the Playwright run (global setup; a second e2e run still fails fast)
+  - `scripts/perf-probe.mjs`, which waits, then holds the lock
+- **Waiters:**
+  - `pnpm typecheck` / `pnpm lint` (script prefix)
+  - every vitest run, including direct `vitest` calls (`globalSetup` in `vite.config.ts` and `vitest.tools.config.ts`)
+  - tools-only Playwright probes (`--project=tools`, or `PERF_LOCK_WAIT=1`)
+  - the `format-and-typecheck` hook: prettier runs, tsc waits ≤ 45 s (hook timeout is 60 s), then is skipped with a message
+- **Fallback when a process can't check the lock:** `tests/e2e/machine-state.ts`. Every perf gate records, in its `GATE <name> machine:` line and in `gates.jsonl`:
+  - CPU busy % over 1 s
+  - `nvidia-smi` GPU utilization %
+  - whether this run holds the lock
+  - other tsc/eslint/vitest/playwright/vite-build/probe processes outside this run's own process tree, printed as `CONTENDED [...]`
+  - Its first live run flagged 4 false positives: VS Code's eslint/sonarlint servers, and my own Git Bash wrappers (MSYS breaks the Windows parent chain). Shells and `.vscode/extensions` are now excluded, pinned by a unit table (`isHeavyCommand`, 8 cases).
+- **Known gap:** one-off heavy work that's neither scripted nor a node tool (e.g. `npx tsc` typed by hand, a raw `vite build`) isn't forced to wait. The machine-state line catches it in the gate result. AGENTS §4 says to run `node scripts/e2e-lock.mjs wait` first.
+
+### Guard hook fixed for worktrees
+
+- **Before:** `guard-paths.mjs` resolved the target against `CLAUDE_PROJECT_DIR`, so a worktree file became `tmp/<wt>/docs/PLAN.md` and matched no rule.
+- **Now:** it resolves against `git rev-parse --show-toplevel` of the nearest existing directory of the target.
+- **`format-and-typecheck.mjs`** now also runs prettier and tsc in the edited file's own checkout. It used to typecheck the main root no matter which worktree was edited.
+- **`tests/unit/guard-paths.spec.ts`** (7 cases on a temp repo with a nested checkout): main-root PLAN/fixtures blocked; worktree PLAN.md, models (new file) and settings.json blocked; worktree src and PLAN-BOXING allowed.
+  - **Proven against the old hook:** the same spec pointed at the previous `guard-paths.mjs` fails exactly the 3 worktree cases.
+- **Deployment caveat:** Claude Code runs hooks from the checkout at the session's project dir, which for current sessions is the main root, now on `docs/skate-step-propulsion`. **The fixed hooks and the tsc wait are live for a session only once this commit is in the branch checked out there.** Until then, other sessions run the old hooks. The package-script and vitest waits are live on any branch that has this commit.
+
+### Verified
+
+- **`tests/unit/perf-lock.spec.ts`:**
+  - a second acquire fails naming the pid; release frees it
+  - a dead-pid lock is taken over
+  - `waitForLock` blocks while a separate live process holds the lock, then proceeds (waited ≥ 300 ms)
+  - timeout names the holder
+  - the heavy-process table
+- **Live, with a separate process holding the lock:**
+  - `pnpm typecheck` printed "tsc: waiting for the perf lock … pid …", ran after release (11 s)
+  - the hook printed the same wait and exited 0 after 9 s
+- **`pnpm verify` with the waiters, before the false-positive fix** (`tmp/verify-perflock.log`): exit 0. Every gate showed `CONTENDED`, only from the 4 false positives above.
+- **`pnpm verify` final** (`tmp/verify-perflock-2.log`, `PLAYWRIGHT_PORT=5190`, move-arcade-64 and -32 paused on request): **exit 0.**
+  - tsc, eslint, vitest 367 passed + 1 skipped (29 files), e2e 31/31.
+  - **Every gate: `lock held · other heavy: none`**, GPU = RTX 4060 Laptop D3D11 hardware.
+  - Gate values:
+    - boxing-1p-1080p-face: fps 60, pose-fps min 30
+    - pose-1p-5s: 29.5
+    - skate-1p-1080p-bot: fps 60
+    - skate-1p-1080p-pose: fps 60, pose-fps min 27
+    - skate-2p-1080p: fps 60, **pose-fps min 24, mean 26.3**
+
+### Re-baseline: 2P Skate pose-fps (gate ≥ 20 min) on a quiet machine
+
+- **Run:** `playwright test --project=perf two-players -g "2 players at 1080p" --repeat-each=5` (`tmp/rebaseline-2p.log`, `tmp/verify/gates-rebaseline-2p.jsonl`). 5/5 pass, no retries.
+- **Per run (min / mean):** 25/25.3, 25/25.5, 25/25.4, 25/26.3, 25/26.5. Every run: lock held, other heavy 0, CPU 23–31 %, GPU 33–39 %, render fps 60.
+- **Pooled 75 samples:** min 25, p5 25, median 26, mean 25.8.
+
+| Quiet-machine runs today (lock held, other heavy 0 or paused sessions) | 2P pose-fps min |
+|---|---|
+| verify retry, 852efb0 | 28 |
+| verify with waiters | 28 |
+| re-baseline ×5 | 25, 25, 25, 25, 25 |
+| final verify | 24 |
+
+| Contended runs today | 2P pose-fps min |
+|---|---|
+| my verify 1, overlapping another e2e suite | 19 |
+| verify with move-arcade-64 editing (tsc per edit + probe) | 15 |
+
+- **Conclusion: 2P isn't marginal on a quiet machine.** The quiet minimum is 24–28 against a gate of 20, a 20–40 % margin, and every sample in 75 was ≥ 25.
+- **Every earlier "2P is marginal" reading** (19, and 20 at `12c1ddf`) **came from contended runs.** No threshold changed.
+- **The quiet level itself varies between runs** (repeat block 25–26 vs verify 28–30). The spread isn't explained yet. It's worth watching now that each value carries its machine state.
+
+### Still open
+
+- **Render budget:** the park biome is at 586k triangles; needed before the chaser and web-swinging get designed. Not built here; flagged so it isn't lost across branches.
+- **The 7f68b4b amendments** (glove collision, prediction, body scan, 120 Hz) are under Jorge's review. Any §4.1 / authority-table conflict is his to resolve.

@@ -1,5 +1,6 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { test, type Page } from '@playwright/test';
+import { machineState } from './machine-state';
 
 // Every perf gate writes what it measured before asserting, pass or fail, so a red run and the runs
 // that went green after it stay comparable. One JSON line per gate in tmp/verify/gates.jsonl.
@@ -37,6 +38,7 @@ export async function recordGate(
   limits: Record<string, string>,
 ): Promise<void> {
   const gpu = await gpuInfo(page);
+  const machine = await machineState();
   const round = (n: number) => Math.round(n * 10) / 10;
   const stats = Object.fromEntries(
     Object.entries(samples).map(([k, v]) => [
@@ -54,6 +56,7 @@ export async function recordGate(
     retry: test.info().retry,
     limits,
     gpu,
+    machine,
     ...stats,
   };
   mkdirSync('tmp/verify', { recursive: true });
@@ -63,5 +66,10 @@ export async function recordGate(
   console.info(
     `GATE ${gate} gpu: ${gpu.renderer} · pose ${gpu.poseDelegate ?? '-'} ${gpu.poseGpu ?? ''}` +
       (gpu.software ? ' · SOFTWARE RENDERER: perf numbers are not comparable' : ''),
+  );
+  const others = machine.otherHeavy.map((p) => `${p.pid} ${p.cmd.slice(0, 60)}`);
+  console.info(
+    `GATE ${gate} machine: cpu ${machine.cpuBusyPct}% · gpu ${machine.gpuUtilPct ?? '-'}% · lock ${machine.lockHeld ? 'held' : 'NOT HELD'}` +
+      ` · other heavy: ${others.length ? `${others.length} CONTENDED [${others.join(' | ')}]` : 'none'}`,
   );
 }

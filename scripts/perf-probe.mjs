@@ -7,6 +7,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from '@playwright/test';
+import { acquire, waitForLock } from './e2e-lock.mjs';
 
 const arg = (name, def) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -283,11 +284,18 @@ async function run(sc) {
   }
 }
 
+// A probe is a perf measurement: wait for any e2e run, then hold the lock so heavy work waits for us.
+await waitForLock({ label: 'perf-probe' });
+const release = acquire();
 const out = [];
-for (const sc of SCENARIOS.filter((s) => !ONLY?.length || ONLY.includes(s.id))) {
-  const r = await run(sc);
-  console.log(JSON.stringify(r));
-  out.push(r);
+try {
+  for (const sc of SCENARIOS.filter((s) => !ONLY?.length || ONLY.includes(s.id))) {
+    const r = await run(sc);
+    console.log(JSON.stringify(r));
+    out.push(r);
+  }
+} finally {
+  release();
 }
 await mkdir('tmp/perf', { recursive: true });
 await writeFile(`tmp/perf/probe-${LABEL}.json`, JSON.stringify(out, null, 2));
