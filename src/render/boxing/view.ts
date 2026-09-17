@@ -22,6 +22,8 @@ import { loadModel } from '../models';
 import { createRenderer } from '../renderer';
 import { useSlot, type RenderStats } from '../view';
 import { createBoxer } from './boxer';
+import type { HeadReaction } from './animation';
+import { adaptBoxerPose, type BoxingPoseFeed } from './pose-state';
 
 /** Half the distance between the boxers, m. */
 const GAP = 0.78;
@@ -65,11 +67,7 @@ function buildRing(): Object3D {
   return ring;
 }
 
-/** `faces`: live camera faces (pose input). 2P: each boxer wears its player's face; 1P: both wear
- *  P1's, so you fight yourself (your own boxer is only visible as gloves anyway). */
-export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFeed) {
-  const renderer = createRenderer(canvas);
-  renderer.info.autoReset = false; // one frame can be several render() calls (split screen)
+function boxingScene(): Scene {
   const scene = new Scene();
   scene.background = new Color('#1b1f3b');
   const hemi = new HemisphereLight('#ffffff', '#445', 1.6);
@@ -79,9 +77,30 @@ export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFe
   key.shadow.mapSize.set(1024, 1024);
   Object.assign(key.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 1, far: 20 });
   scene.add(hemi, key, buildRing());
+  return scene;
+}
 
+async function loadBoxers() {
   const model = await loadModel('skater');
-  const boxers = [createBoxer(model, '#e63946'), createBoxer(model, '#2a6fdb')] as const;
+  const response = await fetch('/assets/quaternius/boxing/hit-head.json');
+  if (!response.ok) throw new Error(`Boxing reaction: HTTP ${response.status}`);
+  const reaction = (await response.json()) as HeadReaction;
+  return [
+    createBoxer(model, '#e63946', reaction),
+    createBoxer(model, '#2a6fdb', reaction),
+  ] as const;
+}
+
+/** 2P: each boxer wears its player's face; 1P: both wear P1's face. */
+export async function createBoxingView(
+  canvas: HTMLCanvasElement,
+  faces?: FaceFeed,
+  poses?: BoxingPoseFeed,
+) {
+  const renderer = createRenderer(canvas);
+  renderer.info.autoReset = false;
+  const scene = boxingScene();
+  const boxers = await loadBoxers();
   // Boxer 0 stands at +z facing −z (toward boxer 1); boxer 1 at −z facing +z.
   const bases = [new Vector3(0, 0, GAP), new Vector3(0, 0, -GAP)];
   const holders = boxers.map((b, i) => {
@@ -111,6 +130,7 @@ export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFe
             who as BoxerId,
             who === me,
             faces && { feed: faces, player: sims.length === 2 ? who : 0 },
+            adaptBoxerPose(poses?.pose(who)),
           ),
         );
         holders.forEach((h) => h.updateMatrixWorld(true));
