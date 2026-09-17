@@ -136,6 +136,8 @@ function summarize({
       workerRoundTrip: f((t) => t.resultT - t.bitmapT),
       infer: f((t) => t.inferMs),
       gestureEngine: stat(engine),
+      /** Camera frame to landmarks on the main thread: the pipeline's share of camera → rendered body. */
+      captureToResult: f((t) => t.resultT - (t.captureT ?? t.callbackT)),
     },
     poseEvents: {
       engine: e(pose, (s) => s.eventT - s.timing!.resultT),

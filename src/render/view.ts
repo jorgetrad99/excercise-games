@@ -23,6 +23,14 @@ export interface RenderStats {
   frames: number;
   calls: number;
   triangles: number;
+  /** Games with bodies (Boxing): each character's head and gloves as last drawn (1P: the only slot), world m. */
+  rig?: RigProbe[];
+}
+
+type P3 = [number, number, number];
+export interface RigProbe {
+  head: P3;
+  gloves: [P3, P3];
 }
 
 /** Which horizontal slice of the canvas to draw into (split screen): slot `index` of `count`. */

@@ -1,7 +1,16 @@
 // A boxer: the Casual_Hoodie rig (CC0, shared with the skater) with its arms collapsed and two floating
 // gloves. Clip times follow the sim; presentation history keeps per-boxer bruises and fall timing.
 // Repeated draws at one tick are stable. Local frame: the boxer faces +z, its left is +x.
-import { Group, Mesh, MeshStandardMaterial, SphereGeometry, type Vector3 } from 'three';
+import {
+  Group,
+  Mesh,
+  MeshStandardMaterial,
+  SphereGeometry,
+  Vector3 as Vec,
+  type Object3D,
+  type Vector3,
+} from 'three';
+import type { RigProbe } from '../view';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { boxingConfig as C } from '../../core/boxing/boxing.config';
 import type { Boxer, BoxerId, BoxingState, Fist } from '../../core/boxing/types';
@@ -40,6 +49,8 @@ export interface BoxerView {
   ): void;
   /** Eye position behind this boxer's head, world space (the player's camera). */
   eye(out: Vector3): Vector3;
+  /** Head and glove centres as last updated, world space (tests and latency measurement). */
+  probe(): RigProbe;
 }
 
 const smooth = (k: number): number => k * k * (3 - 2 * k);
@@ -143,7 +154,14 @@ export function createBoxer(model: LoadedModel, color: string, reaction: HeadRea
     eye(out) {
       return object.localToWorld(out.set(0, 1.62 - floor * 1.2, -0.35));
     },
+    probe: () => probe(object, bigHead.object, gloves),
   };
+}
+
+function probe(root: Object3D, head: Object3D, gloves: readonly Object3D[]): RigProbe {
+  root.updateWorldMatrix(true, true);
+  const at = (o: Object3D) => o.getWorldPosition(new Vec()).toArray();
+  return { head: at(head), gloves: [at(gloves[0]!), at(gloves[1]!)] };
 }
 
 /** Both gloves, boxer-local. `self`: the player's own view, where they sit low and wide. */

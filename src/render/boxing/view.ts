@@ -151,6 +151,7 @@ export async function createBoxingView(canvas: HTMLCanvasElement, faces?: FaceFe
       frames,
       calls: renderer.info.render.calls,
       triangles: renderer.info.render.triangles,
+      rig: boxers.map((b) => b.probe()),
     }),
   };
 }
